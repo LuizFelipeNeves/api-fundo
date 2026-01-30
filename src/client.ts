@@ -17,7 +17,24 @@ function getDefaultHeaders() {
   };
 }
 
-export async function fetchFIIList(): Promise<any> {
+export interface FII {
+  name: string;
+  sector: string;
+  p_vp: number;
+  dividend_yield: number;
+  dividend_yield_last_5_years: number;
+  daily_liquidity: number;
+  net_worth: number;
+  type: string;
+  thumbnail: string;
+}
+
+export interface FIIResponse {
+  total: number;
+  data: FII[];
+}
+
+export async function fetchFIIList(): Promise<FIIResponse> {
   const params = new URLSearchParams({
     draw: '2',
     'columns[0][data]': '',
@@ -99,7 +116,22 @@ export async function fetchFIIList(): Promise<any> {
     throw new Error(`HTTP error! status: ${response.status}`);
   }
 
-  return response.json();
+  const raw: any = await response.json();
+
+  return {
+    total: raw.total,
+    data: raw.data.map((item: any) => ({
+      name: item.name,
+      sector: item.sector,
+      p_vp: item.p_vp,
+      dividend_yield: item.dividend_yield,
+      dividend_yield_last_5_years: item.dividend_yield_last_5_years,
+      daily_liquidity: item.daily_liquidity,
+      net_worth: item.net_worth,
+      type: item.type,
+      thumbnail: item.thumbnail,
+    })),
+  };
 }
 
 export async function fetchFIIDetails(code: string): Promise<string> {
