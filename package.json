@@ -8,7 +8,9 @@
     "build": "tsc"
   },
   "dependencies": {
-    "hono": "^4.6.0"
+    "@hono/zod-openapi": "^0.16.0",
+    "hono": "^4.6.0",
+    "zod": "^3.22.4"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
