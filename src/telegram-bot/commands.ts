@@ -10,12 +10,24 @@ function extractFundCodes(raw: string): string[] {
   return Array.from(new Set(matches));
 }
 
+function extractFirstInt(raw: string): number | null {
+  const m = String(raw || '').match(/\b(\d{1,4})\b/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n)) return null;
+  return n;
+}
+
 export type BotCommand =
   | { kind: 'help' }
   | { kind: 'list' }
+  | { kind: 'categories' }
   | { kind: 'set'; codes: string[] }
   | { kind: 'add'; codes: string[] }
-  | { kind: 'remove'; codes: string[] };
+  | { kind: 'remove'; codes: string[] }
+  | { kind: 'documentos'; code?: string; limit?: number }
+  | { kind: 'pesquisa'; code: string }
+  | { kind: 'cotation'; code: string };
 
 export function parseBotCommand(text: string): BotCommand {
   const raw = normalizeText(text);
@@ -26,6 +38,32 @@ export function parseBotCommand(text: string): BotCommand {
   if (!withoutSlash || withoutSlash === 'start' || withoutSlash === 'help' || withoutSlash === 'ajuda' || withoutSlash === 'menu')
     return { kind: 'help' };
   if (withoutSlash === 'lista' || withoutSlash === 'minha lista') return { kind: 'list' };
+  if (withoutSlash === 'categorias' || withoutSlash === 'categoria') return { kind: 'categories' };
+
+  const documentosMatch = raw.match(/^(\/)?documentos\b(.*)$/i);
+  if (documentosMatch) {
+    const rest = normalizeText(documentosMatch[2] || '');
+    const limit = extractFirstInt(rest);
+    const codes = extractFundCodes(rest);
+    const code = codes[0];
+    return { kind: 'documentos', code, limit: limit === null ? undefined : limit };
+  }
+
+  const pesquisaMatch = raw.match(/^(\/)?pesquisa\b(.*)$/i);
+  if (pesquisaMatch) {
+    const rest = normalizeText(pesquisaMatch[2] || '');
+    const code = extractFundCodes(rest)[0];
+    if (code) return { kind: 'pesquisa', code };
+    return { kind: 'help' };
+  }
+
+  const cotationMatch = raw.match(/^(\/)?cotation\b(.*)$/i);
+  if (cotationMatch) {
+    const rest = normalizeText(cotationMatch[2] || '');
+    const code = extractFundCodes(rest)[0];
+    if (code) return { kind: 'cotation', code };
+    return { kind: 'help' };
+  }
 
   const setMatch = raw.match(/^(\/)?atualizar\s+lista\s*:?\s*(.+)$/i) || raw.match(/^(\/)?set\s*:?\s*(.+)$/i);
   if (setMatch?.[2]) return { kind: 'set', codes: extractFundCodes(setMatch[2]) };
@@ -47,6 +85,10 @@ export function formatHelp(): string {
     'Comandos:',
     '- /menu',
     '- /lista',
+    '- /categorias',
+    '- /documentos [FUNDO] [N]',
+    '- /pesquisa FUNDO',
+    '- /cotation FUNDO',
     '- /set A, B, C',
     '- /add A',
     '- /remove B',
@@ -54,5 +96,11 @@ export function formatHelp(): string {
     'Você também pode mandar só a lista: HGLG11, MXRF11',
     '',
     'Exemplo: /set HGLG11, MXRF11',
+    'Exemplo: /documentos (padrão 5)',
+    'Exemplo: /documentos 10',
+    'Exemplo: /documentos HGLG11',
+    'Exemplo: /documentos HGLG11 5',
+    'Exemplo: /pesquisa HGLG11',
+    'Exemplo: /cotation HGLG11',
   ].join('\n');
 }

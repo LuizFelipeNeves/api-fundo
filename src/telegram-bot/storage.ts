@@ -117,3 +117,29 @@ export function listTelegramChatIdsByFundCode(db: Database.Database, fundCode: s
     .all();
   return rows.map((r) => r.chatId);
 }
+
+export type FundCategoryInfo = {
+  code: string;
+  segmento: string | null;
+  sector: string | null;
+  tipo_fundo: string | null;
+  type: string | null;
+};
+
+export function listFundCategoryInfoByCodes(db: Database.Database, fundCodes: string[]): FundCategoryInfo[] {
+  const codes = Array.from(new Set(fundCodes.map((c) => c.toUpperCase()))).filter(Boolean);
+  if (codes.length === 0) return [];
+  const orm = drizzle(db);
+  return orm
+    .select({
+      code: fundMaster.code,
+      segmento: fundMaster.segmento,
+      sector: fundMaster.sector,
+      tipo_fundo: fundMaster.tipo_fundo,
+      type: fundMaster.type,
+    })
+    .from(fundMaster)
+    .where(inArray(fundMaster.code, codes))
+    .orderBy(asc(fundMaster.code))
+    .all();
+}

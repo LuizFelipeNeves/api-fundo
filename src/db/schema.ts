@@ -163,3 +163,12 @@ export const telegramUserFund = sqliteTable(
     idxFundChat: index('idx_telegram_user_fund_fund').on(t.fund_code, t.chat_id),
   })
 );
+
+export const fundCotationStats = sqliteTable('fund_cotation_stats', {
+  fund_code: text('fund_code')
+    .primaryKey()
+    .references(() => fundMaster.code, { onDelete: 'cascade' }),
+  source_last_date_iso: text('source_last_date_iso').notNull(),
+  computed_at: text('computed_at').notNull(),
+  data_json: text('data_json').notNull(),
+});

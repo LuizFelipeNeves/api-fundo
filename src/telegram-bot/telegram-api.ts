@@ -140,6 +140,10 @@ export function createTelegramService(token: string) {
       await client.setMyCommands([
         { command: 'menu', description: 'Mostrar comandos' },
         { command: 'lista', description: 'Ver sua lista de fundos' },
+        { command: 'categorias', description: 'Resumo por categoria da sua lista' },
+        { command: 'documentos', description: 'Últimos documentos (da lista ou por fundo)' },
+        { command: 'pesquisa', description: 'Resumo do fundo' },
+        { command: 'cotation', description: 'Variações, drawdown e volatilidade (cache)' },
         { command: 'set', description: 'Substituir sua lista de fundos' },
         { command: 'add', description: 'Adicionar fundos na lista' },
         { command: 'remove', description: 'Remover fundos da lista' },
