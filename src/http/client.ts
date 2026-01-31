@@ -6,6 +6,35 @@ interface RequestOptions {
   timeout?: number;
 }
 
+async function readResponseSnippet(response: Response, maxChars: number): Promise<string> {
+  try {
+    const text = await response.text();
+    const trimmed = text.replace(/\s+/g, ' ').trim();
+    if (!trimmed) return '';
+    return trimmed.length > maxChars ? `${trimmed.slice(0, maxChars)}…` : trimmed;
+  } catch {
+    return '';
+  }
+}
+
+async function throwHttpError(response: Response, method: string, url: string): Promise<never> {
+  const statusText = response.statusText ? ` ${response.statusText}` : '';
+  const contentType = response.headers.get('content-type') || '';
+  const snippet = await readResponseSnippet(response, 800);
+  const bodyPart = snippet ? ` body="${snippet}"` : '';
+  const typePart = contentType ? ` content_type="${contentType}"` : '';
+  throw new Error(`${method} ${url} -> HTTP ${response.status}${statusText}${typePart}${bodyPart}`);
+}
+
+function extractCookieNameValuesFromSetCookieHeader(setCookieHeader: string): string[] {
+  const cookies: string[] = [];
+  for (const match of setCookieHeader.matchAll(/(?:^|,\s*)([^=;, \t]+=[^;]+)/g)) {
+    const nameValue = match[1]?.trim();
+    if (nameValue) cookies.push(nameValue);
+  }
+  return cookies;
+}
+
 async function request<T>(
   url: string,
   options: RequestOptions = {}
@@ -23,14 +52,14 @@ async function request<T>(
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      await throwHttpError(response, 'GET', url);
     }
 
     return response.json() as Promise<T>;
   } catch (error) {
     clearTimeout(timeoutId);
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`Request timeout after ${timeout}ms`);
+      throw new Error(`GET ${url} -> timeout_after_ms=${timeout}`);
     }
     throw error;
   }
@@ -60,14 +89,14 @@ export async function post<T>(
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      await throwHttpError(response, 'POST', url);
     }
 
     return response.json() as Promise<T>;
   } catch (error) {
     clearTimeout(timeoutId);
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`Request timeout after ${timeout}ms`);
+      throw new Error(`POST ${url} -> timeout_after_ms=${timeout}`);
     }
     throw error;
   }
@@ -92,14 +121,14 @@ export async function fetchText(url: string, options?: RequestOptions): Promise<
     }
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      await throwHttpError(response, 'GET', url);
     }
 
     return response.text();
   } catch (error) {
     clearTimeout(timeoutId);
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`Request timeout after ${timeout}ms`);
+      throw new Error(`GET ${url} -> timeout_after_ms=${timeout}`);
     }
     throw error;
   }
@@ -125,18 +154,22 @@ export async function fetchWithSession<T>(
       signal: controller.signal,
     });
 
+    if (!initResponse.ok) {
+      clearTimeout(timeoutId);
+      await throwHttpError(initResponse, 'GET', initUrl);
+    }
+
     // Extrair cookies da primeira resposta
     const cookies: string[] = [];
-    const setCookie = initResponse.headers.get('set-cookie');
-    if (setCookie) {
-      const cookieParts = setCookie.split(',');
-      for (const part of cookieParts) {
-        // Extrair apenas nome=valor, removendo atributos como Domain, Path, Secure, HttpOnly
-        const cookieNameValue = part.split(';')[0].trim();
-        if (cookieNameValue) {
-          cookies.push(cookieNameValue);
-        }
+    const setCookies = (initResponse.headers as any).getSetCookie?.() as string[] | undefined;
+    if (setCookies?.length) {
+      for (const cookie of setCookies) {
+        const cookieNameValue = cookie.split(';')[0]?.trim();
+        if (cookieNameValue) cookies.push(cookieNameValue);
       }
+    } else {
+      const setCookie = initResponse.headers.get('set-cookie');
+      if (setCookie) cookies.push(...extractCookieNameValuesFromSetCookieHeader(setCookie));
     }
 
     // Segunda requisição com os cookies
@@ -147,7 +180,7 @@ export async function fetchWithSession<T>(
     };
 
     if (cookies.length > 0) {
-      headers['Cookie'] = cookies.join('; ');
+      headers['cookie'] = cookies.join('; ');
     }
 
     const dataResponse = await fetch(dataUrl, {
@@ -159,7 +192,7 @@ export async function fetchWithSession<T>(
     clearTimeout(timeoutId);
 
     if (!dataResponse.ok) {
-      throw new Error(`HTTP error! status: ${dataResponse.status}`);
+      await throwHttpError(dataResponse, 'GET', dataUrl);
     }
 
     const json = await dataResponse.json();
@@ -167,7 +200,7 @@ export async function fetchWithSession<T>(
   } catch (error) {
     clearTimeout(timeoutId);
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`Request timeout after ${timeout}ms`);
+      throw new Error(`GET ${dataUrl} -> timeout_after_ms=${timeout}`);
     }
     throw error;
   }

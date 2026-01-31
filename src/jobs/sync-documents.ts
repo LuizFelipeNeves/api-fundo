@@ -13,9 +13,13 @@ export async function syncDocuments(): Promise<{ ran: boolean }> {
 
   let ok = 0;
   let errCount = 0;
+  let totalMs = 0;
+  let maxMs = 0;
   for (let i = 0; i < codes.length; i++) {
     const code = codes[i];
     log.progress(i + 1, codes.length, code);
+    const startedAt = Date.now();
+    let status: 'ok' | 'err' = 'ok';
     try {
       await syncFundDocuments(db, code, {
         fetcher: { fetchDocuments, fetchFIIDetails, fetchDividends },
@@ -24,12 +28,19 @@ export async function syncDocuments(): Promise<{ ran: boolean }> {
       ok++;
     } catch (err) {
       errCount++;
-      const message = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`sync-documents:${code}:${message}\n`);
+      status = 'err';
+      const message = err instanceof Error ? err.stack || err.message : String(err);
+      process.stderr.write(`sync-documents:${code}:${message.replace(/\n/g, '\\n')}\n`);
       continue;
+    } finally {
+      const durationMs = Date.now() - startedAt;
+      totalMs += durationMs;
+      maxMs = Math.max(maxMs, durationMs);
+      log.progressDone(i + 1, codes.length, code, { status, duration_ms: durationMs });
     }
   }
 
-  log.end({ ok, err: errCount });
+  const avgMs = codes.length > 0 ? Math.round(totalMs / codes.length) : 0;
+  log.end({ ok, err: errCount, avg_ms: avgMs, max_ms: maxMs });
   return { ran: true };
 }

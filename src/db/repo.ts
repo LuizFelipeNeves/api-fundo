@@ -2,13 +2,13 @@ import type Database from 'better-sqlite3';
 import { nowIso } from './index';
 import type { FIIResponse, FIIDetails } from '../types';
 import type { NormalizedIndicators } from '../parsers/indicators';
-import type { ContationsTodayData } from '../parsers/today';
+import type { CotationsTodayData } from '../parsers/today';
 import type { DocumentData } from '../parsers/documents';
 import type { DividendData } from '../parsers/dividends';
 import type { NormalizedCotations } from '../parsers/cotations';
 import { toDateIsoFromBr } from './index';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { and, asc, desc, eq, isNotNull, isNull, or } from 'drizzle-orm';
+import { and, asc, desc, eq, isNotNull, isNull, ne, or } from 'drizzle-orm';
 import { cotation, cotationsTodaySnapshot, dividend, document, fundMaster, fundState, indicatorsSnapshot } from './schema';
 
 export function upsertFundList(db: Database.Database, data: FIIResponse) {
@@ -63,6 +63,12 @@ export function updateFundDetails(db: Database.Database, details: FIIDetails) {
   const now = nowIso();
   const orm = drizzle(db);
   const code = details.code.toUpperCase();
+
+  orm
+    .insert(fundState)
+    .values({ fund_code: code, created_at: now, updated_at: now })
+    .onConflictDoNothing()
+    .run();
 
   orm.update(fundMaster)
     .set({
@@ -241,17 +247,24 @@ export function getFundState(
 
 export function upsertIndicatorsSnapshot(db: Database.Database, fundCode: string, fetchedAt: string, dataHash: string, data: NormalizedIndicators) {
   const orm = drizzle(db);
+  const fundCodeUpper = fundCode.toUpperCase();
   const json = JSON.stringify(data);
   const inserted = orm
     .insert(indicatorsSnapshot)
     .values({
-      fund_code: fundCode.toUpperCase(),
+      fund_code: fundCodeUpper,
       fetched_at: fetchedAt,
       data_hash: dataHash,
       data_json: json,
     })
     .onConflictDoNothing({ target: [indicatorsSnapshot.fund_code, indicatorsSnapshot.data_hash] })
     .run().changes;
+
+  orm
+    .insert(fundState)
+    .values({ fund_code: fundCodeUpper, created_at: fetchedAt, updated_at: fetchedAt })
+    .onConflictDoNothing()
+    .run();
 
   if (inserted > 0) {
     orm
@@ -261,7 +274,16 @@ export function upsertIndicatorsSnapshot(db: Database.Database, fundCode: string
         last_indicators_at: fetchedAt,
         updated_at: fetchedAt,
       })
-      .where(eq(fundState.fund_code, fundCode.toUpperCase()))
+      .where(eq(fundState.fund_code, fundCodeUpper))
+      .run();
+  } else {
+    orm
+      .update(fundState)
+      .set({
+        last_indicators_at: fetchedAt,
+        updated_at: fetchedAt,
+      })
+      .where(eq(fundState.fund_code, fundCodeUpper))
       .run();
   }
 
@@ -281,19 +303,26 @@ export function getLatestIndicators(db: Database.Database, fundCode: string): No
   return JSON.parse(row.data_json) as NormalizedIndicators;
 }
 
-export function upsertCotationsTodaySnapshot(db: Database.Database, fundCode: string, fetchedAt: string, dataHash: string, data: ContationsTodayData) {
+export function upsertCotationsTodaySnapshot(db: Database.Database, fundCode: string, fetchedAt: string, dataHash: string, data: CotationsTodayData) {
   const orm = drizzle(db);
+  const fundCodeUpper = fundCode.toUpperCase();
   const json = JSON.stringify(data);
   const inserted = orm
     .insert(cotationsTodaySnapshot)
     .values({
-      fund_code: fundCode.toUpperCase(),
+      fund_code: fundCodeUpper,
       fetched_at: fetchedAt,
       data_hash: dataHash,
       data_json: json,
     })
     .onConflictDoNothing({ target: [cotationsTodaySnapshot.fund_code, cotationsTodaySnapshot.data_hash] })
     .run().changes;
+
+  orm
+    .insert(fundState)
+    .values({ fund_code: fundCodeUpper, created_at: fetchedAt, updated_at: fetchedAt })
+    .onConflictDoNothing()
+    .run();
 
   if (inserted > 0) {
     orm
@@ -303,14 +332,38 @@ export function upsertCotationsTodaySnapshot(db: Database.Database, fundCode: st
         last_cotations_today_at: fetchedAt,
         updated_at: fetchedAt,
       })
-      .where(eq(fundState.fund_code, fundCode.toUpperCase()))
+      .where(eq(fundState.fund_code, fundCodeUpper))
+      .run();
+  } else {
+    orm
+      .update(fundState)
+      .set({
+        last_cotations_today_at: fetchedAt,
+        updated_at: fetchedAt,
+      })
+      .where(eq(fundState.fund_code, fundCodeUpper))
+      .run();
+  }
+
+  const latest = orm
+    .select({ id: cotationsTodaySnapshot.id })
+    .from(cotationsTodaySnapshot)
+    .where(eq(cotationsTodaySnapshot.fund_code, fundCodeUpper))
+    .orderBy(desc(cotationsTodaySnapshot.fetched_at))
+    .limit(1)
+    .all()[0];
+
+  if (latest?.id) {
+    orm
+      .delete(cotationsTodaySnapshot)
+      .where(and(eq(cotationsTodaySnapshot.fund_code, fundCodeUpper), ne(cotationsTodaySnapshot.id, latest.id)))
       .run();
   }
 
   return inserted > 0;
 }
 
-export function getLatestCotationsToday(db: Database.Database, fundCode: string): ContationsTodayData | null {
+export function getLatestCotationsToday(db: Database.Database, fundCode: string): CotationsTodayData | null {
   const orm = drizzle(db);
   const row = orm
     .select({ data_json: cotationsTodaySnapshot.data_json })
@@ -320,7 +373,10 @@ export function getLatestCotationsToday(db: Database.Database, fundCode: string)
     .limit(1)
     .all()[0];
   if (!row) return null;
-  return JSON.parse(row.data_json) as ContationsTodayData;
+  const parsed: any = JSON.parse(row.data_json);
+  if (Array.isArray(parsed)) return parsed;
+  if (Array.isArray(parsed?.real)) return parsed.real;
+  return [];
 }
 
 export function upsertCotationsHistoricalBrl(db: Database.Database, fundCode: string, data: NormalizedCotations) {
@@ -351,6 +407,7 @@ export function upsertCotationsHistoricalBrl(db: Database.Database, fundCode: st
         .run().changes;
     }
 
+    tx.insert(fundState).values({ fund_code: fundCodeUpper, created_at: now, updated_at: now }).onConflictDoNothing().run();
     tx.update(fundState).set({ last_historical_cotations_at: now, updated_at: now }).where(eq(fundState.fund_code, fundCodeUpper)).run();
 
     return changes;
@@ -390,8 +447,8 @@ export function upsertDocuments(db: Database.Database, fundCode: string, docs: D
     let maxId = 0;
     for (const d of docs) {
       maxId = Math.max(maxId, d.id);
-      const dateIso = toDateIsoFromBr(d.date) || '0000-00-00';
-      const uploadIso = toDateIsoFromBr(d.dateUpload) || '0000-00-00';
+      const dateIso = toDateIsoFromBr(d.date) || now.slice(0, 10);
+      const uploadIso = toDateIsoFromBr(d.dateUpload) || dateIso;
 
       inserted += tx
         .insert(document)
@@ -435,6 +492,7 @@ export function upsertDocuments(db: Database.Database, fundCode: string, docs: D
 export function updateDocumentsMaxId(db: Database.Database, fundCode: string, maxId: number) {
   const now = nowIso();
   const orm = drizzle(db);
+  orm.insert(fundState).values({ fund_code: fundCode.toUpperCase(), created_at: now, updated_at: now }).onConflictDoNothing().run();
   orm
     .update(fundState)
     .set({ last_documents_max_id: maxId, updated_at: now })

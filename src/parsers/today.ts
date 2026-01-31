@@ -3,25 +3,13 @@ export interface CotationTodayItem {
   hour: string;
 }
 
-export interface ContationsTodayData {
-  real: CotationTodayItem[];
-  dolar: CotationTodayItem[];
-  euro: CotationTodayItem[];
-}
+export type CotationsTodayData = CotationTodayItem[];
 
-export function normalizeCotationsToday(raw: Record<string, any[]>): ContationsTodayData {
-  const normalizeArray = (items: any[]): CotationTodayItem[] => {
-    return items.map((item) => ({
-      price: item.price,
-      hour: formatDate(item.created_at),
-    }));
-  };
-
-  return {
-    real: normalizeArray(raw.real || []),
-    dolar: normalizeArray(raw.dollar || []),
-    euro: normalizeArray(raw.euro || []),
-  };
+export function normalizeCotationsToday(raw: Record<string, any[]>): CotationsTodayData {
+  return (raw.real || []).map((item) => ({
+    price: item.price,
+    hour: formatDate(item.created_at),
+  }));
 }
 
 function formatDate(dateStr: string): string {

@@ -134,10 +134,12 @@ export function sha256(value: string): string {
 }
 
 export function toDateIsoFromBr(dateStr: string): string {
-  const [dayStr, monthStr, yearStr] = dateStr.split('/');
-  const day = Number(dayStr);
-  const month = Number(monthStr);
-  const year = Number(yearStr);
+  const str = String(dateStr || '').trim();
+  const match = str.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (!match) return '';
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
   if (!day || !month || !year) return '';
   const iso = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0)).toISOString().slice(0, 10);
   return iso;

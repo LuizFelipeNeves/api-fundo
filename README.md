@@ -115,10 +115,6 @@ API para consultar dados de Fundos de Investimento Imobiliário.
 | `CSRF_TOKEN` | Token CSRF usado pelo investidor10.com.br (pode expirar) |
 | `DB_PATH` | Caminho do SQLite (padrão: `./data.sqlite`) |
 | `CRON_INTERVAL_MS` | Intervalo do `jobs:cron` (padrão: 5min) |
-| `DETAILS_SEED_LIMIT` | Quantos fundos “sem detalhes” por execução (padrão: 10) |
-| `INDICATORS_LIMIT` | Quantos fundos por execução (padrão: 200) |
-| `DOCUMENTS_LIMIT` | Quantos fundos por execução (padrão: 100) |
-| `COTATIONS_TODAY_LIMIT` | Quantos fundos por execução (padrão: 200) |
 | `ENABLE_HISTORICAL_BACKFILL` | Habilita backfill histórico (padrão: `true`) |
 | `HISTORICAL_COTATIONS_DAYS` | Dias de histórico (padrão: 365, máx: 1825) |
 
@@ -160,6 +156,7 @@ npm run jobs:cron
 
 - `sync-cotations-today` roda sempre na primeira inicialização do processo.
 - Depois disso, só roda entre 10:00 e 18:20.
+  - Dentro da janela, processa todos os fundos em cada execução.
 
 ### Subir a API HTTP
 

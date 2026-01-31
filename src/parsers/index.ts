@@ -3,7 +3,7 @@ export { normalizeIndicators } from './indicators';
 export { normalizeCotations } from './cotations';
 export { normalizeDividends, type DividendData } from './dividends';
 export { normalizeFIIDetails } from './fii-details';
-export { normalizeCotationsToday, type ContationsTodayData, type CotationTodayItem } from './today';
+export { normalizeCotationsToday, type CotationsTodayData, type CotationTodayItem } from './today';
 export { normalizeDocuments, type DocumentData } from './documents';
 
 export function extractFIIId(html: string): string {

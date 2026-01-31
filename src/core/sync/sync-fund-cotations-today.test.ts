@@ -14,7 +14,7 @@ test('syncFundCotationsToday calcula hash e persiste snapshot', async () => {
   } as any;
 
   const fetcher = {
-    fetchCotationsToday: async () => ({ real: [{ price: 1, hour: '10:00' }], dolar: [], euro: [] }),
+    fetchCotationsToday: async () => [{ price: 1, hour: '10:00' }],
   };
 
   const clock = {
@@ -29,4 +29,3 @@ test('syncFundCotationsToday calcula hash e persiste snapshot', async () => {
   assert.equal(calls[0].fetchedAt, '2026-01-01T00:00:00.000Z');
   assert.equal(typeof calls[0].dataHash, 'string');
 });
-

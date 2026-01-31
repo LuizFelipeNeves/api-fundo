@@ -24,7 +24,7 @@ export async function syncFundDocuments<Db>(
   const hasNewDocument = maxId ? lastMaxId === null || maxId > lastMaxId : false;
 
   let dividendsChanges = 0;
-  if (hasNewDocument) {
+  if (hasNewDocument && lastMaxId !== null) {
     const result = await syncFundDetailsAndDividends(db, code, { fetcher: deps.fetcher, repo: deps.repo });
     dividendsChanges = result.dividendsChanges;
   }

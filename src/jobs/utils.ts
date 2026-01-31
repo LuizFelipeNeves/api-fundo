@@ -16,6 +16,11 @@ export function createJobLogger(jobName: string, opts?: { every?: number }) {
     process.stdout.write(line.endsWith('\n') ? line : `${line}\n`);
   }
 
+  function shouldLogProgress(i: number, total: number) {
+    if (total <= 0) return false;
+    return i === 1 || i === total || i % every === 0;
+  }
+
   function start(meta?: Record<string, any>) {
     const metaStr = meta ? Object.entries(meta).map(([k, v]) => `${k}=${String(v)}`).join(' ') : '';
     log(`[${jobName}] start${metaStr ? ` ${metaStr}` : ''}`);
@@ -26,9 +31,14 @@ export function createJobLogger(jobName: string, opts?: { every?: number }) {
   }
 
   function progress(i: number, total: number, code?: string) {
-    if (total <= 0) return;
-    if (i !== 1 && i !== total && i % every !== 0) return;
+    if (!shouldLogProgress(i, total)) return;
     log(`[${jobName}] ${i}/${total}${code ? ` code=${code}` : ''}`);
+  }
+
+  function progressDone(i: number, total: number, code: string, meta?: Record<string, any>) {
+    if (!shouldLogProgress(i, total)) return;
+    const metaStr = meta ? Object.entries(meta).map(([k, v]) => `${k}=${String(v)}`).join(' ') : '';
+    log(`[${jobName}] done ${i}/${total} code=${code}${metaStr ? ` ${metaStr}` : ''}`);
   }
 
   function end(meta?: Record<string, any>) {
@@ -36,5 +46,5 @@ export function createJobLogger(jobName: string, opts?: { every?: number }) {
     log(`[${jobName}] end duration=${formatMs(Date.now() - startedAt)}${metaStr ? ` ${metaStr}` : ''}`);
   }
 
-  return { start, skipped, progress, end };
+  return { start, skipped, progress, progressDone, shouldLogProgress, end };
 }

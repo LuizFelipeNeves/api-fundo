@@ -87,11 +87,7 @@ export const CotationTodayItemSchema = z.object({
   hour: z.string().openapi({ example: '10:01' }),
 });
 
-export const CotationsTodaySchema = z.object({
-  real: z.array(CotationTodayItemSchema),
-  dolar: z.array(CotationTodayItemSchema),
-  euro: z.array(CotationTodayItemSchema),
-});
+export const CotationsTodaySchema = z.array(CotationTodayItemSchema);
 
 // Documents schemas
 export const DocumentItemSchema = z.object({

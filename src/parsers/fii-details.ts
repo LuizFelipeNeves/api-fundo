@@ -30,12 +30,13 @@ function parseNumber(value: number | string | undefined): number {
   if (value === undefined || value === null) return 0;
   if (typeof value === 'number') return value;
 
+  const lower = value.toLowerCase();
   let multiplier = 1;
-  if (/milhões/i.test(value)) {
-    multiplier = 1_000_000;
-  } else if (/bilhões/i.test(value)) {
+  if (/\d\s*(bilh|bi|b)\b/.test(lower)) {
     multiplier = 1_000_000_000;
-  } else if (/\bmil\b/i.test(value) && !/milhões/i.test(value)) {
+  } else if (/\d\s*(milh|mi|m)\b/.test(lower)) {
+    multiplier = 1_000_000;
+  } else if (/\bmil\b/.test(lower) && !/\bmilh/.test(lower)) {
     multiplier = 1_000;
   }
 

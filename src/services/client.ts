@@ -6,7 +6,7 @@ import type { FIIResponse, FIIDetails } from '../types';
 import type { NormalizedIndicators } from '../parsers/indicators';
 import type { NormalizedCotations } from '../parsers/cotations';
 import type { DividendData } from '../parsers/dividends';
-import type { ContationsTodayData } from '../parsers/today';
+import type { CotationsTodayData } from '../parsers/today';
 import type { DocumentData } from '../parsers/documents';
 
 const MAX_DAYS = 1825;
@@ -80,7 +80,7 @@ export async function fetchDividends(
   return normalizeDividends(dividendsHistory ?? [], dividendYield);
 }
 
-export async function fetchCotationsToday(code: string): Promise<ContationsTodayData> {
+export async function fetchCotationsToday(code: string): Promise<CotationsTodayData> {
   const raw = await get<Record<string, any[]>>(`${BASE_URL}/api/quotations/one-day/${code}/`);
   return normalizeCotationsToday(raw);
 }
