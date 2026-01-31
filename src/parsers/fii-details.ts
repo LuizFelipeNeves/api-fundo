@@ -17,13 +17,24 @@ export function normalizeFIIDetails(
     prazo_duracao: raw.prazo_duracao ?? '',
     tipo_gestao: raw.tipo_gestao ?? '',
     taxa_adminstracao: raw.taxa_adminstracao ?? '',
-    vacancia: parsePercent(raw.vacancia),
-    numero_cotistas: parseNumber(raw.numero_cotistas),
-    cotas_emitidas: parseNumber(raw.cotas_emitidas),
-    valor_patrimonial_cota: parseNumber(raw.valor_patrimonial_cota),
-    valor_patrimonial: parseNumber(raw.valor_patrimonial),
-    ultimo_rendimento: parseNumber(raw.ultimo_rendimento),
+    vacancia: roundTo(parsePercent(raw.vacancia), 2),
+    numero_cotistas: toInt(parseNumber(raw.numero_cotistas)),
+    cotas_emitidas: toInt(parseNumber(raw.cotas_emitidas)),
+    valor_patrimonial_cota: roundTo(parseNumber(raw.valor_patrimonial_cota), 2),
+    valor_patrimonial: roundTo(parseNumber(raw.valor_patrimonial), 2),
+    ultimo_rendimento: roundTo(parseNumber(raw.ultimo_rendimento), 4),
   };
+}
+
+function roundTo(value: number, decimals: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const p = Math.pow(10, Math.max(0, Math.min(12, Math.floor(decimals))));
+  return Math.round(value * p) / p;
+}
+
+function toInt(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value);
 }
 
 function parseNumber(value: number | string | undefined): number {

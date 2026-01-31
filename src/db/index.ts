@@ -55,6 +55,7 @@ function migrate(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS fund_state (
       fund_code TEXT PRIMARY KEY REFERENCES fund_master(code) ON DELETE CASCADE,
       last_documents_max_id INTEGER,
+      last_documents_at TEXT,
       last_details_sync_at TEXT,
       last_indicators_hash TEXT,
       last_indicators_at TEXT,

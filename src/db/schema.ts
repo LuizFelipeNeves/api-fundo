@@ -36,6 +36,7 @@ export const fundState = sqliteTable('fund_state', {
     .primaryKey()
     .references(() => fundMaster.code, { onDelete: 'cascade' }),
   last_documents_max_id: integer('last_documents_max_id'),
+  last_documents_at: text('last_documents_at'),
   last_details_sync_at: text('last_details_sync_at'),
   last_indicators_hash: text('last_indicators_hash'),
   last_indicators_at: text('last_indicators_at'),

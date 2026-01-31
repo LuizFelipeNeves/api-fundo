@@ -14,21 +14,36 @@ export async function syncIndicators(): Promise<{ ran: boolean }> {
   const codes = repo.listFundCodesWithId(db);
   const concurrency = resolveConcurrency({ envKey: 'INDICATORS_CONCURRENCY', fallback: 5, max: 20 });
 
+  const minIntervalMinRaw = Number.parseInt(process.env.INDICATORS_MIN_INTERVAL_MIN || '360', 10);
+  const minIntervalMin = Number.isFinite(minIntervalMinRaw) && minIntervalMinRaw > 0 ? Math.min(minIntervalMinRaw, 30 * 24 * 60) : 360;
+  const minIntervalMs = minIntervalMin * 60 * 1000;
+
   const enableHistorical = (process.env.ENABLE_HISTORICAL_BACKFILL || 'true').toLowerCase() !== 'false';
   const days = Number.parseInt(process.env.HISTORICAL_COTATIONS_DAYS || '365', 10);
   const historicalDays = Number.isFinite(days) && days > 0 ? Math.min(days, 1825) : 365;
 
-  log.start({ candidates: codes.length, concurrency, historical: enableHistorical, historicalDays });
+  log.start({ candidates: codes.length, concurrency, historical: enableHistorical, historicalDays, minIntervalMin });
 
   let ok = 0;
   let errCount = 0;
+  let skipped = 0;
   let totalMs = 0;
   let maxMs = 0;
   await forEachConcurrent(codes, concurrency, async (code, i) => {
     log.progress(i + 1, codes.length, code);
     const startedAt = Date.now();
-    let status: 'ok' | 'err' = 'ok';
+    let status: 'ok' | 'err' | 'skipped' = 'ok';
     try {
+      const state = repo.getFundIndicatorsState(db, code);
+      const lastAt = state?.last_indicators_at ?? null;
+      if (lastAt) {
+        const lastMs = Date.parse(lastAt);
+        if (Number.isFinite(lastMs) && startedAt - lastMs < minIntervalMs) {
+          skipped++;
+          status = 'skipped';
+          return;
+        }
+      }
       await syncFundIndicators(db, code, {
         fetcher: { fetchFIIIndicators, fetchFIICotations },
         repo,
@@ -50,6 +65,6 @@ export async function syncIndicators(): Promise<{ ran: boolean }> {
   });
 
   const avgMs = codes.length > 0 ? Math.round(totalMs / codes.length) : 0;
-  log.end({ ok, err: errCount, avg_ms: avgMs, max_ms: maxMs });
+  log.end({ ok, skipped, err: errCount, avg_ms: avgMs, max_ms: maxMs, minIntervalMin });
   return { ran: true };
 }

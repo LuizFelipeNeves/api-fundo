@@ -256,6 +256,66 @@ export function getFundState(
   return row ?? null;
 }
 
+export function getFundIndicatorsState(
+  db: Database.Database,
+  code: string
+): { last_indicators_at: string | null } | null {
+  const orm = drizzle(db);
+  const row = orm
+    .select({
+      last_indicators_at: fundState.last_indicators_at,
+    })
+    .from(fundState)
+    .where(eq(fundState.fund_code, code.toUpperCase()))
+    .get();
+  return row ?? null;
+}
+
+export function getFundDocumentsState(
+  db: Database.Database,
+  code: string
+): { last_documents_at: string | null } | null {
+  const orm = drizzle(db);
+  const row = orm
+    .select({
+      last_documents_at: fundState.last_documents_at,
+    })
+    .from(fundState)
+    .where(eq(fundState.fund_code, code.toUpperCase()))
+    .get();
+  return row ?? null;
+}
+
+export function updateFundDocumentsAt(db: Database.Database, fundCode: string, atIso: string) {
+  const orm = drizzle(db);
+  const fundCodeUpper = fundCode.toUpperCase();
+
+  orm.insert(fundState).values({ fund_code: fundCodeUpper, created_at: atIso, updated_at: atIso }).onConflictDoNothing().run();
+  orm
+    .update(fundState)
+    .set({
+      last_documents_at: atIso,
+      updated_at: atIso,
+    })
+    .where(eq(fundState.fund_code, fundCodeUpper))
+    .run();
+}
+
+export function getFundCotationsTodayState(
+  db: Database.Database,
+  code: string
+): { last_cotations_today_at: string | null } | null {
+  const orm = drizzle(db);
+  const row = orm
+    .select({
+      last_cotations_today_at: fundState.last_cotations_today_at,
+    })
+    .from(fundState)
+    .where(eq(fundState.fund_code, code.toUpperCase()))
+    .get();
+  return row ?? null;
+}
+
 export function upsertIndicatorsSnapshot(db: Database.Database, fundCode: string, fetchedAt: string, dataHash: string, data: NormalizedIndicators) {
   const orm = drizzle(db);
   const fundCodeUpper = fundCode.toUpperCase();
