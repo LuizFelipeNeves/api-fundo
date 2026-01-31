@@ -8,7 +8,7 @@ import type { DividendData } from '../parsers/dividends';
 import type { NormalizedCotations } from '../parsers/cotations';
 import { toDateIsoFromBr } from './index';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { and, asc, desc, eq, isNotNull, isNull, ne, or } from 'drizzle-orm';
+import { and, asc, desc, eq, isNotNull, isNull, or } from 'drizzle-orm';
 import { cotation, cotationsTodaySnapshot, dividend, document, fundMaster, fundState, indicatorsSnapshot } from './schema';
 
 export function upsertFundList(db: Database.Database, data: FIIResponse) {
@@ -345,21 +345,6 @@ export function upsertCotationsTodaySnapshot(db: Database.Database, fundCode: st
       .run();
   }
 
-  const latest = orm
-    .select({ id: cotationsTodaySnapshot.id })
-    .from(cotationsTodaySnapshot)
-    .where(eq(cotationsTodaySnapshot.fund_code, fundCodeUpper))
-    .orderBy(desc(cotationsTodaySnapshot.fetched_at))
-    .limit(1)
-    .all()[0];
-
-  if (latest?.id) {
-    orm
-      .delete(cotationsTodaySnapshot)
-      .where(and(eq(cotationsTodaySnapshot.fund_code, fundCodeUpper), ne(cotationsTodaySnapshot.id, latest.id)))
-      .run();
-  }
-
   return inserted > 0;
 }
 
@@ -379,6 +364,30 @@ export function getLatestCotationsToday(db: Database.Database, fundCode: string)
   return [];
 }
 
+export function upsertCotationBrl(
+  db: Database.Database,
+  fundCode: string,
+  dateIso: string,
+  dateBr: string,
+  price: number
+): number {
+  const orm = drizzle(db);
+  const fundCodeUpper = fundCode.toUpperCase();
+  return orm
+    .insert(cotation)
+    .values({
+      fund_code: fundCodeUpper,
+      date_iso: dateIso,
+      date: dateBr,
+      price,
+    })
+    .onConflictDoUpdate({
+      target: [cotation.fund_code, cotation.date_iso],
+      set: { price, date: dateBr },
+    })
+    .run().changes;
+}
+
 export function upsertCotationsHistoricalBrl(db: Database.Database, fundCode: string, data: NormalizedCotations) {
   const now = nowIso();
   const items = data.real || [];
@@ -395,13 +404,12 @@ export function upsertCotationsHistoricalBrl(db: Database.Database, fundCode: st
         .insert(cotation)
         .values({
           fund_code: fundCodeUpper,
-          currency: 'BRL',
           date_iso: dateIso,
           date: item.date,
           price: item.price,
         })
         .onConflictDoUpdate({
-          target: [cotation.fund_code, cotation.currency, cotation.date_iso],
+          target: [cotation.fund_code, cotation.date_iso],
           set: { price: item.price, date: item.date },
         })
         .run().changes;
@@ -420,7 +428,7 @@ export function getCotations(db: Database.Database, fundCode: string, days: numb
   const rows = orm
     .select({ date: cotation.date, price: cotation.price })
     .from(cotation)
-    .where(and(eq(cotation.fund_code, fundCode.toUpperCase()), eq(cotation.currency, 'BRL')))
+    .where(eq(cotation.fund_code, fundCode.toUpperCase()))
     .orderBy(desc(cotation.date_iso))
     .limit(limit)
     .all();

@@ -2,6 +2,7 @@ import { syncFundsList } from './sync-funds-list';
 import { syncCotationsToday } from './sync-cotations-today';
 import { syncIndicators } from './sync-indicators';
 import { syncDocuments } from './sync-documents';
+import { syncEodCotation } from './sync-eod-cotation';
 
 const intervalMs = Number.parseInt(process.env.CRON_INTERVAL_MS || String(5 * 60 * 1000), 10);
 
@@ -11,6 +12,7 @@ async function runOnce() {
   await syncCotationsToday();
   await syncIndicators();
   await syncDocuments();
+  await syncEodCotation();
 }
 
 async function main() {

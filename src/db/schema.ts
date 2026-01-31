@@ -84,13 +84,12 @@ export const cotation = sqliteTable(
     fund_code: text('fund_code')
       .notNull()
       .references(() => fundMaster.code, { onDelete: 'cascade' }),
-    currency: text('currency').notNull(),
     date_iso: text('date_iso').notNull(),
     date: text('date').notNull(),
     price: real('price').notNull(),
   },
   (t: any) => ({
-    pk: primaryKey({ columns: [t.fund_code, t.currency, t.date_iso] }),
+    pk: primaryKey({ columns: [t.fund_code, t.date_iso] }),
     idxFundDate: index('idx_cotation_fund_date').on(t.fund_code, t.date_iso),
   })
 );

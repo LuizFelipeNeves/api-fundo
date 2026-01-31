@@ -85,11 +85,10 @@ function migrate(db: Database.Database) {
 
     CREATE TABLE IF NOT EXISTS cotation (
       fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
-      currency TEXT NOT NULL,
       date_iso TEXT NOT NULL,
       date TEXT NOT NULL,
       price REAL NOT NULL,
-      PRIMARY KEY (fund_code, currency, date_iso)
+      PRIMARY KEY (fund_code, date_iso)
     );
     CREATE INDEX IF NOT EXISTS idx_cotation_fund_date ON cotation(fund_code, date_iso);
 
