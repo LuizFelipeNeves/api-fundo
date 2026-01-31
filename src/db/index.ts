@@ -110,7 +110,6 @@ function migrate(db: Database.Database) {
       title TEXT NOT NULL,
       category TEXT NOT NULL,
       type TEXT NOT NULL,
-      date_iso TEXT NOT NULL,
       date TEXT NOT NULL,
       date_upload_iso TEXT NOT NULL,
       dateUpload TEXT NOT NULL,

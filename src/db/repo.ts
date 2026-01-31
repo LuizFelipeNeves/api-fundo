@@ -466,8 +466,7 @@ export function upsertDocuments(db: Database.Database, fundCode: string, docs: D
     let maxId = 0;
     for (const d of docs) {
       maxId = Math.max(maxId, d.id);
-      const dateIso = toDateIsoFromBr(d.date) || now.slice(0, 10);
-      const uploadIso = toDateIsoFromBr(d.dateUpload) || dateIso;
+      const uploadIso = toDateIsoFromBr(d.dateUpload) || toDateIsoFromBr(d.date) || now.slice(0, 10);
 
       inserted += tx
         .insert(document)
@@ -477,7 +476,6 @@ export function upsertDocuments(db: Database.Database, fundCode: string, docs: D
           title: d.title,
           category: d.category,
           type: d.type,
-          date_iso: dateIso,
           date: d.date,
           date_upload_iso: uploadIso,
           dateUpload: d.dateUpload,
@@ -492,7 +490,6 @@ export function upsertDocuments(db: Database.Database, fundCode: string, docs: D
             title: d.title,
             category: d.category,
             type: d.type,
-            date_iso: dateIso,
             date: d.date,
             date_upload_iso: uploadIso,
             dateUpload: d.dateUpload,

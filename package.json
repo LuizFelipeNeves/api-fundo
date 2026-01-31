@@ -10,6 +10,8 @@
     "start:jobs": "node dist/jobs/cli.js",
     "start:jobs:cron": "node dist/jobs/cron.js",
     "build": "tsc",
+    "docker:api": "docker compose up -d --build api",
+    "docker:jobs": "docker compose up -d --build jobs",
     "test": "node --test --import tsx \"src/**/*.test.ts\""
   },
   "dependencies": {

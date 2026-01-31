@@ -123,7 +123,6 @@ export const document = sqliteTable(
     title: text('title').notNull(),
     category: text('category').notNull(),
     type: text('type').notNull(),
-    date_iso: text('date_iso').notNull(),
     date: text('date').notNull(),
     date_upload_iso: text('date_upload_iso').notNull(),
     dateUpload: text('dateUpload').notNull(),
