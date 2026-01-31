@@ -6,6 +6,7 @@ import {
   fetchFIICotations,
   fetchDividends,
   fetchCotationsToday,
+  fetchDocuments,
 } from '../services/client';
 import { createHandler } from '../helpers';
 import {
@@ -19,6 +20,7 @@ import {
   DividendItemSchema,
   IndicatorsSchema,
   CotationsTodaySchema,
+  DocumentItemSchema,
 } from '../openapi-schemas';
 
 const INVALID_CODE_RESPONSE = {
@@ -198,6 +200,34 @@ app.openapi(
     const data = await fetchCotationsToday(code);
     return { data };
   }, 'fetchCotationsToday') as any
+);
+
+// Rota: Documentos
+const getDocumentsRoute = createRoute({
+  method: 'get',
+  path: '/{code}/documents',
+  tags: ['Documentos'],
+  summary: 'Documentos do FII (FNET)',
+  request: { params: FIIParamsSchema },
+  responses: {
+    200: { description: 'Documentos do FII', content: { 'application/json': { schema: z.array(DocumentItemSchema) } } },
+    400: { description: 'Código inválido' },
+    404: { description: 'FII não encontrado' },
+    500: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Erro' },
+  },
+});
+
+app.openapi(
+  getDocumentsRoute,
+  createHandler(async (c: any) => {
+    const { valid, code } = getValidatedCode(c);
+    if (!valid || !code) {
+      return c.json(INVALID_CODE_RESPONSE, 400);
+    }
+    const data = await fetchFIIDetails(code);
+    const documents = await fetchDocuments(data.cnpj);
+    return { data: documents };
+  }, 'fetchDocuments') as any
 );
 
 export default app;

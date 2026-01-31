@@ -1,14 +1,16 @@
 import { BASE_URL } from '../config';
 import { FII_LIST_PARAMS } from '../config/fii-list';
-import { get, post, fetchText } from '../http/client';
-import { extractFIIDetails, extractFIIId, extractDividendsHistory, normalizeIndicators, normalizeCotations, normalizeDividends, normalizeFIIDetails, normalizeCotationsToday } from '../parsers';
+import { get, post, fetchText, fetchWithSession } from '../http/client';
+import { extractFIIDetails, extractFIIId, extractDividendsHistory, normalizeIndicators, normalizeCotations, normalizeDividends, normalizeFIIDetails, normalizeCotationsToday, normalizeDocuments } from '../parsers';
 import type { FIIResponse, FIIDetails } from '../types';
 import type { NormalizedIndicators } from '../parsers/indicators';
 import type { NormalizedCotations } from '../parsers/cotations';
 import type { DividendData } from '../parsers/dividends';
 import type { ContationsTodayData } from '../parsers/today';
+import type { DocumentData } from '../parsers/documents';
 
 const MAX_DAYS = 1825;
+const FNET_BASE = 'https://fnet.bmfbovespa.com.br/fnet/publico';
 
 export { extractFIIDetails, extractFIIId };
 
@@ -68,4 +70,12 @@ export async function fetchDividends(code: string): Promise<DividendData[]> {
 export async function fetchCotationsToday(code: string): Promise<ContationsTodayData> {
   const raw = await get<Record<string, any[]>>(`${BASE_URL}/api/quotations/one-day/${code}/`);
   return normalizeCotationsToday(raw);
+}
+
+export async function fetchDocuments(cnpj: string): Promise<DocumentData[]> {
+  const initUrl = `${FNET_BASE}/abrirGerenciadorDocumentosCVM?cnpjFundo=${cnpj}`;
+  const dataUrl = `${FNET_BASE}/pesquisarGerenciadorDocumentosDados?d=1&s=0&l=100&o%5B0%5D%5BdataReferencia%5D=desc&idCategoriaDocumento=0&idTipoDocumento=0&idEspecieDocumento=0&isSession=true`;
+
+  const raw = await fetchWithSession<{ data: any[] }>(initUrl, dataUrl, { timeout: 15000 });
+  return normalizeDocuments(raw.data);
 }

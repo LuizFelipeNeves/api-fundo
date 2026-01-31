@@ -4,6 +4,7 @@ export { normalizeCotations } from './cotations';
 export { normalizeDividends, type DividendData } from './dividends';
 export { normalizeFIIDetails } from './fii-details';
 export { normalizeCotationsToday, type ContationsTodayData, type CotationTodayItem } from './today';
+export { normalizeDocuments, type DocumentData } from './documents';
 
 export function extractFIIId(html: string): string {
   const match = html.match(/data-company-id="(\d+)"/);

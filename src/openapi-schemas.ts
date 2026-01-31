@@ -92,3 +92,16 @@ export const CotationsTodaySchema = z.object({
   dolar: z.array(CotationTodayItemSchema),
   euro: z.array(CotationTodayItemSchema),
 });
+
+// Documents schemas
+export const DocumentItemSchema = z.object({
+  id: z.number().openapi({ example: 1097619 }),
+  title: z.string().openapi({ example: 'KILIMA VOLKANO RECEBÍVEIS IMOBILIÁRIOS FUNDO DE INVESTIMENTO IMOBILIÁRIO' }),
+  category: z.string().openapi({ example: 'Aviso aos Cotistas - Estruturado' }),
+  type: z.string().openapi({ example: 'Rendimentos e Amortizações' }),
+  date: z.string().openapi({ example: '31/01/2026' }),
+  dateUpload: z.string().openapi({ example: '30/01/2026' }),
+  url: z.string().openapi({ example: 'https://fnet.bmfbovespa.com.br/fnet/publico/exibirDocumento?id=1097619' }),
+  status: z.string().openapi({ example: 'Ativo com visualização' }),
+  version: z.number().openapi({ example: 2 }),
+});
