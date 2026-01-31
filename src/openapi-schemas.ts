@@ -68,7 +68,9 @@ export const CotationsSchema = z.object({
 export const DividendItemSchema = z.object({
   value: z.number().openapi({ example: 1.11 }),
   yield: z.number().openapi({ example: 1.04 }),
-  date: z.string().openapi({ example: '11/2025' }),
+  date: z.string().openapi({ example: '15/01/2026' }),
+  payment: z.string().openapi({ example: '22/01/2026' }),
+  type: z.enum(['Dividendos', 'Amortização']).openapi({ example: 'Dividendos' }),
 });
 
 // Indicators schemas

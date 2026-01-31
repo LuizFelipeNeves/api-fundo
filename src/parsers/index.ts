@@ -71,3 +71,38 @@ function normalizeText(text: string): string {
     .replace(/&nbsp;/g, ' ')
     .trim();
 }
+
+export interface DividendItem {
+  value: number;
+  date: string;
+  payment: string;
+  type: 'Dividendos' | 'Amortização';
+}
+
+export function extractDividendsHistory(html: string): DividendItem[] {
+  const items: DividendItem[] = [];
+
+  // Extrair linhas da tabela de dividendos/amortizações
+  const rowRegex = /<tr[^>]*>\s*<td[^>]*class="[^"]*text-center[^"]*"[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*class="[^"]*text-center[^"]*"[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*class="[^"]*text-center[^"]*"[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*class="[^"]*text-center[^"]*"[^>]*>([\s\S]*?)<\/td>\s*<\/tr>/g;
+
+  let match;
+  while ((match = rowRegex.exec(html)) !== null) {
+    const type = match[1].replace(/<[^>]*>/g, '').trim();
+    const dateCom = match[2].replace(/<[^>]*>/g, '').trim();
+    const payment = match[3].replace(/<[^>]*>/g, '').trim();
+    const valueStr = match[4].replace(/<[^>]*>/g, '').replace(/\./g, '').replace(',', '.').trim();
+
+    const value = parseFloat(valueStr) || 0;
+
+    if (type === 'Dividendos' || type === 'Amortização') {
+      items.push({
+        value,
+        date: dateCom,
+        payment,
+        type: type as 'Dividendos' | 'Amortização',
+      });
+    }
+  }
+
+  return items;
+}

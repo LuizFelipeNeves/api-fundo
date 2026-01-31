@@ -1,12 +1,14 @@
 import { BASE_URL } from '../config';
 import { FII_LIST_PARAMS } from '../config/fii-list';
 import { get, post, fetchText } from '../http/client';
-import { extractFIIDetails, extractFIIId, normalizeIndicators, normalizeCotations, normalizeDividends, normalizeFIIDetails, normalizeCotationsToday } from '../parsers';
+import { extractFIIDetails, extractFIIId, extractDividendsHistory, normalizeIndicators, normalizeCotations, normalizeDividends, normalizeFIIDetails, normalizeCotationsToday } from '../parsers';
 import type { FIIResponse, FIIDetails } from '../types';
 import type { NormalizedIndicators } from '../parsers/indicators';
 import type { NormalizedCotations } from '../parsers/cotations';
 import type { DividendData } from '../parsers/dividends';
 import type { ContationsTodayData } from '../parsers/today';
+
+const MAX_DAYS = 1825;
 
 export { extractFIIDetails, extractFIIId };
 
@@ -50,17 +52,17 @@ export async function fetchFIIIndicators(id: string): Promise<NormalizedIndicato
   return normalizeIndicators(raw);
 }
 
-export async function fetchFIICotations(id: string, days: number = 1825): Promise<NormalizedCotations> {
+export async function fetchFIICotations(id: string, days: number = MAX_DAYS): Promise<NormalizedCotations> {
   const raw = await get<Record<string, any[]>>(`${BASE_URL}/api/fii/cotacoes/chart/${id}/${days}/true`);
   return normalizeCotations(raw);
 }
 
-export async function fetchDividends(id: string, days: number = 1825): Promise<DividendData[]> {
-  const [dividends, dividendYield] = await Promise.all([
-    get<any[]>(`${BASE_URL}/api/fii/dividendos/chart/${id}/${days}/mes`),
-    get<any[]>(`${BASE_URL}/api/fii/dividend-yield/chart/${id}/${days}/mes`),
-  ]);
-  return normalizeDividends(dividends, dividendYield);
+export async function fetchDividends(code: string): Promise<DividendData[]> {
+  const html = await fetchText(`${BASE_URL}/fiis/${code}`);
+  const id = extractFIIId(html);
+  const dividendYield = await get<any[]>(`${BASE_URL}/api/fii/dividend-yield/chart/${id}/${MAX_DAYS}/mes`);
+  const dividendsHtml = extractDividendsHistory(html);
+  return normalizeDividends(dividendsHtml, dividendYield);
 }
 
 export async function fetchCotationsToday(code: string): Promise<ContationsTodayData> {

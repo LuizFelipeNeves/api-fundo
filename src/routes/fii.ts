@@ -149,13 +149,12 @@ const getDividendsRoute = createRoute({
   method: 'get',
   path: '/{code}/dividends',
   tags: ['Dividendos'],
-  summary: 'Dividendos do FII',
+  summary: 'Dividendos e amortizações do FII',
   request: {
     params: FIIParamsSchema,
-    query: CotationsQuerySchema,
   },
   responses: {
-    200: { description: 'Dividendos do FII', content: { 'application/json': { schema: z.array(DividendItemSchema) } } },
+    200: { description: 'Dividendos e amortizações do FII', content: { 'application/json': { schema: z.array(DividendItemSchema) } } },
     400: { description: 'Código inválido' },
     404: { description: 'FII não encontrado' },
     500: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Erro' },
@@ -169,9 +168,7 @@ app.openapi(
     if (!valid || !code) {
       return c.json(INVALID_CODE_RESPONSE, 400);
     }
-    const days = parseInt(c.req.query('days') || '1825');
-    const data = await fetchFIIDetails(code);
-    const dividends = await fetchDividends(data.id, days);
+    const dividends = await fetchDividends(code);
     return { data: dividends };
   }, 'fetchDividends') as any
 );
