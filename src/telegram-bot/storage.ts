@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import { nowIso } from '../db';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { and, asc, eq, inArray } from 'drizzle-orm';
-import { fundMaster, telegramUser, telegramUserFund } from '../db/schema';
+import { fundMaster, telegramPendingAction, telegramUser, telegramUserFund } from '../db/schema';
 
 export type TelegramUserUpsert = {
   chatId: string;
@@ -142,4 +142,48 @@ export function listFundCategoryInfoByCodes(db: Database.Database, fundCodes: st
     .where(inArray(fundMaster.code, codes))
     .orderBy(asc(fundMaster.code))
     .all();
+}
+
+export type TelegramPendingAction =
+  | { kind: 'set'; codes: string[] }
+  | { kind: 'remove'; codes: string[] };
+
+export function upsertTelegramPendingAction(db: Database.Database, chatId: string, action: TelegramPendingAction): void {
+  const now = nowIso();
+  const orm = drizzle(db);
+  orm
+    .insert(telegramPendingAction)
+    .values({
+      chat_id: chatId,
+      created_at: now,
+      action_json: JSON.stringify(action),
+    })
+    .onConflictDoUpdate({
+      target: telegramPendingAction.chat_id,
+      set: {
+        created_at: now,
+        action_json: JSON.stringify(action),
+      },
+    })
+    .run();
+}
+
+export function getTelegramPendingAction(db: Database.Database, chatId: string): { createdAt: string; action: TelegramPendingAction } | null {
+  const orm = drizzle(db);
+  const row = orm
+    .select({ createdAt: telegramPendingAction.created_at, json: telegramPendingAction.action_json })
+    .from(telegramPendingAction)
+    .where(eq(telegramPendingAction.chat_id, chatId))
+    .get();
+  if (!row?.json) return null;
+  try {
+    return { createdAt: row.createdAt, action: JSON.parse(row.json) as TelegramPendingAction };
+  } catch {
+    return null;
+  }
+}
+
+export function clearTelegramPendingAction(db: Database.Database, chatId: string): void {
+  const orm = drizzle(db);
+  orm.delete(telegramPendingAction).where(eq(telegramPendingAction.chat_id, chatId)).run();
 }

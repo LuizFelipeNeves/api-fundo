@@ -164,6 +164,14 @@ export const telegramUserFund = sqliteTable(
   })
 );
 
+export const telegramPendingAction = sqliteTable('telegram_pending_action', {
+  chat_id: text('chat_id')
+    .primaryKey()
+    .references(() => telegramUser.chat_id, { onDelete: 'cascade' }),
+  created_at: text('created_at').notNull(),
+  action_json: text('action_json').notNull(),
+});
+
 export const fundCotationStats = sqliteTable('fund_cotation_stats', {
   fund_code: text('fund_code')
     .primaryKey()

@@ -22,6 +22,8 @@ export type BotCommand =
   | { kind: 'help' }
   | { kind: 'list' }
   | { kind: 'categories' }
+  | { kind: 'confirm' }
+  | { kind: 'cancel' }
   | { kind: 'set'; codes: string[] }
   | { kind: 'add'; codes: string[] }
   | { kind: 'remove'; codes: string[] }
@@ -34,11 +36,16 @@ export function parseBotCommand(text: string): BotCommand {
   if (!raw) return { kind: 'help' };
   const lowered = raw.toLowerCase();
   const withoutSlash = lowered.startsWith('/') ? lowered.slice(1) : lowered;
+  const withoutMention = withoutSlash.replace(/@[\w_]+/g, '').trim();
+  const firstWord = withoutMention.split(' ')[0] || '';
 
   if (!withoutSlash || withoutSlash === 'start' || withoutSlash === 'help' || withoutSlash === 'ajuda' || withoutSlash === 'menu')
     return { kind: 'help' };
   if (withoutSlash === 'lista' || withoutSlash === 'minha lista') return { kind: 'list' };
   if (withoutSlash === 'categorias' || withoutSlash === 'categoria') return { kind: 'categories' };
+  if (withoutMention === 'confirm' || withoutMention === 'confirmar' || withoutMention === 'sim') return { kind: 'confirm' };
+  if (withoutMention === 'cancel' || withoutMention === 'cancelar' || withoutMention === 'nao' || withoutMention === 'não')
+    return { kind: 'cancel' };
 
   const documentosMatch = raw.match(/^(\/)?documentos\b(.*)$/i);
   if (documentosMatch) {
@@ -57,9 +64,9 @@ export function parseBotCommand(text: string): BotCommand {
     return { kind: 'help' };
   }
 
-  const cotationMatch = raw.match(/^(\/)?cotation\b(.*)$/i);
+  const cotationMatch = raw.match(/^(\/)?(cotation|contation|cotacao)\b(.*)$/i);
   if (cotationMatch) {
-    const rest = normalizeText(cotationMatch[2] || '');
+    const rest = normalizeText(cotationMatch[3] || '');
     const code = extractFundCodes(rest)[0];
     if (code) return { kind: 'cotation', code };
     return { kind: 'help' };
@@ -73,6 +80,34 @@ export function parseBotCommand(text: string): BotCommand {
 
   const rmMatch = raw.match(/^(\/)?remover\s+da\s+lista\s*:?\s*(.+)$/i) || raw.match(/^(\/)?remove\s*:?\s*(.+)$/i);
   if (rmMatch?.[2]) return { kind: 'remove', codes: extractFundCodes(rmMatch[2]) };
+
+  if (
+    lowered.startsWith('/') &&
+    firstWord &&
+    ![
+      'start',
+      'help',
+      'ajuda',
+      'menu',
+      'lista',
+      'minha',
+      'categorias',
+      'categoria',
+      'documentos',
+      'pesquisa',
+      'cotation',
+      'contation',
+      'cotacao',
+      'set',
+      'atualizar',
+      'add',
+      'adicionar',
+      'remove',
+      'remover',
+    ].includes(firstWord)
+  ) {
+    return { kind: 'help' };
+  }
 
   const rawCodes = extractFundCodes(raw);
   if (rawCodes.length) return { kind: 'set', codes: rawCodes };

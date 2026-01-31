@@ -1,8 +1,10 @@
 import type { DocumentData } from '../parsers/documents';
+import { formatNewDocumentMessage } from './webhook-messages';
 
 export type TelegramUpdate = {
   update_id: number;
   message?: TelegramMessage;
+  callback_query?: TelegramCallbackQuery;
 };
 
 export type TelegramMessage = {
@@ -10,6 +12,12 @@ export type TelegramMessage = {
   date: number;
   chat: { id: number; type: string; username?: string; first_name?: string; last_name?: string };
   text?: string;
+};
+
+export type TelegramCallbackQuery = {
+  id: string;
+  data?: string;
+  message?: TelegramMessage;
 };
 
 type TelegramApiOk<T> = { ok: true; result: T };
@@ -21,26 +29,22 @@ type TelegramSendMessageResponse = {
   message_id: number;
 };
 
+type TelegramInlineKeyboardButton = {
+  text: string;
+  callback_data: string;
+};
+
+type TelegramReplyMarkup = {
+  inline_keyboard: TelegramInlineKeyboardButton[][];
+};
+
 type TelegramSendMessageOpts = {
   disableWebPagePreview?: boolean;
   parseMode?: 'HTML' | 'MarkdownV2';
+  replyMarkup?: TelegramReplyMarkup;
 };
 
 const registeredTokens = new Set<string>();
-
-function cleanLine(value: unknown): string {
-  return String(value || '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function formatDate(value: string): string {
-  const v = cleanLine(value);
-  if (!v) return '';
-  const iso = v.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`;
-  return v;
-}
 
 function buildQuery(qs: Record<string, string | number | boolean | undefined>): string {
   const query = Object.entries(qs)
@@ -79,7 +83,7 @@ export function createTelegramClient(token: string) {
   async function getUpdates(opts: { offset?: number; timeoutSec?: number }): Promise<TelegramUpdate[]> {
     return telegramRequest<TelegramUpdate[]>(baseUrl, 'getUpdates', {
       method: 'GET',
-      qs: { offset: opts.offset, timeout: opts.timeoutSec ?? 25, allowed_updates: JSON.stringify(['message']) },
+      qs: { offset: opts.offset, timeout: opts.timeoutSec ?? 25, allowed_updates: JSON.stringify(['message', 'callback_query']) },
     });
   }
 
@@ -98,37 +102,26 @@ export function createTelegramClient(token: string) {
         text,
         disable_web_page_preview: opts?.disableWebPagePreview ?? true,
         parse_mode: opts?.parseMode,
+        reply_markup: opts?.replyMarkup,
       },
     });
   }
 
-  return { getUpdates, setMyCommands, sendMessage };
-}
+  async function answerCallbackQuery(
+    callbackQueryId: string,
+    opts?: { text?: string; showAlert?: boolean }
+  ): Promise<boolean> {
+    return telegramRequest<boolean>(baseUrl, 'answerCallbackQuery', {
+      method: 'POST',
+      body: {
+        callback_query_id: callbackQueryId,
+        text: opts?.text,
+        show_alert: opts?.showAlert,
+      },
+    });
+  }
 
-export function formatNewDocumentMessage(fundCode: string, d: DocumentData): string {
-  const code = cleanLine(fundCode).toUpperCase();
-  const title = cleanLine(d.title);
-  const category = cleanLine(d.category);
-  const type = cleanLine(d.type);
-  const status = cleanLine(d.status);
-  const url = cleanLine(d.url);
-  const dateUpload = formatDate(d.dateUpload);
-  const dateDoc = formatDate(d.date);
-  const version = Number.isFinite(d.version) ? String(d.version) : '';
-
-  const header = `Novo documento publicado para ${code}`;
-  const docLine = category || type ? `Documento: ${[category, type].filter(Boolean).join(' · ')}` : '';
-  const titleLine = title ? `Título: ${title}` : '';
-  const whenLine = dateUpload
-    ? `Data de upload: ${dateUpload}${dateDoc && dateDoc !== dateUpload ? ` (doc: ${dateDoc})` : ''}`
-    : dateDoc
-      ? `Data do documento: ${dateDoc}`
-      : '';
-  const statusLine = status ? `Status: ${status}` : '';
-  const versionLine = version ? `Versão: ${version}` : '';
-  const linkLine = url ? `Link: ${url}` : '';
-
-  return [header, docLine, titleLine, whenLine, statusLine, versionLine, linkLine].filter(Boolean).join('\n');
+  return { getUpdates, setMyCommands, sendMessage, answerCallbackQuery };
 }
 
 export function createTelegramService(token: string) {
@@ -147,6 +140,8 @@ export function createTelegramService(token: string) {
         { command: 'set', description: 'Substituir sua lista de fundos' },
         { command: 'add', description: 'Adicionar fundos na lista' },
         { command: 'remove', description: 'Remover fundos da lista' },
+        { command: 'confirm', description: 'Confirmar ação pendente' },
+        { command: 'cancel', description: 'Cancelar ação pendente' },
         { command: 'help', description: 'Ajuda' },
       ]);
       registeredTokens.add(token);
@@ -156,9 +151,22 @@ export function createTelegramService(token: string) {
     }
   }
 
-  async function sendText(chatId: string | number, text: string): Promise<{ ok: true } | { ok: false }> {
+  async function sendText(
+    chatId: string | number,
+    text: string,
+    opts?: TelegramSendMessageOpts
+  ): Promise<{ ok: true } | { ok: false }> {
     try {
-      await client.sendMessage(chatId, text);
+      await client.sendMessage(chatId, text, opts);
+      return { ok: true };
+    } catch {
+      return { ok: false };
+    }
+  }
+
+  async function ackCallbackQuery(callbackQueryId: string): Promise<{ ok: true } | { ok: false }> {
+    try {
+      await client.answerCallbackQuery(callbackQueryId);
       return { ok: true };
     } catch {
       return { ok: false };
@@ -189,5 +197,5 @@ export function createTelegramService(token: string) {
     return { sent, failed };
   }
 
-  return { registerDefaultCommandsOnce, sendText, notifyNewDocuments };
+  return { registerDefaultCommandsOnce, sendText, ackCallbackQuery, notifyNewDocuments };
 }

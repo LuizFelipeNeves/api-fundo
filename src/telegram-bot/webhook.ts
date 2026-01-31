@@ -1,23 +1,28 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { getDb } from '../db';
-import { sql, desc, eq, inArray } from 'drizzle-orm';
+import { desc, eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { cotation, dividend, document, fundMaster } from '../db/schema';
+import { document, fundMaster } from '../db/schema';
 import { formatHelp, parseBotCommand } from './commands';
 import { getOrComputeCotationStats } from './cotation-stats';
 import { createTelegramService, type TelegramUpdate } from './telegram-api';
 import {
   addTelegramUserFunds,
+  clearTelegramPendingAction,
+  getTelegramPendingAction,
   listExistingFundCodes,
   listFundCategoryInfoByCodes,
   listTelegramUserFunds,
   removeTelegramUserFunds,
   setTelegramUserFunds,
+  upsertTelegramPendingAction,
   upsertTelegramUser,
 } from './storage';
 import {
   formatAddMessage,
   formatCategoriesMessage,
+  formatConfirmRemoveMessage,
+  formatConfirmSetMessage,
   formatCotationMessage,
   formatDocumentsMessage,
   formatFundsListMessage,
@@ -31,6 +36,12 @@ const app = new OpenAPIHono();
 function pickLimit(value: number | undefined, fallback: number): number {
   if (!Number.isFinite(value) || (value as number) <= 0) return fallback;
   return Math.min(Math.max(1, Math.floor(value as number)), 50);
+}
+
+function isExpired(iso: string, ttlMs: number): boolean {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return true;
+  return Date.now() - t > ttlMs;
 }
 
 function listLatestDocuments(db: ReturnType<typeof getDb>, fundCodes: string[], limit: number) {
@@ -64,9 +75,11 @@ app.post('/webhook', async (c) => {
   if (!token) return c.json({ ok: true });
 
   const update = (await c.req.json()) as TelegramUpdate;
-  const msg = update?.message;
+  const callback = update?.callback_query;
+  const callbackData = String(callback?.data || '').trim();
+  const msg = update?.message ?? callback?.message;
   const text = msg?.text || '';
-  if (!msg || !text) return c.json({ ok: true });
+  if (!msg || (!text && !callbackData)) return c.json({ ok: true });
 
   const chatIdStr = String(msg.chat.id);
   const db = getDb();
@@ -79,10 +92,66 @@ app.post('/webhook', async (c) => {
 
   const telegram = createTelegramService(token);
   await telegram.registerDefaultCommandsOnce();
-  const cmd = parseBotCommand(text);
+  if (callback?.id) {
+    await telegram.ackCallbackQuery(callback.id);
+  }
+  if (callbackData && callbackData !== 'confirm' && callbackData !== 'cancel') return c.json({ ok: true });
+  const cmd =
+    callbackData === 'confirm'
+      ? { kind: 'confirm' as const }
+      : callbackData === 'cancel'
+        ? { kind: 'cancel' as const }
+        : parseBotCommand(text);
 
   if (cmd.kind === 'help') {
     await telegram.sendText(chatIdStr, formatHelp());
+    return c.json({ ok: true });
+  }
+
+  if (cmd.kind === 'cancel') {
+    clearTelegramPendingAction(db, chatIdStr);
+    await telegram.sendText(chatIdStr, '✅ Ok, ação cancelada.');
+    return c.json({ ok: true });
+  }
+
+  if (cmd.kind === 'confirm') {
+    const pending = getTelegramPendingAction(db, chatIdStr);
+    if (!pending) {
+      await telegram.sendText(chatIdStr, 'Não há nenhuma ação pendente para confirmar.');
+      return c.json({ ok: true });
+    }
+    if (isExpired(pending.createdAt, 10 * 60 * 1000)) {
+      clearTelegramPendingAction(db, chatIdStr);
+      await telegram.sendText(chatIdStr, 'Essa confirmação expirou. Envie o comando novamente.');
+      return c.json({ ok: true });
+    }
+
+    if (pending.action.kind === 'set') {
+      const codes = pending.action.codes;
+      const existing = listExistingFundCodes(db, codes);
+      const missing = codes.map((c) => c.toUpperCase()).filter((code) => !existing.includes(code));
+      const before = listTelegramUserFunds(db, chatIdStr);
+      setTelegramUserFunds(db, chatIdStr, existing);
+      clearTelegramPendingAction(db, chatIdStr);
+      const removed = before.filter((code) => !existing.includes(code));
+      const added = existing.filter((code) => !before.includes(code));
+      await telegram.sendText(chatIdStr, `✅ Confirmado\n\n${formatSetMessage({ existing, added, removed, missing })}`);
+      return c.json({ ok: true });
+    }
+
+    if (pending.action.kind === 'remove') {
+      const codes = pending.action.codes;
+      const existing = listExistingFundCodes(db, codes);
+      const missing = codes.map((c) => c.toUpperCase()).filter((code) => !existing.includes(code));
+      const removedCount = removeTelegramUserFunds(db, chatIdStr, existing);
+      clearTelegramPendingAction(db, chatIdStr);
+      const nowList = listTelegramUserFunds(db, chatIdStr);
+      await telegram.sendText(chatIdStr, `✅ Confirmado\n\n${formatRemoveMessage({ removedCount, nowList, missing })}`);
+      return c.json({ ok: true });
+    }
+
+    clearTelegramPendingAction(db, chatIdStr);
+    await telegram.sendText(chatIdStr, 'Não consegui interpretar a ação pendente. Envie o comando novamente.');
     return c.json({ ok: true });
   }
 
@@ -173,13 +242,7 @@ app.post('/webhook', async (c) => {
       return c.json({ ok: true });
     }
 
-    const counts = {
-      documents: Number(orm.select({ c: sql<number>`count(*)` }).from(document).where(eq(document.fund_code, code)).get()?.c ?? 0),
-      dividends: Number(orm.select({ c: sql<number>`count(*)` }).from(dividend).where(eq(dividend.fund_code, code)).get()?.c ?? 0),
-      cotations: Number(orm.select({ c: sql<number>`count(*)` }).from(cotation).where(eq(cotation.fund_code, code)).get()?.c ?? 0),
-    };
-
-    await telegram.sendText(chatIdStr, formatPesquisaMessage({ fund, counts }));
+    await telegram.sendText(chatIdStr, formatPesquisaMessage({ fund }));
     return c.json({ ok: true });
   }
 
@@ -205,9 +268,25 @@ app.post('/webhook', async (c) => {
 
   if (cmd.kind === 'set') {
     const before = listTelegramUserFunds(db, chatIdStr);
-    setTelegramUserFunds(db, chatIdStr, existing);
     const removed = before.filter((code) => !existing.includes(code));
     const added = existing.filter((code) => !before.includes(code));
+    if (removed.length > 0) {
+      upsertTelegramPendingAction(db, chatIdStr, { kind: 'set', codes: cmd.codes.map((c) => c.toUpperCase()) });
+      await telegram.sendText(
+        chatIdStr,
+        formatConfirmSetMessage({ beforeCount: before.length, afterCodes: existing, added, removed, missing }),
+        {
+          replyMarkup: {
+            inline_keyboard: [[
+              { text: '✅ Confirmar', callback_data: 'confirm' },
+              { text: '❌ Cancelar', callback_data: 'cancel' },
+            ]],
+          },
+        }
+      );
+      return c.json({ ok: true });
+    }
+    setTelegramUserFunds(db, chatIdStr, existing);
     await telegram.sendText(chatIdStr, formatSetMessage({ existing, added, removed, missing }));
     return c.json({ ok: true });
   }
@@ -220,9 +299,22 @@ app.post('/webhook', async (c) => {
   }
 
   if (cmd.kind === 'remove') {
-    const removedCount = removeTelegramUserFunds(db, chatIdStr, existing);
-    const nowList = listTelegramUserFunds(db, chatIdStr);
-    await telegram.sendText(chatIdStr, formatRemoveMessage({ removedCount, nowList, missing }));
+    const before = listTelegramUserFunds(db, chatIdStr);
+    const beforeSet = new Set(before);
+    const toRemove = existing.filter((code) => beforeSet.has(code));
+    if (toRemove.length > 0) {
+      upsertTelegramPendingAction(db, chatIdStr, { kind: 'remove', codes: cmd.codes.map((c) => c.toUpperCase()) });
+      await telegram.sendText(chatIdStr, formatConfirmRemoveMessage({ beforeCount: before.length, toRemove, missing }), {
+        replyMarkup: {
+          inline_keyboard: [[
+            { text: '✅ Confirmar', callback_data: 'confirm' },
+            { text: '❌ Cancelar', callback_data: 'cancel' },
+          ]],
+        },
+      });
+      return c.json({ ok: true });
+    }
+    await telegram.sendText(chatIdStr, formatRemoveMessage({ removedCount: 0, nowList: before, missing }));
     return c.json({ ok: true });
   }
 
