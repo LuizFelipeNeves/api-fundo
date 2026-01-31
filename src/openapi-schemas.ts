@@ -81,7 +81,7 @@ export const IndicatorsSchema = z.record(z.array(IndicatorItemSchema));
 // Cotations today schemas
 export const CotationTodayItemSchema = z.object({
   price: z.number().openapi({ example: 10.67 }),
-  date: z.string().openapi({ example: '30/01/2026 10:01' }),
+  hour: z.string().openapi({ example: '10:01' }),
 });
 
 export const CotationsTodaySchema = z.object({
