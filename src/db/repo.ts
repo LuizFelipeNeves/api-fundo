@@ -208,6 +208,17 @@ export function listFundCodesWithCnpj(db: Database.Database): string[] {
   return rows.map((r) => r.code);
 }
 
+export function getDividendCount(db: Database.Database, fundCode: string): number {
+  const fundCodeUpper = fundCode.toUpperCase();
+  const row = db.prepare('select count(*) as c from dividend where fund_code = ?').get(fundCodeUpper) as { c?: number } | undefined;
+  return Number(row?.c ?? 0);
+}
+
+export function getDividendsTotalCount(db: Database.Database): number {
+  const row = db.prepare('select count(*) as c from dividend').get() as { c?: number } | undefined;
+  return Number(row?.c ?? 0);
+}
+
 export function listFundCodesMissingDetails(db: Database.Database): string[] {
   const orm = drizzle(db);
   const rows = orm

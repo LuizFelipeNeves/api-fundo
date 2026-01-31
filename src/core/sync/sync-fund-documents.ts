@@ -22,9 +22,10 @@ export async function syncFundDocuments<Db>(
   if (maxId) deps.repo.updateDocumentsMaxId(db, code, maxId);
 
   const hasNewDocument = maxId ? lastMaxId === null || maxId > lastMaxId : false;
+  const dividendCount = deps.repo.getDividendCount(db, code);
 
   let dividendsChanges = 0;
-  if (hasNewDocument && lastMaxId !== null) {
+  if (hasNewDocument || dividendCount === 0) {
     const result = await syncFundDetailsAndDividends(db, code, { fetcher: deps.fetcher, repo: deps.repo });
     dividendsChanges = result.dividendsChanges;
   }

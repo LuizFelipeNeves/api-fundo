@@ -1,11 +1,15 @@
 import { fetchFIIIndicators, fetchFIICotations } from '../services/client';
 import { getDb, nowIso, sha256 } from '../db';
 import * as repo from '../db/repo';
-import { createJobLogger, forEachConcurrent, resolveConcurrency } from './utils';
+import { createJobLogger, forEachConcurrent, resolveConcurrency, shouldRunCotationsToday } from './utils';
 import { syncFundIndicators } from '../core/sync/sync-fund-indicators';
 
 export async function syncIndicators(): Promise<{ ran: boolean }> {
   const log = createJobLogger('sync-indicators');
+  if (!shouldRunCotationsToday()) {
+    log.skipped('outside_window');
+    return { ran: false };
+  }
   const db = getDb();
   const codes = repo.listFundCodesWithId(db);
   const concurrency = resolveConcurrency({ envKey: 'INDICATORS_CONCURRENCY', fallback: 5, max: 20 });

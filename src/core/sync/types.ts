@@ -29,6 +29,7 @@ export interface RepoDeps<Db = unknown> {
     last_documents_max_id: number | null;
     last_historical_cotations_at: string | null;
   } | null;
+  getDividendCount(db: Db, fundCode: string): number;
   upsertIndicatorsSnapshot(db: Db, fundCode: string, fetchedAt: string, dataHash: string, data: NormalizedIndicators): boolean;
   upsertCotationsTodaySnapshot(db: Db, fundCode: string, fetchedAt: string, dataHash: string, data: CotationsTodayData): boolean;
   upsertCotationsHistoricalBrl(db: Db, fundCode: string, data: NormalizedCotations): number;

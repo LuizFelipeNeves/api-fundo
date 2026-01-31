@@ -1,17 +1,8 @@
 import { fetchCotationsToday } from '../services/client';
 import { getDb, nowIso, sha256 } from '../db';
 import * as repo from '../db/repo';
-import { createJobLogger, forEachConcurrent, resolveConcurrency } from './utils';
+import { createJobLogger, forEachConcurrent, resolveConcurrency, shouldRunCotationsToday } from './utils';
 import { syncFundCotationsToday } from '../core/sync/sync-fund-cotations-today';
-
-let didInitialRun = false;
-
-function shouldRunCotationsToday(): boolean {
-  if (!didInitialRun) return true;
-  const now = new Date();
-  const minutes = now.getHours() * 60 + now.getMinutes();
-  return minutes >= 10 * 60 && minutes <= 18 * 60 + 20;
-}
 
 export async function syncCotationsToday(): Promise<{ ran: boolean }> {
   const log = createJobLogger('sync-cotations-today');
@@ -19,7 +10,6 @@ export async function syncCotationsToday(): Promise<{ ran: boolean }> {
     log.skipped('outside_window');
     return { ran: false };
   }
-  didInitialRun = true;
 
   const db = getDb();
   const codes = repo.listFundCodes(db);

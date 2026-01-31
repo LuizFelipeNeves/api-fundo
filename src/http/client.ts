@@ -1,13 +1,17 @@
 import { getDefaultHeaders } from '../config';
 import dns from 'node:dns/promises';
 import net from 'node:net';
-import { ProxyAgent } from 'undici';
+import { ProxyAgent, type Dispatcher } from 'undici';
 
 const DEFAULT_TIMEOUT = 10000; // 10 segundos
 const DEFAULT_RETRY_MAX = 4;
 const DEFAULT_RETRY_BASE_MS = 600;
 const DEFAULT_HOST_CONCURRENCY = 3;
 const DEFAULT_HOST_MIN_TIME_MS = 150;
+const DEFAULT_OTHER_HOST_CONCURRENCY = 6;
+const DEFAULT_OTHER_HOST_MIN_TIME_MS = 0;
+const DEFAULT_FNET_HOST_CONCURRENCY = 2;
+const DEFAULT_FNET_HOST_MIN_TIME_MS = 150;
 
 interface RequestOptions {
   timeout?: number;
@@ -232,6 +236,26 @@ const I10_HOST_MIN_TIME_MS = clampInt(
   0,
   60000
 );
+const OTHER_HOST_CONCURRENCY = clampInt(
+  parsePositiveInt(process.env.OTHER_HOST_CONCURRENCY, DEFAULT_OTHER_HOST_CONCURRENCY),
+  1,
+  100
+);
+const OTHER_HOST_MIN_TIME_MS = clampInt(
+  parsePositiveInt(process.env.OTHER_HOST_MIN_TIME_MS, DEFAULT_OTHER_HOST_MIN_TIME_MS),
+  0,
+  60000
+);
+const FNET_HOST_CONCURRENCY = clampInt(
+  parsePositiveInt(process.env.FNET_HOST_CONCURRENCY, DEFAULT_FNET_HOST_CONCURRENCY),
+  1,
+  20
+);
+const FNET_HOST_MIN_TIME_MS = clampInt(
+  parsePositiveInt(process.env.FNET_HOST_MIN_TIME_MS, DEFAULT_FNET_HOST_MIN_TIME_MS),
+  0,
+  60000
+);
 
 type HostLimiterState = {
   inflight: number;
@@ -259,9 +283,9 @@ function getHostPolicy(hostname: string): { maxConcurrent: number; minTimeMs: nu
     return { maxConcurrent: I10_HOST_CONCURRENCY, minTimeMs: I10_HOST_MIN_TIME_MS };
   }
   if (hostname === 'fnet.bmfbovespa.com.br' || hostname.endsWith('.bmfbovespa.com.br')) {
-    return { maxConcurrent: 1, minTimeMs: 800 };
+    return { maxConcurrent: FNET_HOST_CONCURRENCY, minTimeMs: FNET_HOST_MIN_TIME_MS };
   }
-  return { maxConcurrent: 6, minTimeMs: 0 };
+  return { maxConcurrent: OTHER_HOST_CONCURRENCY, minTimeMs: OTHER_HOST_MIN_TIME_MS };
 }
 
 function drainHostLimiter(hostname: string) {
@@ -369,12 +393,52 @@ async function throwHttpError(response: Response, method: string, url: string): 
   throw new Error(`${method} ${url} -> HTTP ${response.status}${statusText}${typePart}${bodyPart}`);
 }
 
-function extractCookieNameValuesFromSetCookieHeader(setCookieHeader: string): string[] {
+type RequestInitWithDispatcher = RequestInit & { dispatcher?: Dispatcher };
+
+function parseCookieNameValuesFromHeader(setCookieHeader: string): string[] {
   const cookies: string[] = [];
-  for (const match of setCookieHeader.matchAll(/(?:^|,\s*)([^=;, \t]+=[^;]+)/g)) {
-    const nameValue = match[1]?.trim();
+  const header = setCookieHeader.trim();
+  if (!header) return cookies;
+
+  const boundaries: number[] = [0];
+  let inExpires = false;
+
+  for (let i = 0; i < header.length; i++) {
+    const ch = header[i];
+
+    if (!inExpires) {
+      if (
+        (ch === 'E' || ch === 'e') &&
+        header.slice(i, i + 8).toLowerCase() === 'expires='
+      ) {
+        inExpires = true;
+        i += 7;
+        continue;
+      }
+    } else if (ch === ';') {
+      inExpires = false;
+      continue;
+    }
+
+    if (ch !== ',' || inExpires) continue;
+
+    const rest = header.slice(i + 1);
+    const match = rest.match(/^\s*([^=;, \t]+)=/);
+    if (!match) continue;
+
+    boundaries.push(i + 1);
+  }
+
+  boundaries.push(header.length + 1);
+  for (let i = 0; i < boundaries.length - 1; i++) {
+    const start = boundaries[i]!;
+    const end = boundaries[i + 1]!;
+    const part = header.slice(start, end - 1).trim();
+    if (!part) continue;
+    const nameValue = part.split(';', 1)[0]?.trim();
     if (nameValue) cookies.push(nameValue);
   }
+
   return cookies;
 }
 
@@ -411,7 +475,7 @@ async function fetchWithRetry(
             ...init,
             signal: controller.signal,
             ...(tor ? { dispatcher: tor.dispatcher } : {}),
-          } as any
+          } satisfies RequestInitWithDispatcher
         )
       );
 
@@ -587,7 +651,12 @@ export async function fetchWithSession<T>(
     }
   } else {
     const setCookie = initResponse.headers.get('set-cookie');
-    if (setCookie) cookies.push(...extractCookieNameValuesFromSetCookieHeader(setCookie));
+    if (setCookie) cookies.push(...parseCookieNameValuesFromHeader(setCookie));
+  }
+  try {
+    initResponse.body?.cancel();
+  } catch {
+    null;
   }
 
   const headers: Record<string, string> = {

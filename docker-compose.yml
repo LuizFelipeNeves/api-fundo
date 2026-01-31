@@ -14,18 +14,20 @@ services:
     command: ["npm", "run", "jobs:cron"]
     environment:
       DB_PATH: "/data/data.sqlite"
-      TOR_PROXY_ENABLED: "1"
-      TOR_PROXY_OPTIONAL: "1"
-      TOR_PROXY_MODE: "fallback"
-      TOR_PROXY_SERVICE: "tor"
-      TOR_PROXY_PORT: "8118"
-    depends_on:
-      - tor
+      DOCUMENTS_CONCURRENCY: "5"
+      FNET_HOST_CONCURRENCY: "2"
+      FNET_HOST_MIN_TIME_MS: "120"
+      TOR_PROXY_ENABLED: "${TOR_PROXY_ENABLED:-0}"
+      TOR_PROXY_OPTIONAL: "${TOR_PROXY_OPTIONAL:-1}"
+      TOR_PROXY_MODE: "${TOR_PROXY_MODE:-fallback}"
+      TOR_PROXY_SERVICE: "${TOR_PROXY_SERVICE:-tor}"
+      TOR_PROXY_PORT: "${TOR_PROXY_PORT:-8118}"
     volumes:
       - ./data:/data
 
   tor:
     image: dperson/torproxy:latest
+    profiles: ["tor"]
     environment:
       TOR_NewCircuitPeriod: "300"
       TOR_MaxCircuitDirtiness: "600"

@@ -1,6 +1,6 @@
 import { getDb } from '../db';
 import * as repo from '../db/repo';
-import { createJobLogger } from './utils';
+import { createJobLogger, isWeekdayInSaoPaulo } from './utils';
 
 let lastRunDateIso: string | null = null;
 
@@ -27,6 +27,7 @@ function getSaoPauloTimeInfo(now: Date): { dateIso: string; minutes: number; dat
 }
 
 function shouldRunEod(now: Date): { run: boolean; dateIso: string; dateBr: string } {
+  if (!isWeekdayInSaoPaulo(now)) return { run: false, dateIso: '', dateBr: '' };
   const { dateIso, minutes, dateBr } = getSaoPauloTimeInfo(now);
   if (!dateIso) return { run: false, dateIso: '', dateBr: '' };
   const afterClose = minutes >= 18 * 60 + 30;
