@@ -148,7 +148,7 @@ export type TelegramPendingAction =
   | { kind: 'set'; codes: string[] }
   | { kind: 'remove'; codes: string[] };
 
-export function upsertTelegramPendingAction(db: Database.Database, chatId: string, action: TelegramPendingAction): void {
+export function upsertTelegramPendingAction(db: Database.Database, chatId: string, action: TelegramPendingAction): string {
   const now = nowIso();
   const orm = drizzle(db);
   orm
@@ -166,6 +166,7 @@ export function upsertTelegramPendingAction(db: Database.Database, chatId: strin
       },
     })
     .run();
+  return now;
 }
 
 export function getTelegramPendingAction(db: Database.Database, chatId: string): { createdAt: string; action: TelegramPendingAction } | null {

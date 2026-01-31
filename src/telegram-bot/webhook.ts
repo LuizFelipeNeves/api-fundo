@@ -3,7 +3,7 @@ import { getDb } from '../db';
 import { desc, eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { document, fundMaster } from '../db/schema';
-import { formatHelp, parseBotCommand } from './commands';
+import { formatHelp, parseBotCommand, type BotCommand } from './commands';
 import { getOrComputeCotationStats } from './cotation-stats';
 import { createTelegramService, type TelegramUpdate } from './telegram-api';
 import {
@@ -95,12 +95,20 @@ app.post('/webhook', async (c) => {
   if (callback?.id) {
     await telegram.ackCallbackQuery(callback.id);
   }
-  if (callbackData && callbackData !== 'confirm' && callbackData !== 'cancel') return c.json({ ok: true });
-  const cmd =
-    callbackData === 'confirm'
-      ? { kind: 'confirm' as const }
-      : callbackData === 'cancel'
-        ? { kind: 'cancel' as const }
+  let callbackKind: 'confirm' | 'cancel' | null = null;
+  let callbackToken: string | null = null;
+  if (callbackData) {
+    const m = callbackData.match(/^(confirm|cancel)(?::(.+))?$/);
+    if (!m) return c.json({ ok: true });
+    callbackKind = m[1] as 'confirm' | 'cancel';
+    callbackToken = m[2] ?? null;
+  }
+
+  const cmd: BotCommand =
+    callbackKind === 'confirm'
+      ? { kind: 'confirm' }
+      : callbackKind === 'cancel'
+        ? { kind: 'cancel' }
         : parseBotCommand(text);
 
   if (cmd.kind === 'help') {
@@ -109,6 +117,17 @@ app.post('/webhook', async (c) => {
   }
 
   if (cmd.kind === 'cancel') {
+    if (callbackToken) {
+      const pending = getTelegramPendingAction(db, chatIdStr);
+      if (!pending) {
+        await telegram.sendText(chatIdStr, 'Não há nenhuma ação pendente para cancelar.');
+        return c.json({ ok: true });
+      }
+      if (pending.createdAt !== callbackToken) {
+        await telegram.sendText(chatIdStr, 'Essa ação não é mais válida. Envie o comando novamente.');
+        return c.json({ ok: true });
+      }
+    }
     clearTelegramPendingAction(db, chatIdStr);
     await telegram.sendText(chatIdStr, '✅ Ok, ação cancelada.');
     return c.json({ ok: true });
@@ -118,6 +137,10 @@ app.post('/webhook', async (c) => {
     const pending = getTelegramPendingAction(db, chatIdStr);
     if (!pending) {
       await telegram.sendText(chatIdStr, 'Não há nenhuma ação pendente para confirmar.');
+      return c.json({ ok: true });
+    }
+    if (callbackToken && pending.createdAt !== callbackToken) {
+      await telegram.sendText(chatIdStr, 'Essa confirmação não é mais válida. Envie o comando novamente.');
       return c.json({ ok: true });
     }
     if (isExpired(pending.createdAt, 10 * 60 * 1000)) {
@@ -271,15 +294,15 @@ app.post('/webhook', async (c) => {
     const removed = before.filter((code) => !existing.includes(code));
     const added = existing.filter((code) => !before.includes(code));
     if (removed.length > 0) {
-      upsertTelegramPendingAction(db, chatIdStr, { kind: 'set', codes: cmd.codes.map((c) => c.toUpperCase()) });
+      const createdAt = upsertTelegramPendingAction(db, chatIdStr, { kind: 'set', codes: cmd.codes.map((c) => c.toUpperCase()) });
       await telegram.sendText(
         chatIdStr,
         formatConfirmSetMessage({ beforeCount: before.length, afterCodes: existing, added, removed, missing }),
         {
           replyMarkup: {
             inline_keyboard: [[
-              { text: '✅ Confirmar', callback_data: 'confirm' },
-              { text: '❌ Cancelar', callback_data: 'cancel' },
+              { text: '✅ Confirmar', callback_data: `confirm:${createdAt}` },
+              { text: '❌ Cancelar', callback_data: `cancel:${createdAt}` },
             ]],
           },
         }
@@ -303,12 +326,12 @@ app.post('/webhook', async (c) => {
     const beforeSet = new Set(before);
     const toRemove = existing.filter((code) => beforeSet.has(code));
     if (toRemove.length > 0) {
-      upsertTelegramPendingAction(db, chatIdStr, { kind: 'remove', codes: cmd.codes.map((c) => c.toUpperCase()) });
+      const createdAt = upsertTelegramPendingAction(db, chatIdStr, { kind: 'remove', codes: cmd.codes.map((c) => c.toUpperCase()) });
       await telegram.sendText(chatIdStr, formatConfirmRemoveMessage({ beforeCount: before.length, toRemove, missing }), {
         replyMarkup: {
           inline_keyboard: [[
-            { text: '✅ Confirmar', callback_data: 'confirm' },
-            { text: '❌ Cancelar', callback_data: 'cancel' },
+            { text: '✅ Confirmar', callback_data: `confirm:${createdAt}` },
+            { text: '❌ Cancelar', callback_data: `cancel:${createdAt}` },
           ]],
         },
       });

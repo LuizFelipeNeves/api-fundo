@@ -39,4 +39,3 @@ test('telegram pending action: upsert/get/clear', () => {
   const got3 = getTelegramPendingAction(db, '1');
   assert.equal(got3, null);
 });
-

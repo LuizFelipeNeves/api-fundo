@@ -6,13 +6,22 @@ import { syncEodCotation } from './sync-eod-cotation';
 
 const intervalMs = Number.parseInt(process.env.CRON_INTERVAL_MS || String(5 * 60 * 1000), 10);
 
+async function runStep(name: string, fn: () => Promise<unknown>) {
+  try {
+    await fn();
+  } catch (err) {
+    const message = err instanceof Error ? err.stack || err.message : String(err);
+    process.stderr.write(`[jobs:cron] step_failed step=${name} err=${message.replace(/\n/g, '\\n')}\n`);
+  }
+}
+
 async function runOnce() {
   process.stdout.write(`[jobs:cron] tick at=${new Date().toISOString()}\n`);
-  await syncFundsList();
-  await syncCotationsToday();
-  await syncIndicators();
-  await syncDocuments();
-  await syncEodCotation();
+  await runStep('sync-funds-list', syncFundsList);
+  await runStep('sync-cotations-today', syncCotationsToday);
+  await runStep('sync-indicators', syncIndicators);
+  await runStep('sync-documents', syncDocuments);
+  await runStep('sync-eod-cotation', syncEodCotation);
 }
 
 async function main() {
