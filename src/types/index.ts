@@ -1,5 +1,5 @@
 export interface FII {
-  name: string;
+  code: string;
   sector: string;
   p_vp: number;
   dividend_yield: number;

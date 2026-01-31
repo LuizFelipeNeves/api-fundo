@@ -37,7 +37,7 @@ export const FIIDetailsSchema = z.object({
   code: z.string().openapi({ example: 'ZAVI11' }),
   razao_social: z.string().openapi({ example: 'FUNDO DE INVESTIMENTO IMOBILIÁRIO ZAVIT REAL ESTATE' }),
   cnpj: z.string().openapi({ example: '40575940000123' }),
-  publiko_alvo: z.string().openapi({ example: 'Geral' }),
+  publico_alvo: z.string().openapi({ example: 'Geral' }),
   mandato: z.string().openapi({ example: 'Renda' }),
   segmento: z.string().openapi({ example: 'Híbrido' }),
   tipo_fundo: z.string().openapi({ example: 'Fundo Misto' }),

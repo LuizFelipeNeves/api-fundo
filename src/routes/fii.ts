@@ -1,14 +1,15 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import {
-  fetchFIIList,
-  fetchFIIDetails,
-  fetchFIIIndicators,
-  fetchFIICotations,
-  fetchDividends,
-  fetchCotationsToday,
-  fetchDocuments,
-} from '../services/client';
 import { createHandler } from '../helpers';
+import { getDb } from '../db';
+import {
+  getCotations,
+  getDividends,
+  getDocuments,
+  getFundDetails,
+  getLatestCotationsToday,
+  getLatestIndicators,
+  listFunds,
+} from '../db/repo';
 import {
   ErrorSchema,
   FIIParamsSchema,
@@ -30,11 +31,11 @@ const INVALID_CODE_RESPONSE = {
 };
 
 function getValidatedCode(c: any): { valid: boolean; code?: string } {
-  const code = c.req.param('code');
-  if (!code || !FII_CODE_REGEX.test(code)) {
+  const codeRaw = c.req.param('code');
+  if (!codeRaw || !FII_CODE_REGEX.test(codeRaw)) {
     return { valid: false };
   }
-  return { valid: true, code };
+  return { valid: true, code: codeRaw.toUpperCase() };
 }
 
 const app = new OpenAPIHono();
@@ -54,9 +55,9 @@ const listFIIRoute = createRoute({
 app.openapi(
   listFIIRoute,
   createHandler(async () => {
-    const data = await fetchFIIList();
+    const data = listFunds(getDb());
     return { data };
-  }, 'fetchFIIList') as any
+  }, 'listFunds') as any
 );
 
 // Rota: Dados básicos do FII
@@ -81,9 +82,12 @@ app.openapi(
     if (!valid || !code) {
       return c.json(INVALID_CODE_RESPONSE, 400);
     }
-    const data = await fetchFIIDetails(code);
+    const data = getFundDetails(getDb(), code);
+    if (!data) {
+      return c.json({ error: 'FII não encontrado' }, 404);
+    }
     return { data };
-  }, 'fetchFIIDetails') as any
+  }, 'getFundDetails') as any
 );
 
 // Rota: Indicadores históricos
@@ -108,10 +112,12 @@ app.openapi(
     if (!valid || !code) {
       return c.json(INVALID_CODE_RESPONSE, 400);
     }
-    const data = await fetchFIIDetails(code);
-    const indicators = await fetchFIIIndicators(data.id);
+    const indicators = getLatestIndicators(getDb(), code);
+    if (!indicators) {
+      return c.json({ error: 'FII não encontrado' }, 404);
+    }
     return { data: indicators };
-  }, 'fetchFIIIndicators') as any
+  }, 'getLatestIndicators') as any
 );
 
 // Rota: Cotações
@@ -140,10 +146,12 @@ app.openapi(
       return c.json(INVALID_CODE_RESPONSE, 400);
     }
     const days = parseInt(c.req.query('days') || '1825');
-    const data = await fetchFIIDetails(code);
-    const cotations = await fetchFIICotations(data.id, days);
+    const cotations = getCotations(getDb(), code, days);
+    if (!cotations) {
+      return c.json({ error: 'FII não encontrado' }, 404);
+    }
     return { data: cotations };
-  }, 'fetchFIICotations') as any
+  }, 'getCotations') as any
 );
 
 // Rota: Dividendos
@@ -170,9 +178,12 @@ app.openapi(
     if (!valid || !code) {
       return c.json(INVALID_CODE_RESPONSE, 400);
     }
-    const dividends = await fetchDividends(code);
+    const dividends = getDividends(getDb(), code);
+    if (!dividends) {
+      return c.json({ error: 'FII não encontrado' }, 404);
+    }
     return { data: dividends };
-  }, 'fetchDividends') as any
+  }, 'getDividends') as any
 );
 
 // Rota: Cotações do Dia
@@ -197,9 +208,12 @@ app.openapi(
     if (!valid || !code) {
       return c.json(INVALID_CODE_RESPONSE, 400);
     }
-    const data = await fetchCotationsToday(code);
+    const data = getLatestCotationsToday(getDb(), code);
+    if (!data) {
+      return c.json({ error: 'FII não encontrado' }, 404);
+    }
     return { data };
-  }, 'fetchCotationsToday') as any
+  }, 'getLatestCotationsToday') as any
 );
 
 // Rota: Documentos
@@ -224,10 +238,12 @@ app.openapi(
     if (!valid || !code) {
       return c.json(INVALID_CODE_RESPONSE, 400);
     }
-    const data = await fetchFIIDetails(code);
-    const documents = await fetchDocuments(data.cnpj);
+    const documents = getDocuments(getDb(), code);
+    if (!documents) {
+      return c.json({ error: 'FII não encontrado' }, 404);
+    }
     return { data: documents };
-  }, 'fetchDocuments') as any
+  }, 'getDocuments') as any
 );
 
 export default app;
