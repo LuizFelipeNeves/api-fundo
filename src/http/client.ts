@@ -87,6 +87,10 @@ export async function fetchText(url: string, options?: RequestOptions): Promise<
 
     clearTimeout(timeoutId);
 
+    if (response.status === 410) {
+      throw new Error('FII_NOT_FOUND');
+    }
+
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }

@@ -49,7 +49,7 @@ API para consultar dados de Fundos de Investimento Imobiliário.
   "taxa_adminstracao": "1,25% a.a.",
   "vacancia": 0.9,
   "numero_cotistas": 2405,
-  "cotas_emittidas": 11733209,
+  "cotas_emitidas": 11733209,
   "valor_patrimonial_cota": 13.57,
   "valor_patrimonial": 159180000,
   "ultimo_rendimento": 0.11
@@ -60,7 +60,7 @@ API para consultar dados de Fundos de Investimento Imobiliário.
 - `cnpj`: Remove pontos, traços e barras
 - `vacancia`: Remove `%` e converte para number
 - `numero_cotistas`: Remove pontos de milhar
-- `cotas_emittidas`: Remove pontos de milhar
+- `cotas_emitidas`: Remove pontos de milhar
 - `valor_patrimonial_cota`: Remove `R$` e formata para number
 - `valor_patrimonial`: Remove `R$`, detecta sufixos (Milhões, Bilhões, Mil) e converte para number
 - `ultimo_rendimento`: Remove `R$` e formata para number

@@ -11,6 +11,12 @@ export function createHandler<T>(
       const result = await handler(c);
       return c.json(result.data);
     } catch (error) {
+      if (error instanceof Error && error.message === 'FII_NOT_FOUND') {
+        return c.json({
+          error: 'FII não encontrado',
+          message: 'O fundo de investimento informado não existe',
+        }, 404);
+      }
       console.error(`${errorMessage}:`, error);
       return c.json({ error: errorMessage }, 500);
     }

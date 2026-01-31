@@ -28,20 +28,8 @@ export interface FIIDetails {
   taxa_adminstracao: string;
   vacancia: number;
   numero_cotistas: number;
-  cotas_emittidas: number;
+  cotas_emitidas: number;
   valor_patrimonial_cota: number;
   valor_patrimonial: number;
   ultimo_rendimento: number;
-}
-
-export interface FIIIndicators {
-  [key: string]: unknown;
-}
-
-export interface FIICotations {
-  [key: string]: unknown;
-}
-
-export interface FIIDividends {
-  [key: string]: unknown;
 }

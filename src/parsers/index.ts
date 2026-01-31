@@ -31,7 +31,7 @@ export function extractFIIDetails(code: string, html: string): Partial<FIIDetail
     'TAXA DE ADMINISTRAÇÃO': 'taxa_adminstracao',
     'VACÂNCIA': 'vacancia',
     'NUMERO DE COTISTAS': 'numero_cotistas',
-    'COTAS EMITIDAS': 'cotas_emittidas',
+    'COTAS EMITIDAS': 'cotas_emitidas',
     'VAL. PATRIMONIAL P/ COTA': 'valor_patrimonial_cota',
     'VALOR PATRIMONIAL': 'valor_patrimonial',
     'ÚLTIMO RENDIMENTO': 'ultimo_rendimento',

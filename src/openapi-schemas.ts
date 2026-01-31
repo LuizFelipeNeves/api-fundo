@@ -1,12 +1,13 @@
 import { z } from '@hono/zod-openapi';
 
-// Common schemas
+export const FII_CODE_REGEX = /^[A-Za-z]{4}11$/;
+
 export const ErrorSchema = z.object({
   error: z.string().openapi({ example: 'Failed to fetch FII list' }),
 });
 
 export const FIIParamsSchema = z.object({
-  code: z.string().openapi({ param: { name: 'code', in: 'path', required: true }, example: 'binc11' }),
+  code: z.string().regex(FII_CODE_REGEX, { message: 'Código deve ter formato XXXX11 (4 letras + 11)' }).openapi({ param: { name: 'code', in: 'path', required: true }, example: 'binc11' }),
 });
 
 export const CotationsQuerySchema = z.object({
@@ -45,7 +46,7 @@ export const FIIDetailsSchema = z.object({
   taxa_adminstracao: z.string().openapi({ example: '1,25% a.a.' }),
   vacancia: z.number().openapi({ example: 0.9 }),
   numero_cotistas: z.number().openapi({ example: 2405 }),
-  cotas_emittidas: z.number().openapi({ example: 11733209 }),
+  cotas_emitidas: z.number().openapi({ example: 11733209 }),
   valor_patrimonial_cota: z.number().openapi({ example: 13.57 }),
   valor_patrimonial: z.number().openapi({ example: 159180000 }),
   ultimo_rendimento: z.number().openapi({ example: 0.11 }),

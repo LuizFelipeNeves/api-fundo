@@ -10,7 +10,7 @@ export interface NormalizedIndicators {
 }
 
 const INDICATOR_KEY_MAP: Record<string, string> = {
-  'COTAS EMITIDAS': 'cotas_emittidas',
+  'COTAS EMITIDAS': 'cotas_emitidas',
   "NÚMERO DE COTISTAS": 'numero_de_cotistas',
   "VACÂNCIA": 'vacancia',
   "VAL. PATRIMONIAL P/ COTA": 'valor_patrimonial_cota',

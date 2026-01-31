@@ -19,7 +19,7 @@ export function normalizeFIIDetails(
     taxa_adminstracao: raw.taxa_adminstracao ?? '',
     vacancia: parsePercent(raw.vacancia),
     numero_cotistas: parseNumber(raw.numero_cotistas),
-    cotas_emittidas: parseNumber(raw.cotas_emittidas),
+    cotas_emitidas: parseNumber(raw.cotas_emitidas),
     valor_patrimonial_cota: parseNumber(raw.valor_patrimonial_cota),
     valor_patrimonial: parseNumber(raw.valor_patrimonial),
     ultimo_rendimento: parseNumber(raw.ultimo_rendimento),
