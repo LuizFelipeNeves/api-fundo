@@ -208,6 +208,47 @@ export function listFundCodesWithCnpj(db: Database.Database): string[] {
   return rows.map((r) => r.code);
 }
 
+export function listFundCodesForIndicatorsBatch(db: Database.Database, limit: number): string[] {
+  const orm = drizzle(db);
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 5000) : 100;
+  const rows = orm
+    .select({ code: fundMaster.code })
+    .from(fundMaster)
+    .leftJoin(fundState, eq(fundState.fund_code, fundMaster.code))
+    .where(isNotNull(fundMaster.id))
+    .orderBy(asc(fundState.last_indicators_at), asc(fundMaster.code))
+    .limit(safeLimit)
+    .all();
+  return rows.map((r) => r.code);
+}
+
+export function listFundCodesForCotationsTodayBatch(db: Database.Database, limit: number): string[] {
+  const orm = drizzle(db);
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 5000) : 100;
+  const rows = orm
+    .select({ code: fundMaster.code })
+    .from(fundMaster)
+    .leftJoin(fundState, eq(fundState.fund_code, fundMaster.code))
+    .orderBy(asc(fundState.last_cotations_today_at), asc(fundMaster.code))
+    .limit(safeLimit)
+    .all();
+  return rows.map((r) => r.code);
+}
+
+export function listFundCodesForDocumentsBatch(db: Database.Database, limit: number): string[] {
+  const orm = drizzle(db);
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 5000) : 100;
+  const rows = orm
+    .select({ code: fundMaster.code })
+    .from(fundMaster)
+    .leftJoin(fundState, eq(fundState.fund_code, fundMaster.code))
+    .where(isNotNull(fundMaster.cnpj))
+    .orderBy(asc(fundState.last_documents_at), asc(fundMaster.code))
+    .limit(safeLimit)
+    .all();
+  return rows.map((r) => r.code);
+}
+
 export function getDividendCount(db: Database.Database, fundCode: string): number {
   const fundCodeUpper = fundCode.toUpperCase();
   const row = db.prepare('select count(*) as c from dividend where fund_code = ?').get(fundCodeUpper) as { c?: number } | undefined;

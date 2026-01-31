@@ -86,6 +86,34 @@ export async function forEachConcurrent<T>(
   await Promise.all(workers);
 }
 
+export async function forEachConcurrentUntil<T>(
+  items: readonly T[],
+  concurrency: number,
+  shouldContinue: () => boolean,
+  fn: (item: T, index: number) => Promise<void>
+): Promise<void> {
+  const safeConcurrency = Math.max(1, Math.floor(concurrency));
+  const total = items.length;
+  if (total === 0) return;
+
+  let nextIndex = 0;
+  const workerCount = Math.min(safeConcurrency, total);
+  const workers = new Array(workerCount);
+
+  for (let w = 0; w < workerCount; w++) {
+    workers[w] = (async () => {
+      while (true) {
+        if (!shouldContinue()) break;
+        const i = nextIndex++;
+        if (i >= total) break;
+        await fn(items[i], i);
+      }
+    })();
+  }
+
+  await Promise.all(workers);
+}
+
 export function shouldRunCotationsToday(): boolean {
   const now = new Date();
   if (!isWeekdayInSaoPaulo(now)) return false;

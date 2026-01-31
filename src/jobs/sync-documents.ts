@@ -1,14 +1,17 @@
 import { fetchDocuments, fetchFIIDetails, fetchDividends } from '../services/client';
 import { getDb, nowIso } from '../db';
 import * as repo from '../db/repo';
-import { createJobLogger, forEachConcurrent, resolveConcurrency } from './utils';
+import { createJobLogger, forEachConcurrent, forEachConcurrentUntil, resolveConcurrency } from './utils';
 import { syncFundDocuments } from '../core/sync/sync-fund-documents';
 import { syncFundDetailsAndDividends } from '../core/sync/sync-fund-details';
 
 export async function syncDocuments(): Promise<{ ran: boolean }> {
   const log = createJobLogger('sync-documents');
   const db = getDb();
-  const codes = repo.listFundCodesWithCnpj(db);
+  const batchSizeRaw = Number.parseInt(process.env.DOCUMENTS_BATCH_SIZE || '100', 10);
+  const batchSize = Number.isFinite(batchSizeRaw) && batchSizeRaw > 0 ? Math.min(batchSizeRaw, 5000) : 100;
+  const candidatesLimit = Math.min(5000, Math.max(batchSize, batchSize * 5));
+  const codes = repo.listFundCodesForDocumentsBatch(db, candidatesLimit);
   const concurrency = resolveConcurrency({ envKey: 'DOCUMENTS_CONCURRENCY', fallback: 3, max: 10 });
 
   const dividendsTotal = repo.getDividendsTotalCount(db);
@@ -46,7 +49,11 @@ export async function syncDocuments(): Promise<{ ran: boolean }> {
     return { ran: true };
   }
 
-  log.start({ candidates: codes.length, concurrency });
+  const timeBudgetMsRaw = Number.parseInt(process.env.DOCUMENTS_TIME_BUDGET_MS || '55000', 10);
+  const timeBudgetMs = Number.isFinite(timeBudgetMsRaw) && timeBudgetMsRaw > 1000 ? Math.min(timeBudgetMsRaw, 10 * 60 * 1000) : 55000;
+  const deadlineMs = Date.now() + timeBudgetMs;
+
+  log.start({ candidates: codes.length, concurrency, batchSize, candidatesLimit, timeBudgetMs });
 
   const minIntervalMinRaw = Number.parseInt(process.env.DOCUMENTS_MIN_INTERVAL_MIN || '360', 10);
   const minIntervalMin = Number.isFinite(minIntervalMinRaw) && minIntervalMinRaw > 0 ? Math.min(minIntervalMinRaw, 30 * 24 * 60) : 360;
@@ -55,9 +62,14 @@ export async function syncDocuments(): Promise<{ ran: boolean }> {
   let ok = 0;
   let skipped = 0;
   let errCount = 0;
+  let attempts = 0;
   let totalMs = 0;
   let maxMs = 0;
-  await forEachConcurrent(codes, concurrency, async (code, i) => {
+  await forEachConcurrentUntil(
+    codes,
+    concurrency,
+    () => Date.now() < deadlineMs && attempts < batchSize,
+    async (code, i) => {
     log.progress(i + 1, codes.length, code);
     const startedAt = Date.now();
     let status: 'ok' | 'err' | 'skipped' = 'ok';
@@ -74,6 +86,12 @@ export async function syncDocuments(): Promise<{ ran: boolean }> {
           return;
         }
       }
+      if (attempts >= batchSize) {
+        skipped++;
+        status = 'skipped';
+        return;
+      }
+      attempts++;
       await syncFundDocuments(db, code, {
         fetcher: { fetchDocuments, fetchFIIDetails, fetchDividends },
         repo,
@@ -91,9 +109,10 @@ export async function syncDocuments(): Promise<{ ran: boolean }> {
       maxMs = Math.max(maxMs, durationMs);
       log.progressDone(i + 1, codes.length, code, { status, duration_ms: durationMs });
     }
-  });
+    }
+  );
 
   const avgMs = codes.length > 0 ? Math.round(totalMs / codes.length) : 0;
-  log.end({ ok, skipped, err: errCount, avg_ms: avgMs, max_ms: maxMs, minIntervalMin });
+  log.end({ ok, skipped, err: errCount, attempts, avg_ms: avgMs, max_ms: maxMs, minIntervalMin, batchSize, timeBudgetMs });
   return { ran: true };
 }

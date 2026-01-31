@@ -16,12 +16,22 @@ async function runOnce() {
 }
 
 async function main() {
+  let running = false;
   await runOnce();
   setInterval(() => {
-    runOnce().catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`${message}\n`);
-    });
+    if (running) {
+      process.stdout.write(`[jobs:cron] skipped reason=previous_tick_still_running at=${new Date().toISOString()}\n`);
+      return;
+    }
+    running = true;
+    runOnce()
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`${message}\n`);
+      })
+      .finally(() => {
+        running = false;
+      });
   }, intervalMs);
 }
 
