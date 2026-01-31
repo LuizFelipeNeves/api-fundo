@@ -1,3 +1,5 @@
+import { FNET_BASE } from '../services/client';
+
 export interface DocumentData {
   id: number;
   title: string;
@@ -18,7 +20,7 @@ export function normalizeDocuments(raw: any[]): DocumentData[] {
     type: item.tipoDocumento || '',
     date: item.dataReferencia || '',
     dateUpload: item.dataEntrega || '',
-    url: `https://fnet.bmfbovespa.com.br/fnet/publico/exibirDocumento?id=${item.id}&cvm=true&`,
+    url: `${FNET_BASE}/exibirDocumento?id=${item.id}&cvm=true&`,
     status: item.descricaoStatus || '',
     version: item.versao || 1,
   }));

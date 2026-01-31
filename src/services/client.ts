@@ -10,7 +10,7 @@ import type { ContationsTodayData } from '../parsers/today';
 import type { DocumentData } from '../parsers/documents';
 
 const MAX_DAYS = 1825;
-const FNET_BASE = 'https://fnet.bmfbovespa.com.br/fnet/publico';
+export const FNET_BASE = 'https://fnet.bmfbovespa.com.br/fnet/publico';
 
 export { extractFIIDetails, extractFIIId };
 
