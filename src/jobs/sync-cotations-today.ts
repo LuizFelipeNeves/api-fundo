@@ -1,7 +1,7 @@
 import { fetchCotationsToday } from '../services/client';
 import { getDb, nowIso, sha256 } from '../db';
 import * as repo from '../db/repo';
-import { pickCodesForRun } from './utils';
+import { createJobLogger } from './utils';
 import { syncFundCotationsToday } from '../core/sync/sync-fund-cotations-today';
 
 let didInitialRun = false;
@@ -14,29 +14,38 @@ function shouldRunCotationsToday(): boolean {
 }
 
 export async function syncCotationsToday(): Promise<{ ran: boolean }> {
-  if (!shouldRunCotationsToday()) return { ran: false };
+  const log = createJobLogger('sync-cotations-today');
+  if (!shouldRunCotationsToday()) {
+    log.skipped('outside_window');
+    return { ran: false };
+  }
   didInitialRun = true;
 
   const db = getDb();
-  const perRun = Number.parseInt(process.env.COTATIONS_TODAY_LIMIT || '200', 10);
-  const limit = Number.isFinite(perRun) && perRun > 0 ? Math.min(perRun, 2000) : 200;
+  const codes = repo.listFundCodes(db);
 
-  const allCodes = repo.listFundCodes(db);
-  const codes = pickCodesForRun(allCodes, limit);
+  log.start({ candidates: codes.length });
 
-  for (const code of codes) {
+  let ok = 0;
+  let errCount = 0;
+  for (let i = 0; i < codes.length; i++) {
+    const code = codes[i];
+    log.progress(i + 1, codes.length, code);
     try {
       await syncFundCotationsToday(db, code, {
         fetcher: { fetchCotationsToday },
         repo,
         clock: { nowIso, sha256 },
       });
+      ok++;
     } catch (err) {
+      errCount++;
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`sync-cotations-today:${code}:${message}\n`);
       continue;
     }
   }
 
+  log.end({ ok, err: errCount });
   return { ran: true };
 }

@@ -111,12 +111,68 @@ API para consultar dados de Fundos de Investimento Imobiliário.
 
 | Variável | Descrição |
 |----------|-----------|
-| `COOKIE` | Cookie da sessão do investidor10 (obter do navegador) |
-| `PORT`   | Porta do servidor (padrão: 3000) |
+| `COOKIE` | Cookie da sessão do investidor10.com.br (obter do navegador) |
+| `CSRF_TOKEN` | Token CSRF usado pelo investidor10.com.br (pode expirar) |
+| `DB_PATH` | Caminho do SQLite (padrão: `./data.sqlite`) |
+| `CRON_INTERVAL_MS` | Intervalo do `jobs:cron` (padrão: 5min) |
+| `DETAILS_SEED_LIMIT` | Quantos fundos “sem detalhes” por execução (padrão: 10) |
+| `INDICATORS_LIMIT` | Quantos fundos por execução (padrão: 200) |
+| `DOCUMENTS_LIMIT` | Quantos fundos por execução (padrão: 100) |
+| `COTATIONS_TODAY_LIMIT` | Quantos fundos por execução (padrão: 200) |
+| `ENABLE_HISTORICAL_BACKFILL` | Habilita backfill histórico (padrão: `true`) |
+| `HISTORICAL_COTATIONS_DAYS` | Dias de histórico (padrão: 365, máx: 1825) |
 
 ## Rodar o projeto
 
 ```bash
 npm install
-npm run dev
+npm run jobs
 ```
+
+### Banco de dados
+
+- O SQLite é criado automaticamente no primeiro uso (`DB_PATH` ou `./data.sqlite`) e as tabelas são criadas via migração em runtime.
+
+### Popular o banco (jobs)
+
+- Rodar tudo uma vez:
+
+```bash
+npm run jobs
+```
+
+- Rodar um job específico:
+
+```bash
+npm run jobs -- sync-funds-list
+npm run jobs -- sync-indicators
+npm run jobs -- sync-documents
+npm run jobs -- sync-cotations-today
+```
+
+- Rodar em loop (cron):
+
+```bash
+npm run jobs:cron
+```
+
+**Janela do sync de cotações do dia**
+
+- `sync-cotations-today` roda sempre na primeira inicialização do processo.
+- Depois disso, só roda entre 10:00 e 18:20.
+
+### Subir a API HTTP
+
+- A API HTTP expõe:
+  - `GET /openapi.json`
+  - `GET /swagger`
+  - Rotas em `/api/fii/*`
+- No estado atual, o entrypoint HTTP está no formato de runtime do Bun (export default com `{ port, fetch }`) em `src/index.ts`.
+- Para rodar o servidor HTTP, use Bun:
+
+```bash
+bun run src/index.ts
+```
+
+Depois acesse:
+- http://localhost:3000/swagger

@@ -6,6 +6,7 @@ import { syncDocuments } from './sync-documents';
 const intervalMs = Number.parseInt(process.env.CRON_INTERVAL_MS || String(5 * 60 * 1000), 10);
 
 async function runOnce() {
+  process.stdout.write(`[jobs:cron] tick at=${new Date().toISOString()}\n`);
   await syncFundsList();
   await syncCotationsToday();
   await syncIndicators();
@@ -27,4 +28,3 @@ main().catch((err) => {
   process.stderr.write(`${message}\n`);
   process.exit(1);
 });
-

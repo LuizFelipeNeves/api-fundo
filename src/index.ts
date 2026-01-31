@@ -3,6 +3,7 @@ import fiiRouter from './routes/fii';
 
 // Create OpenAPI app
 const app = new OpenAPIHono();
+const port = Number.parseInt(process.env.PORT || '3000', 10);
 
 // OpenAPI metadata
 app.doc('/openapi.json', {
@@ -43,6 +44,6 @@ app.get('/swagger', (c) => {
 app.route('/api/fii', fiiRouter);
 
 export default {
-  port: 3000,
+  port,
   fetch: app.fetch,
 };

@@ -1,4 +1,5 @@
 import type { FIIResponse, FIIDetails } from '../../types';
+import type { DividendItem } from '../../parsers';
 import type { NormalizedIndicators } from '../../parsers/indicators';
 import type { ContationsTodayData } from '../../parsers/today';
 import type { DocumentData } from '../../parsers/documents';
@@ -12,10 +13,10 @@ export interface ClockDeps {
 
 export interface FetcherDeps {
   fetchFIIList(): Promise<FIIResponse>;
-  fetchFIIDetails(code: string): Promise<FIIDetails>;
+  fetchFIIDetails(code: string): Promise<{ details: FIIDetails; dividendsHistory: DividendItem[] }>;
   fetchFIIIndicators(id: string): Promise<NormalizedIndicators>;
   fetchFIICotations(id: string, days: number): Promise<NormalizedCotations>;
-  fetchDividends(code: string): Promise<DividendData[]>;
+  fetchDividends(code: string, input?: { id?: string; dividendsHistory?: DividendItem[] }): Promise<DividendData[]>;
   fetchCotationsToday(code: string): Promise<ContationsTodayData>;
   fetchDocuments(cnpj: string): Promise<DocumentData[]>;
 }
@@ -35,4 +36,3 @@ export interface RepoDeps<Db = unknown> {
   updateDocumentsMaxId(db: Db, fundCode: string, maxId: number): void;
   upsertDividends(db: Db, fundCode: string, dividends: DividendData[]): number;
 }
-

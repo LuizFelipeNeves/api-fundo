@@ -1,14 +1,40 @@
-export function pickCodesForRun(allCodes: string[], limit: number, bucketSeconds = 15 * 60): string[] {
-  const effectiveLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
-  if (effectiveLimit <= 0) return [];
-  if (allCodes.length <= effectiveLimit) return allCodes;
+function formatMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '0ms';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const sec = ms / 1000;
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  const min = Math.floor(sec / 60);
+  const rem = sec - min * 60;
+  return `${min}m${rem.toFixed(0)}s`;
+}
 
-  const bucket = Math.floor(Date.now() / (bucketSeconds * 1000));
-  const start = bucket % allCodes.length;
+export function createJobLogger(jobName: string, opts?: { every?: number }) {
+  const every = opts?.every && opts.every > 0 ? Math.floor(opts.every) : 25;
+  const startedAt = Date.now();
 
-  const out: string[] = [];
-  for (let i = 0; i < effectiveLimit; i++) {
-    out.push(allCodes[(start + i) % allCodes.length]);
+  function log(line: string) {
+    process.stdout.write(line.endsWith('\n') ? line : `${line}\n`);
   }
-  return out;
+
+  function start(meta?: Record<string, any>) {
+    const metaStr = meta ? Object.entries(meta).map(([k, v]) => `${k}=${String(v)}`).join(' ') : '';
+    log(`[${jobName}] start${metaStr ? ` ${metaStr}` : ''}`);
+  }
+
+  function skipped(reason: string) {
+    log(`[${jobName}] skipped reason=${reason}`);
+  }
+
+  function progress(i: number, total: number, code?: string) {
+    if (total <= 0) return;
+    if (i !== 1 && i !== total && i % every !== 0) return;
+    log(`[${jobName}] ${i}/${total}${code ? ` code=${code}` : ''}`);
+  }
+
+  function end(meta?: Record<string, any>) {
+    const metaStr = meta ? Object.entries(meta).map(([k, v]) => `${k}=${String(v)}`).join(' ') : '';
+    log(`[${jobName}] end duration=${formatMs(Date.now() - startedAt)}${metaStr ? ` ${metaStr}` : ''}`);
+  }
+
+  return { start, skipped, progress, end };
 }

@@ -1,7 +1,7 @@
 import { BASE_URL } from '../config';
 import { FII_LIST_PARAMS } from '../config/fii-list';
 import { get, post, fetchText, fetchWithSession } from '../http/client';
-import { extractFIIDetails, extractFIIId, extractDividendsHistory, normalizeIndicators, normalizeCotations, normalizeDividends, normalizeFIIDetails, normalizeCotationsToday, normalizeDocuments } from '../parsers';
+import { extractFIIDetails, extractFIIId, extractDividendsHistory, normalizeIndicators, normalizeCotations, normalizeDividends, normalizeFIIDetails, normalizeCotationsToday, normalizeDocuments, type DividendItem } from '../parsers';
 import type { FIIResponse, FIIDetails } from '../types';
 import type { NormalizedIndicators } from '../parsers/indicators';
 import type { NormalizedCotations } from '../parsers/cotations';
@@ -42,11 +42,13 @@ export async function fetchFIIList(): Promise<FIIResponse> {
   return mapFIIListData(raw);
 }
 
-export async function fetchFIIDetails(code: string): Promise<FIIDetails> {
+export async function fetchFIIDetails(code: string): Promise<{ details: FIIDetails; dividendsHistory: DividendItem[] }> {
   const html = await fetchText(`${BASE_URL}/fiis/${code}/`);
   const raw = extractFIIDetails(code, html);
   const id = extractFIIId(html);
-  return normalizeFIIDetails(raw, code, id);
+  const details = normalizeFIIDetails(raw, code, id);
+  const dividendsHistory = extractDividendsHistory(html);
+  return { details, dividendsHistory };
 }
 
 export async function fetchFIIIndicators(id: string): Promise<NormalizedIndicators> {
@@ -59,12 +61,23 @@ export async function fetchFIICotations(id: string, days: number = MAX_DAYS): Pr
   return normalizeCotations(raw);
 }
 
-export async function fetchDividends(code: string): Promise<DividendData[]> {
-  const html = await fetchText(`${BASE_URL}/fiis/${code}`);
-  const id = extractFIIId(html);
+export async function fetchDividends(
+  code: string,
+  input?: { id?: string; dividendsHistory?: DividendItem[] }
+): Promise<DividendData[]> {
+  let id = input?.id ?? null;
+  let dividendsHistory = input?.dividendsHistory ?? null;
+
+  if (!id || !dividendsHistory) {
+    const html = await fetchText(`${BASE_URL}/fiis/${code}/`);
+    if (!id) id = extractFIIId(html);
+    if (!dividendsHistory) dividendsHistory = extractDividendsHistory(html);
+  }
+
+  if (!id) throw new Error('Could not extract FII id for dividends');
+
   const dividendYield = await get<any[]>(`${BASE_URL}/api/fii/dividend-yield/chart/${id}/${MAX_DAYS}/mes`);
-  const dividendsHtml = extractDividendsHistory(html);
-  return normalizeDividends(dividendsHtml, dividendYield);
+  return normalizeDividends(dividendsHistory ?? [], dividendYield);
 }
 
 export async function fetchCotationsToday(code: string): Promise<ContationsTodayData> {

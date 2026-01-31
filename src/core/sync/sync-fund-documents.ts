@@ -1,4 +1,5 @@
 import type { FetcherDeps, RepoDeps } from './types';
+import { syncFundDetailsAndDividends } from './sync-fund-details';
 
 export async function syncFundDocuments<Db>(
   db: Db,
@@ -24,11 +25,8 @@ export async function syncFundDocuments<Db>(
 
   let dividendsChanges = 0;
   if (hasNewDocument) {
-    const details = await deps.fetcher.fetchFIIDetails(code);
-    deps.repo.updateFundDetails(db, details);
-
-    const dividends = await deps.fetcher.fetchDividends(code);
-    dividendsChanges = deps.repo.upsertDividends(db, code, dividends);
+    const result = await syncFundDetailsAndDividends(db, code, { fetcher: deps.fetcher, repo: deps.repo });
+    dividendsChanges = result.dividendsChanges;
   }
 
   return { status: 'ok', code: code.toUpperCase(), docsInserted: inserted, hasNewDocument, dividendsChanges };

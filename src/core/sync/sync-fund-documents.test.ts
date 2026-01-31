@@ -26,27 +26,32 @@ test('syncFundDocuments busca detalhes e dividendos somente quando há documento
     fetchFIIDetails: async () => {
       calls.push('fetchFIIDetails');
       return {
-        id: '1',
-        code: 'ABCD11',
-        razao_social: '',
-        cnpj: '123',
-        publico_alvo: '',
-        mandato: '',
-        segmento: '',
-        tipo_fundo: '',
-        prazo_duracao: '',
-        tipo_gestao: '',
-        taxa_adminstracao: '',
-        vacancia: 0,
-        numero_cotistas: 0,
-        cotas_emitidas: 0,
-        valor_patrimonial_cota: 0,
-        valor_patrimonial: 0,
-        ultimo_rendimento: 0,
+        details: {
+          id: '1',
+          code: 'ABCD11',
+          razao_social: '',
+          cnpj: '123',
+          publico_alvo: '',
+          mandato: '',
+          segmento: '',
+          tipo_fundo: '',
+          prazo_duracao: '',
+          tipo_gestao: '',
+          taxa_adminstracao: '',
+          vacancia: 0,
+          numero_cotistas: 0,
+          cotas_emitidas: 0,
+          valor_patrimonial_cota: 0,
+          valor_patrimonial: 0,
+          ultimo_rendimento: 0,
+        },
+        dividendsHistory: [{ value: 0, date: '01/01/2026', payment: '01/01/2026', type: 'Dividendos' }],
       };
     },
-    fetchDividends: async () => {
+    fetchDividends: async (_code: string, input?: any) => {
       calls.push('fetchDividends');
+      assert.equal(input?.id, '1');
+      assert.equal(Array.isArray(input?.dividendsHistory), true);
       return [];
     },
   };
@@ -103,4 +108,3 @@ test('syncFundDocuments pula quando falta CNPJ', async () => {
   const result = await syncFundDocuments(db, 'abcd11', { repo, fetcher } as any);
   assert.deepEqual(result, { status: 'skipped', reason: 'missing_cnpj' });
 });
-
