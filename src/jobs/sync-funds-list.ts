@@ -1,11 +1,15 @@
 import { fetchFIIList, fetchFIIDetails } from '../services/client';
 import { getDb } from '../db';
 import * as repo from '../db/repo';
-import { createJobLogger } from './utils';
+import { createJobLogger, shouldRunCotationsToday } from './utils';
 import { syncFundDetails } from '../core/sync/sync-fund-details';
 
 export async function syncFundsList(): Promise<{ ran: boolean }> {
   const log = createJobLogger('sync-funds-list');
+  if (!shouldRunCotationsToday()) {
+    log.skipped('outside_window');
+    return { ran: false };
+  }
   const db = getDb();
   const list = await fetchFIIList();
   repo.upsertFundList(db, list);

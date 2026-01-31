@@ -8,7 +8,7 @@ import type { DividendData } from '../parsers/dividends';
 import type { NormalizedCotations } from '../parsers/cotations';
 import { toDateIsoFromBr } from './index';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { and, asc, desc, eq, isNotNull, isNull, or } from 'drizzle-orm';
+import { asc, desc, eq, isNotNull, isNull, or } from 'drizzle-orm';
 import { cotation, cotationsTodaySnapshot, dividend, document, fundMaster, fundState, indicatorsSnapshot } from './schema';
 
 export function upsertFundList(db: Database.Database, data: FIIResponse) {
