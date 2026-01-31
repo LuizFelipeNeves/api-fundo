@@ -121,6 +121,23 @@ function migrate(db: Database.Database) {
       PRIMARY KEY (fund_code, document_id)
     );
     CREATE INDEX IF NOT EXISTS idx_document_fund_upload ON document(fund_code, date_upload_iso);
+
+    CREATE TABLE IF NOT EXISTS telegram_user (
+      chat_id TEXT PRIMARY KEY,
+      username TEXT,
+      first_name TEXT,
+      last_name TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS telegram_user_fund (
+      chat_id TEXT NOT NULL REFERENCES telegram_user(chat_id) ON DELETE CASCADE,
+      fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (chat_id, fund_code)
+    );
+    CREATE INDEX IF NOT EXISTS idx_telegram_user_fund_fund ON telegram_user_fund(fund_code, chat_id);
   `);
 }
 

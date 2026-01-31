@@ -162,7 +162,7 @@ npm run jobs:cron
 
 - A API HTTP expõe:
   - `GET /openapi.json`
-  - `GET /swagger`
+  - `GET /` - Swagger UI
   - Rotas em `/api/fii/*`
 - No estado atual, o entrypoint HTTP está no formato de runtime do Bun (export default com `{ port, fetch }`) em `src/index.ts`.
 - Para rodar o servidor HTTP, use Bun:
@@ -173,3 +173,13 @@ bun run src/index.ts
 
 Depois acesse:
 - http://localhost:8080/swagger
+
+### Configurar o Webhook do Telegram
+
+- Configure o webhook do Telegram para o endpoint `/api/telegram/webhook` da sua API.
+- Substitua `<SEU_TOKEN_DO_BOTFATHER>` pelo token do seu bot.
+- Substitua `https://decide-functioning-strengthen-cordless.trycloudflare.com` pela URL pública da sua API.
+
+```bash
+https://api.telegram.org/bot<SEU_TOKEN_DO_BOTFATHER>/setWebhook?url=https://decide-functioning-strengthen-cordless.trycloudflare.com/api/telegram/webhook
+```

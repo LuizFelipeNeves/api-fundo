@@ -137,3 +137,29 @@ export const document = sqliteTable(
     idxFundUpload: index('idx_document_fund_upload').on(t.fund_code, t.date_upload_iso),
   })
 );
+
+export const telegramUser = sqliteTable('telegram_user', {
+  chat_id: text('chat_id').primaryKey(),
+  username: text('username'),
+  first_name: text('first_name'),
+  last_name: text('last_name'),
+  created_at: text('created_at').notNull(),
+  updated_at: text('updated_at').notNull(),
+});
+
+export const telegramUserFund = sqliteTable(
+  'telegram_user_fund',
+  {
+    chat_id: text('chat_id')
+      .notNull()
+      .references(() => telegramUser.chat_id, { onDelete: 'cascade' }),
+    fund_code: text('fund_code')
+      .notNull()
+      .references(() => fundMaster.code, { onDelete: 'cascade' }),
+    created_at: text('created_at').notNull(),
+  },
+  (t: any) => ({
+    pk: primaryKey({ columns: [t.chat_id, t.fund_code] }),
+    idxFundChat: index('idx_telegram_user_fund_fund').on(t.fund_code, t.chat_id),
+  })
+);

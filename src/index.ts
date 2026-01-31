@@ -2,6 +2,7 @@ import { OpenAPIHono } from '@hono/zod-openapi';
 import { serve } from '@hono/node-server';
 import { pathToFileURL } from 'node:url';
 import fiiRouter from './routes/fii';
+import telegramRouter from './routes/telegram';
 
 // Create OpenAPI app
 const app = new OpenAPIHono();
@@ -18,7 +19,7 @@ app.doc('/openapi.json', {
 });
 
 // Swagger UI
-app.get('/swagger', (c) => {
+app.get('/', (c) => {
   return c.html(`
     <!DOCTYPE html>
     <html lang="en">
@@ -44,6 +45,7 @@ app.get('/swagger', (c) => {
 
 // Mount FII router
 app.route('/api/fii', fiiRouter);
+app.route('/api/telegram', telegramRouter);
 
 export { app, port };
 

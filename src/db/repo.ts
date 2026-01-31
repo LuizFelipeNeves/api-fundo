@@ -8,7 +8,7 @@ import type { DividendData } from '../parsers/dividends';
 import type { NormalizedCotations } from '../parsers/cotations';
 import { toDateIsoFromBr } from './index';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { asc, desc, eq, isNotNull, isNull, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNotNull, isNull, or } from 'drizzle-orm';
 import { cotation, cotationsTodaySnapshot, dividend, document, fundMaster, fundState, indicatorsSnapshot } from './schema';
 
 export function upsertFundList(db: Database.Database, data: FIIResponse) {
@@ -637,6 +637,39 @@ export function getDocuments(db: Database.Database, fundCode: string): DocumentD
     .all();
 
   if (rows.length === 0) return null;
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    category: r.category,
+    type: r.type,
+    date: r.date,
+    dateUpload: r.dateUpload,
+    url: r.url,
+    status: r.status,
+    version: r.version,
+  }));
+}
+
+export function listDocumentsSinceId(db: Database.Database, fundCode: string, minDocumentId: number, limit?: number): DocumentData[] {
+  const safeLimit = Number.isFinite(limit) && (limit as number) > 0 ? Math.min(Math.floor(limit as number), 100) : 20;
+  const orm = drizzle(db);
+  const rows = orm
+    .select({
+      id: document.document_id,
+      title: document.title,
+      category: document.category,
+      type: document.type,
+      date: document.date,
+      dateUpload: document.dateUpload,
+      url: document.url,
+      status: document.status,
+      version: document.version,
+    })
+    .from(document)
+    .where(and(eq(document.fund_code, fundCode.toUpperCase()), gt(document.document_id, Math.max(0, Math.floor(minDocumentId)))))
+    .orderBy(desc(document.date_upload_iso), desc(document.document_id))
+    .limit(safeLimit)
+    .all();
   return rows.map((r) => ({
     id: r.id,
     title: r.title,

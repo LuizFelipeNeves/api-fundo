@@ -4,10 +4,14 @@ import * as repo from '../db/repo';
 import { createJobLogger, forEachConcurrent, forEachConcurrentUntil, resolveConcurrency } from './utils';
 import { syncFundDocuments } from '../core/sync/sync-fund-documents';
 import { syncFundDetailsAndDividends } from '../core/sync/sync-fund-details';
+import { createTelegramService } from '../telegram-bot/telegram-api';
+import { listTelegramChatIdsByFundCode } from '../telegram-bot/storage';
 
 export async function syncDocuments(): Promise<{ ran: boolean }> {
   const log = createJobLogger('sync-documents');
   const db = getDb();
+  const telegramToken = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
+  const telegram = telegramToken ? createTelegramService(telegramToken) : null;
   const batchSizeRaw = Number.parseInt(process.env.DOCUMENTS_BATCH_SIZE || '100', 10);
   const batchSize = Number.isFinite(batchSizeRaw) && batchSizeRaw > 0 ? Math.min(batchSizeRaw, 5000) : 100;
   const candidatesLimit = Math.min(5000, Math.max(batchSize, batchSize * 5));
@@ -92,12 +96,21 @@ export async function syncDocuments(): Promise<{ ran: boolean }> {
         return;
       }
       attempts++;
-      await syncFundDocuments(db, code, {
+      const result = await syncFundDocuments(db, code, {
         fetcher: { fetchDocuments, fetchFIIDetails, fetchDividends },
         repo,
       });
       ok++;
       repo.updateFundDocumentsAt(db, code, nowIso());
+
+      if (telegram && lastMaxId !== null && result.status === 'ok' && result.hasNewDocument) {
+        const newDocs = repo.listDocumentsSinceId(db, code, lastMaxId, 20);
+        if (newDocs.length) {
+          const chatIds = listTelegramChatIdsByFundCode(db, code);
+          const { failed } = await telegram.notifyNewDocuments({ chatIds, fundCode: code, documents: newDocs });
+          if (failed) process.stderr.write(`telegram:notify_failed:${code}:failed=${failed}\n`);
+        }
+      }
     } catch (err) {
       errCount++;
       status = 'err';
