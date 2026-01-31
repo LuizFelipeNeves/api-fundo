@@ -1,0 +1,33 @@
+services:
+  api:
+    build: .
+    environment:
+      PORT: "3000"
+      DB_PATH: "/data/data.sqlite"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/data
+
+  jobs:
+    build: .
+    command: ["npm", "run", "jobs:cron"]
+    environment:
+      DB_PATH: "/data/data.sqlite"
+      TOR_PROXY_ENABLED: "1"
+      TOR_PROXY_OPTIONAL: "1"
+      TOR_PROXY_MODE: "fallback"
+      TOR_PROXY_SERVICE: "tor"
+      TOR_PROXY_PORT: "8118"
+    depends_on:
+      - tor
+    volumes:
+      - ./data:/data
+
+  tor:
+    image: dperson/torproxy:latest
+    environment:
+      TOR_NewCircuitPeriod: "300"
+      TOR_MaxCircuitDirtiness: "600"
+    expose:
+      - "8118"

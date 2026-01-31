@@ -30,10 +30,10 @@ export async function syncFundIndicators<Db>(
   }
 
   const indicators = await deps.fetcher.fetchFIIIndicators(id);
+
   const fetchedAt = deps.clock.nowIso();
   const dataHash = deps.clock.sha256(JSON.stringify(indicators));
   const indicatorsChanged = deps.repo.upsertIndicatorsSnapshot(db, code, fetchedAt, dataHash, indicators);
 
   return { status: 'ok', code: code.toUpperCase(), indicatorsChanged, didHistoricalBackfill };
 }
-

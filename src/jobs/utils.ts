@@ -48,3 +48,40 @@ export function createJobLogger(jobName: string, opts?: { every?: number }) {
 
   return { start, skipped, progress, progressDone, shouldLogProgress, end };
 }
+
+export function resolveConcurrency(opts?: { envKey?: string; fallback?: number; max?: number }): number {
+  const envKey = opts?.envKey ?? 'JOB_CONCURRENCY';
+  const fallback = opts?.fallback ?? 5;
+  const max = opts?.max ?? 20;
+
+  const raw = process.env[envKey];
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  const value = Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  return Math.max(1, Math.min(max, Math.floor(value)));
+}
+
+export async function forEachConcurrent<T>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<void>
+): Promise<void> {
+  const safeConcurrency = Math.max(1, Math.floor(concurrency));
+  const total = items.length;
+  if (total === 0) return;
+
+  let nextIndex = 0;
+  const workerCount = Math.min(safeConcurrency, total);
+  const workers = new Array(workerCount);
+
+  for (let w = 0; w < workerCount; w++) {
+    workers[w] = (async () => {
+      while (true) {
+        const i = nextIndex++;
+        if (i >= total) break;
+        await fn(items[i], i);
+      }
+    })();
+  }
+
+  await Promise.all(workers);
+}

@@ -6,19 +6,33 @@ export interface CotationTodayItem {
 export type CotationsTodayData = CotationTodayItem[];
 
 export function normalizeCotationsToday(raw: Record<string, any[]>): CotationsTodayData {
-  return (raw.real || []).map((item) => ({
-    price: item.price,
-    hour: formatDate(item.created_at),
-  }));
+  const real = raw.real;
+  if (!Array.isArray(real) || real.length === 0) return [];
+
+  const out: CotationsTodayData = new Array(real.length);
+  for (let i = 0; i < real.length; i++) {
+    const item: any = real[i];
+    out[i] = {
+      price: item?.price,
+      hour: formatDate(item?.created_at),
+    };
+  }
+  return out;
 }
 
 function formatDate(dateStr: string): string {
+  if (typeof dateStr === 'string' && dateStr.length >= 16) {
+    const sep = dateStr.charCodeAt(10);
+    if ((sep === 84 || sep === 32) && dateStr.charCodeAt(13) === 58) {
+      const tail = dateStr.slice(16);
+      if (!tail.includes('Z') && !tail.includes('+') && !tail.includes('-')) {
+        return dateStr.slice(11, 16);
+      }
+    }
+  }
+
   const date = new Date(dateStr);
-  // const day = String(date.getDate()).padStart(2, '0');
-  // const month = String(date.getMonth() + 1).padStart(2, '0');
-  // const year = date.getFullYear();
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  // ${day}/${month}/${year}
-  return `${hours}:${minutes}`;
+  const hours = date.getHours();
+  const minutes = date.getMinutes();
+  return `${hours < 10 ? '0' : ''}${hours}:${minutes < 10 ? '0' : ''}${minutes}`;
 }

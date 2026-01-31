@@ -1,4 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
+import { serve } from '@hono/node-server';
+import { pathToFileURL } from 'node:url';
 import fiiRouter from './routes/fii';
 
 // Create OpenAPI app
@@ -43,7 +45,9 @@ app.get('/swagger', (c) => {
 // Mount FII router
 app.route('/api/fii', fiiRouter);
 
-export default {
-  port,
-  fetch: app.fetch,
-};
+export { app, port };
+
+const entrypoint = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
+if (entrypoint && import.meta.url === entrypoint) {
+  serve({ fetch: app.fetch, port });
+}
