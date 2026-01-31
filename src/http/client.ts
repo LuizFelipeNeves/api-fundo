@@ -607,7 +607,14 @@ export async function post<T>(
 }
 
 export async function fetchText(url: string, options?: RequestOptions): Promise<string> {
-  const response = await fetchWithRetry('GET', url, { method: 'GET', headers: getDefaultHeaders() }, options ?? {});
+  const headers: Record<string, string> = {
+    ...getDefaultHeaders(),
+    'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  };
+  delete (headers as any)['content-type'];
+  delete (headers as any)['x-requested-with'];
+  delete (headers as any)['x-csrf-token'];
+  const response = await fetchWithRetry('GET', url, { method: 'GET', headers }, options ?? {});
 
   if (response.status === 410) {
     throw new Error('FII_NOT_FOUND');

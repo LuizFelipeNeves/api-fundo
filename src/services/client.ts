@@ -24,7 +24,7 @@ export function mapFIIListData(raw: any): FIIResponse {
   return {
     total: raw.total,
     data: raw.data.map((item: any) => ({
-      code: item.name,
+      code: normalizeFundCode(item.name),
       sector: item.sector,
       p_vp: item.p_vp,
       dividend_yield: item.dividend_yield,
@@ -36,6 +36,18 @@ export function mapFIIListData(raw: any): FIIResponse {
   };
 }
 
+function normalizeFundCode(code: string): string {
+  return String(code ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+}
+
+const INVESTIDOR10_HTML_TIMEOUT_MS = (() => {
+  const parsed = Number.parseInt(process.env.INVESTIDOR10_HTML_TIMEOUT_MS || '15000', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 120000) : 15000;
+})();
+
 export async function fetchFIIList(): Promise<FIIResponse> {
   const params = buildFIIListParams();
   const raw: any = await post(FII_LIST_URL, params.toString());
@@ -43,10 +55,11 @@ export async function fetchFIIList(): Promise<FIIResponse> {
 }
 
 export async function fetchFIIDetails(code: string): Promise<{ details: FIIDetails; dividendsHistory: DividendItem[] }> {
-  const html = await fetchText(`${BASE_URL}/fiis/${code}/`);
-  const raw = extractFIIDetails(code, html);
+  const safeCode = normalizeFundCode(code);
+  const html = await fetchText(`${BASE_URL}/fiis/${safeCode}/`, { timeout: INVESTIDOR10_HTML_TIMEOUT_MS });
+  const raw = extractFIIDetails(safeCode, html);
   const id = extractFIIId(html);
-  const details = normalizeFIIDetails(raw, code, id);
+  const details = normalizeFIIDetails(raw, safeCode, id);
   const dividendsHistory = extractDividendsHistory(html);
   return { details, dividendsHistory };
 }
@@ -65,11 +78,12 @@ export async function fetchDividends(
   code: string,
   input?: { id?: string; dividendsHistory?: DividendItem[] }
 ): Promise<DividendData[]> {
+  const safeCode = normalizeFundCode(code);
   let id = input?.id ?? null;
   let dividendsHistory = input?.dividendsHistory ?? null;
 
   if (!id || !dividendsHistory) {
-    const html = await fetchText(`${BASE_URL}/fiis/${code}/`);
+    const html = await fetchText(`${BASE_URL}/fiis/${safeCode}/`, { timeout: INVESTIDOR10_HTML_TIMEOUT_MS });
     if (!id) id = extractFIIId(html);
     if (!dividendsHistory) dividendsHistory = extractDividendsHistory(html);
   }
@@ -81,7 +95,8 @@ export async function fetchDividends(
 }
 
 export async function fetchCotationsToday(code: string): Promise<CotationsTodayData> {
-  const raw = await get<Record<string, any[]>>(`${BASE_URL}/api/quotations/one-day/${code}/`);
+  const safeCode = normalizeFundCode(code);
+  const raw = await get<Record<string, any[]>>(`${BASE_URL}/api/quotations/one-day/${safeCode}/`);
   return normalizeCotationsToday(raw);
 }
 
