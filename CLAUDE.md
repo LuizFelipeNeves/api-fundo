@@ -58,7 +58,7 @@ src/
 | Variable | Description |
 |----------|-------------|
 | `COOKIE` | Session cookie from investidor10.com.br (required for API) |
-| `PORT` | Server port (default: 3000) |
+| `PORT` | Server port (default: 8080) |
 
 ## Configuration
 

@@ -172,4 +172,4 @@ bun run src/index.ts
 ```
 
 Depois acesse:
-- http://localhost:3000/swagger
+- http://localhost:8080/swagger

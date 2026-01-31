@@ -5,7 +5,7 @@ import fiiRouter from './routes/fii';
 
 // Create OpenAPI app
 const app = new OpenAPIHono();
-const port = Number.parseInt(process.env.PORT || '3000', 10);
+const port = Number.parseInt(process.env.PORT || '8080', 10);
 
 // OpenAPI metadata
 app.doc('/openapi.json', {

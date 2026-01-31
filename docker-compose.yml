@@ -1,13 +1,20 @@
 services:
-  api:
+  minha-api:
     build: .
     environment:
-      PORT: "${PORT:-3000}"
+      PORT: "${PORT:-8080}"
       DB_PATH: "${DB_PATH:-/data/data.sqlite}"
     ports:
-      - "3000:3000"
+      - "8080:8080"
     volumes:
       - ./data:/data
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: always
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+    command: tunnel --url http://minha-api:8080
 
   jobs:
     build: .
