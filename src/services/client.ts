@@ -48,6 +48,11 @@ const INVESTIDOR10_HTML_TIMEOUT_MS = (() => {
   return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 120000) : 15000;
 })();
 
+const INVESTIDOR10_API_TIMEOUT_MS = (() => {
+  const parsed = Number.parseInt(process.env.INVESTIDOR10_API_TIMEOUT_MS || '25000', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 120000) : 25000;
+})();
+
 export async function fetchFIIList(): Promise<FIIResponse> {
   const params = buildFIIListParams();
   const raw: any = await post(FII_LIST_URL, params.toString());
@@ -96,7 +101,23 @@ export async function fetchDividends(
 
 export async function fetchCotationsToday(code: string): Promise<CotationsTodayData> {
   const safeCode = normalizeFundCode(code);
-  const raw = await get<Record<string, any[]>>(`${BASE_URL}/api/quotations/one-day/${safeCode}/`);
+  const params = new URLSearchParams();
+  params.set('ticker', safeCode);
+  params.set('type', '-1');
+  params.append('currences[]', '1');
+
+  const statusInvestBase = 'https://statusinvest.com.br';
+  const raw = await post<any>(`${statusInvestBase}/fii/tickerprice`, params.toString(), {
+    timeout: INVESTIDOR10_API_TIMEOUT_MS,
+    headers: {
+      'accept': '*/*',
+      'accept-language': 'pt-BR,pt;q=0.8',
+      'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      'origin': statusInvestBase,
+      'referer': `${statusInvestBase}/fundos-imobiliarios/${safeCode.toLowerCase()}`,
+      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+    },
+  });
   return normalizeCotationsToday(raw);
 }
 

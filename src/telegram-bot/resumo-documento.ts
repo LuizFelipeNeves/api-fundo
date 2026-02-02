@@ -39,7 +39,6 @@ function buildFinalMessage(
       lines.push(`⚠️ ${r.code}: ${r.reason}`);
       continue;
     }
-    lines.push(`✅ ${r.code}: arquivo enviado (doc ${r.doc.id})`);
   }
   return lines.join('\n').trim();
 }

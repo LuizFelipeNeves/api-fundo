@@ -3,7 +3,7 @@ import dns from 'node:dns/promises';
 import net from 'node:net';
 import { ProxyAgent, type Dispatcher } from 'undici';
 
-const DEFAULT_TIMEOUT = 10000; // 10 segundos
+const DEFAULT_TIMEOUT = 25000; // 25 segundos
 const DEFAULT_RETRY_MAX = 4;
 const DEFAULT_RETRY_BASE_MS = 600;
 const DEFAULT_HOST_CONCURRENCY = 3;
@@ -15,6 +15,7 @@ const DEFAULT_FNET_HOST_MIN_TIME_MS = 150;
 
 interface RequestOptions {
   timeout?: number;
+  headers?: Record<string, string>;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -515,7 +516,12 @@ async function request<T>(
   options: RequestOptions = {}
 ): Promise<T> {
   for (let attempt = 0; attempt < HTTP_RETRY_MAX; attempt++) {
-    const response = await fetchWithRetry('GET', url, { headers: getDefaultHeaders() }, options);
+    const response = await fetchWithRetry(
+      'GET',
+      url,
+      { headers: options.headers ?? getDefaultHeaders() },
+      { timeout: options.timeout }
+    );
 
     if (!response.ok) {
       await throwHttpError(response, 'GET', url);
@@ -566,10 +572,10 @@ export async function post<T>(
       url,
       {
         method: 'POST',
-        headers: getDefaultHeaders(),
+        headers: options?.headers ?? getDefaultHeaders(),
         body,
       },
-      options ?? {}
+      { timeout: options?.timeout }
     );
 
     if (!response.ok) {

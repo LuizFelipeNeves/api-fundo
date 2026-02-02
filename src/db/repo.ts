@@ -268,6 +268,33 @@ export function getDividendCount(db: Database.Database, fundCode: string): numbe
   return Number(row?.c ?? 0);
 }
 
+export function hasDividend(db: Database.Database, fundCode: string, dateIso: string, type: 'Dividendos' | 'Amortização'): boolean {
+  const fundCodeUpper = fundCode.toUpperCase();
+  const safeDateIso = String(dateIso || '').trim();
+  if (!safeDateIso) return false;
+  const row = db
+    .prepare('select 1 as ok from dividend where fund_code = ? and date_iso = ? and type = ? limit 1')
+    .get(fundCodeUpper, safeDateIso, type) as { ok?: number } | undefined;
+  return Boolean(row?.ok);
+}
+
+export function listDividendKeys(db: Database.Database, fundCode: string, limit?: number): Array<{ date_iso: string; type: 'Dividendos' | 'Amortização' }> {
+  const safeLimit = Number.isFinite(limit) && (limit as number) > 0 ? Math.min(Math.floor(limit as number), 5000) : 200;
+  const fundCodeUpper = fundCode.toUpperCase();
+  const rows = db
+    .prepare('select date_iso, type from dividend where fund_code = ? order by date_iso desc limit ?')
+    .all(fundCodeUpper, safeLimit) as Array<{ date_iso?: string; type?: string }>;
+
+  return rows
+    .map((r) => {
+      const date_iso = String(r.date_iso ?? '').trim();
+      const type = r.type === 'Dividendos' || r.type === 'Amortização' ? r.type : null;
+      if (!date_iso || !type) return null;
+      return { date_iso, type };
+    })
+    .filter((v): v is { date_iso: string; type: 'Dividendos' | 'Amortização' } => Boolean(v));
+}
+
 export function getDividendsTotalCount(db: Database.Database): number {
   const row = db.prepare('select count(*) as c from dividend').get() as { c?: number } | undefined;
   return Number(row?.c ?? 0);
