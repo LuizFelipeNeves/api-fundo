@@ -10,6 +10,7 @@ import {
   getLatestIndicators,
   listFunds,
 } from '../db/repo';
+import { exportFundJson } from '../services/fund-export';
 import {
   ErrorSchema,
   FIIParamsSchema,
@@ -244,6 +245,35 @@ app.openapi(
     }
     return { data: documents };
   }, 'getDocuments') as any
+);
+
+const exportFiiRoute = createRoute({
+  method: 'get',
+  path: '/{code}/export',
+  tags: ['Exportação'],
+  summary: 'Exporta um JSON consolidado com métricas do FII',
+  request: { params: FIIParamsSchema },
+  responses: {
+    200: { description: 'JSON do fundo', content: { 'application/json': { schema: z.any() } } },
+    400: { description: 'Código inválido' },
+    404: { description: 'FII não encontrado' },
+    500: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Erro' },
+  },
+});
+
+app.openapi(
+  exportFiiRoute,
+  createHandler(async (c: any) => {
+    const { valid, code } = getValidatedCode(c);
+    if (!valid || !code) {
+      return c.json(INVALID_CODE_RESPONSE, 400);
+    }
+    const data = exportFundJson(getDb(), code);
+    if (!data) {
+      return c.json({ error: 'FII não encontrado' }, 404);
+    }
+    return { data };
+  }, 'exportFundJson') as any
 );
 
 export default app;

@@ -470,6 +470,24 @@ export function getLatestIndicators(db: Database.Database, fundCode: string): No
   return JSON.parse(row.data_json) as NormalizedIndicators;
 }
 
+export function getLatestIndicatorsSnapshots(
+  db: Database.Database,
+  fundCode: string,
+  limit: number
+): Array<{ fetched_at: string; data: NormalizedIndicators }> {
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 5000) : 365;
+  const orm = drizzle(db);
+  const rows = orm
+    .select({ fetched_at: indicatorsSnapshot.fetched_at, data_json: indicatorsSnapshot.data_json })
+    .from(indicatorsSnapshot)
+    .where(eq(indicatorsSnapshot.fund_code, fundCode.toUpperCase()))
+    .orderBy(desc(indicatorsSnapshot.fetched_at))
+    .limit(safeLimit)
+    .all();
+
+  return rows.map((r) => ({ fetched_at: r.fetched_at, data: JSON.parse(r.data_json) as NormalizedIndicators }));
+}
+
 export function upsertCotationsTodaySnapshot(db: Database.Database, fundCode: string, fetchedAt: string, dataHash: string, data: CotationsTodayData) {
   const orm = drizzle(db);
   const fundCodeUpper = fundCode.toUpperCase();

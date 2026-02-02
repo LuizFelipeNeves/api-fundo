@@ -24,6 +24,7 @@ export type BotCommand =
   | { kind: 'categories' }
   | { kind: 'confirm' }
   | { kind: 'cancel' }
+  | { kind: 'export'; codes: string[] }
   | { kind: 'resumo-documento'; codes: string[] }
   | { kind: 'set'; codes: string[] }
   | { kind: 'add'; codes: string[] }
@@ -52,6 +53,12 @@ export function parseBotCommand(text: string): BotCommand {
   if (resumoMatch) {
     const rest = normalizeText(resumoMatch[2] || '');
     return { kind: 'resumo-documento', codes: extractFundCodes(rest) };
+  }
+
+  const exportMatch = raw.match(/^(\/)?export(ar)?\b(.*)$/i);
+  if (exportMatch) {
+    const rest = normalizeText(exportMatch[3] || '');
+    return { kind: 'export', codes: extractFundCodes(rest) };
   }
 
   const documentosMatch = raw.match(/^(\/)?documentos\b(.*)$/i);
@@ -103,6 +110,8 @@ export function parseBotCommand(text: string): BotCommand {
       'resumo-documento',
       'resumodocumento',
       'resumo_documento',
+      'export',
+      'exportar',
       'documentos',
       'pesquisa',
       'cotation',
@@ -131,6 +140,7 @@ export function formatHelp(): string {
     '- /menu',
     '- /lista',
     '- /categorias',
+    '- /export [FUNDO1 FUNDO2]',
     '- /resumo-documento [FUNDO1 FUNDO2]',
     '- /documentos [FUNDO] [N]',
     '- /pesquisa FUNDO',
@@ -146,6 +156,8 @@ export function formatHelp(): string {
     'Exemplo: /documentos 10',
     'Exemplo: /documentos HGLG11',
     'Exemplo: /documentos HGLG11 5',
+    'Exemplo: /export',
+    'Exemplo: /export HGLG11 MXRF11',
     'Exemplo: /resumo-documento',
     'Exemplo: /resumo-documento HGLG11 MXRF11',
     'Exemplo: /pesquisa HGLG11',

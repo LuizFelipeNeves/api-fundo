@@ -21,3 +21,9 @@ test('parseBotCommand entende /resumo-documento', () => {
   assert.deepEqual(parseBotCommand('/resumo-documento'), { kind: 'resumo-documento', codes: [] });
   assert.deepEqual(parseBotCommand('/resumo_documento HGLG11 MXRF11'), { kind: 'resumo-documento', codes: ['HGLG11', 'MXRF11'] });
 });
+
+test('parseBotCommand entende /export', () => {
+  assert.deepEqual(parseBotCommand('/export'), { kind: 'export', codes: [] });
+  assert.deepEqual(parseBotCommand('/export HGLG11 MXRF11'), { kind: 'export', codes: ['HGLG11', 'MXRF11'] });
+  assert.deepEqual(parseBotCommand('/exportar hglg11'), { kind: 'export', codes: ['HGLG11'] });
+});
