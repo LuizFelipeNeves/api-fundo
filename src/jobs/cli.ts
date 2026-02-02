@@ -3,6 +3,7 @@ import { syncCotationsToday } from './sync-cotations-today';
 import { syncDocuments } from './sync-documents';
 import { syncEodCotation } from './sync-eod-cotation';
 import { syncDetailsDividends } from './sync-details-dividends';
+import { getDb, nowIso } from '../db';
 
 type JobName =
   | 'sync-funds-list'
@@ -10,6 +11,7 @@ type JobName =
   | 'sync-eod-cotation'
   | 'sync-details-dividends'
   | 'sync-documents'
+  | 'reset-dividends'
   | 'all';
 
 function parseJobName(argv: string[]): JobName {
@@ -20,6 +22,7 @@ function parseJobName(argv: string[]): JobName {
   if (raw === 'sync-eod-cotation') return raw;
   if (raw === 'sync-details-dividends') return raw;
   if (raw === 'sync-documents') return raw;
+  if (raw === 'reset-dividends') return raw;
   throw new Error(`JOB_NOT_FOUND:${raw}`);
 }
 
@@ -53,6 +56,16 @@ async function main() {
   }
   if (job === 'sync-documents') {
     await syncDocuments();
+    return;
+  }
+  if (job === 'reset-dividends') {
+    const db = getDb();
+    const beforeRow = db.prepare('select count(*) as c from dividend').get() as { c?: number } | undefined;
+    const before = Number(beforeRow?.c ?? 0);
+    const deleted = db.prepare('delete from dividend').run().changes;
+    const now = nowIso();
+    db.prepare('update fund_state set last_details_sync_at = null, updated_at = ?').run(now);
+    process.stdout.write(`[reset-dividends] before=${before} deleted=${deleted}\n`);
     return;
   }
 }

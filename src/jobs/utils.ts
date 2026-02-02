@@ -115,6 +115,8 @@ export async function forEachConcurrentUntil<T>(
 }
 
 export function shouldRunCotationsToday(): boolean {
+  const forceRaw = String(process.env.FORCE_RUN_JOBS || process.env.FORCE_RUN || '').trim().toLowerCase();
+  if (forceRaw && forceRaw !== '0' && forceRaw !== 'false' && forceRaw !== 'no') return true;
   const now = new Date();
   if (!isWeekdayInSaoPaulo(now)) return false;
   const minutes = getMinutesInSaoPaulo(now);
