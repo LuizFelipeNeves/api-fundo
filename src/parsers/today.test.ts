@@ -7,6 +7,21 @@ test('normalizeCotationsToday normaliza formato investidor10', () => {
   assert.deepEqual(normalizeCotationsToday(raw), [{ price: 10.5, hour: '10:01' }]);
 });
 
+test('normalizeCotationsToday ordena e remove duplicados por hora no formato investidor10', () => {
+  const raw = {
+    real: [
+      { price: 10, created_at: '2026-02-02 10:02:00' },
+      { price: 9, created_at: '2026-02-02 10:01:00' },
+      { price: 11, created_at: '2026-02-02 10:02:59' },
+    ],
+  };
+
+  assert.deepEqual(normalizeCotationsToday(raw), [
+    { price: 9, hour: '10:01' },
+    { price: 11, hour: '10:02' },
+  ]);
+});
+
 test('normalizeCotationsToday normaliza formato statusinvest', () => {
   const raw = [
     {
@@ -26,3 +41,16 @@ test('normalizeCotationsToday normaliza formato statusinvest', () => {
   ]);
 });
 
+test('normalizeCotationsToday ordena e remove duplicados por hora no formato statusinvest', () => {
+  const raw = [
+    {
+      currencyType: 1,
+      prices: [{ value: '6,61', hour: '10:05' }, { price: 6.6, date: '02/02/2026 10:04:00' }, { price: 6.62, hour: '10:05' }],
+    },
+  ];
+
+  assert.deepEqual(normalizeCotationsToday(raw), [
+    { price: 6.6, hour: '10:04' },
+    { price: 6.62, hour: '10:05' },
+  ]);
+});

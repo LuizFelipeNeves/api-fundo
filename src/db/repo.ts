@@ -1,8 +1,9 @@
 import type Database from 'better-sqlite3';
-import { nowIso } from './index';
+import { nowIso, sha256 } from './index';
 import type { FIIResponse, FIIDetails } from '../types';
 import type { NormalizedIndicators } from '../parsers/indicators';
 import type { CotationsTodayData } from '../parsers/today';
+import { canonicalizeCotationsToday } from '../parsers/today';
 import type { DocumentData } from '../parsers/documents';
 import type { DividendData } from '../parsers/dividends';
 import type { NormalizedCotations } from '../parsers/cotations';
@@ -492,14 +493,41 @@ export function upsertCotationsTodaySnapshot(db: Database.Database, fundCode: st
   const orm = drizzle(db);
   const fundCodeUpper = fundCode.toUpperCase();
   const dateIso = String(fetchedAt || '').slice(0, 10);
-  const json = JSON.stringify(data);
+  const incoming = canonicalizeCotationsToday(data);
+
   const existing = orm
-    .select({ data_hash: cotationsTodaySnapshot.data_hash })
+    .select({ data_hash: cotationsTodaySnapshot.data_hash, data_json: cotationsTodaySnapshot.data_json })
     .from(cotationsTodaySnapshot)
     .where(and(eq(cotationsTodaySnapshot.fund_code, fundCodeUpper), eq(cotationsTodaySnapshot.date_iso, dateIso)))
     .get();
 
-  const changed = !existing || existing.data_hash !== dataHash;
+  const existingItems = (() => {
+    if (!existing?.data_json) return [] as CotationsTodayData;
+    try {
+      const parsed: any = JSON.parse(existing.data_json);
+      return Array.isArray(parsed) ? (parsed as CotationsTodayData) : [];
+    } catch {
+      return [] as CotationsTodayData;
+    }
+  })();
+
+  const existingCanonical = canonicalizeCotationsToday(existingItems);
+  const existingByHour = new Map<string, { price: number; hour: string }>();
+  for (const item of existingCanonical) {
+    existingByHour.set(item.hour, item);
+  }
+
+  let hasNew = false;
+  for (const item of incoming) {
+    if (!existingByHour.has(item.hour)) {
+      existingByHour.set(item.hour, item);
+      hasNew = true;
+    }
+  }
+
+  const nextItems = hasNew ? canonicalizeCotationsToday(Array.from(existingByHour.values())) : existingItems;
+  const nextJson = existing ? (hasNew ? JSON.stringify(nextItems) : existing.data_json) : JSON.stringify(nextItems);
+  const nextHash = existing ? (hasNew ? sha256(nextJson) : existing.data_hash) : sha256(nextJson);
 
   orm
     .insert(cotationsTodaySnapshot)
@@ -507,12 +535,12 @@ export function upsertCotationsTodaySnapshot(db: Database.Database, fundCode: st
       fund_code: fundCodeUpper,
       date_iso: dateIso,
       fetched_at: fetchedAt,
-      data_hash: dataHash,
-      data_json: json,
+      data_hash: nextHash,
+      data_json: nextJson,
     })
     .onConflictDoUpdate({
       target: [cotationsTodaySnapshot.fund_code, cotationsTodaySnapshot.date_iso],
-      set: { fetched_at: fetchedAt, data_hash: dataHash, data_json: json },
+      set: { fetched_at: fetchedAt, data_hash: nextHash, data_json: nextJson },
     })
     .run();
 
@@ -525,14 +553,24 @@ export function upsertCotationsTodaySnapshot(db: Database.Database, fundCode: st
   orm
     .update(fundState)
     .set({
-      last_cotations_today_hash: dataHash,
       last_cotations_today_at: fetchedAt,
       updated_at: fetchedAt,
     })
     .where(eq(fundState.fund_code, fundCodeUpper))
     .run();
 
-  return changed;
+  if (hasNew || !existing) {
+    orm
+      .update(fundState)
+      .set({
+        last_cotations_today_hash: nextHash,
+        updated_at: fetchedAt,
+      })
+      .where(eq(fundState.fund_code, fundCodeUpper))
+      .run();
+  }
+
+  return hasNew || !existing;
 }
 
 export function getLatestCotationsToday(db: Database.Database, fundCode: string): CotationsTodayData | null {
@@ -546,8 +584,8 @@ export function getLatestCotationsToday(db: Database.Database, fundCode: string)
     .all()[0];
   if (!row) return null;
   const parsed: any = JSON.parse(row.data_json);
-  if (Array.isArray(parsed)) return parsed;
-  if (Array.isArray(parsed?.real)) return parsed.real;
+  if (Array.isArray(parsed)) return canonicalizeCotationsToday(parsed);
+  if (Array.isArray(parsed?.real)) return canonicalizeCotationsToday(parsed.real);
   return [];
 }
 

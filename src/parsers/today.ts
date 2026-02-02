@@ -6,7 +6,7 @@ export interface CotationTodayItem {
 export type CotationsTodayData = CotationTodayItem[];
 
 export function normalizeCotationsToday(raw: any): CotationsTodayData {
-  if (Array.isArray(raw)) return normalizeStatusInvest(raw);
+  if (Array.isArray(raw)) return canonicalizeCotationsToday(normalizeStatusInvest(raw));
 
   const real = raw?.real;
   if (!Array.isArray(real) || real.length === 0) return [];
@@ -16,7 +16,7 @@ export function normalizeCotationsToday(raw: any): CotationsTodayData {
     const item: any = real[i];
     out[i] = { price: item?.price, hour: formatHour(item?.created_at) };
   }
-  return out.filter((x) => Number.isFinite(x.price));
+  return canonicalizeCotationsToday(out);
 }
 
 function normalizeStatusInvest(raw: any[]): CotationsTodayData {
@@ -95,4 +95,21 @@ function formatHour(dateValue: unknown): string {
   const minutes = date.getMinutes();
   if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return '00:00';
   return `${hours < 10 ? '0' : ''}${hours}:${minutes < 10 ? '0' : ''}${minutes}`;
+}
+
+export function canonicalizeCotationsToday(items: CotationsTodayData): CotationsTodayData {
+  if (!items.length) return [];
+
+  const byHour = new Map<string, CotationTodayItem>();
+
+  for (const item of items) {
+    const price = typeof item?.price === 'number' ? item.price : Number(item?.price);
+    if (!Number.isFinite(price)) continue;
+    const hour = formatHour(item?.hour);
+    byHour.set(hour, { price, hour });
+  }
+
+  const out = Array.from(byHour.values());
+  out.sort((a, b) => a.hour.localeCompare(b.hour));
+  return out;
 }
