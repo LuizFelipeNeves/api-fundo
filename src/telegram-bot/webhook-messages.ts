@@ -121,13 +121,48 @@ export function formatNewDocumentMessage(fundCode: string, d: DocumentData): str
   const header = `📰 Novo documento — ${code}`;
   const lines: string[] = [header];
   if (docType) lines.push(`🗂️ ${docType}`);
-  // if (title) lines.push(`📝 ${title}`);
+  if (title) lines.push(`📝 ${title}`);
   if (when) lines.push(when);
-  // if (status) lines.push(`📌 Status: ${status}`);
+  if (status) lines.push(`📌 Status: ${status}`);
   if (version && version !== '1') lines.push(`🔢 Versão: ${version}`);
   if (id) lines.push(`🆔 ID: ${id}`);
   if (url) lines.push(`🔗 ${url}`);
   lines.push(`📚 Ver mais: /documentos ${code}`);
+  return lines.join('\n').trim();
+}
+
+function clipTelegramText(value: string, maxChars: number): string {
+  const v = String(value || '').trim();
+  if (!v) return '';
+  if (v.length <= maxChars) return v;
+  return `${v.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
+}
+
+export function formatResumoDocumentoMessage(opts: {
+  fundCode: string;
+  doc: { id: number; category: string; type: string; dateUpload: string; url: string };
+  extractedText: string;
+}): string {
+  const code = cleanLine(opts.fundCode).toUpperCase();
+  const docType = [cleanLine(opts.doc.category), cleanLine(opts.doc.type)].filter(Boolean).join(' · ');
+  const upload = formatDateHuman(opts.doc.dateUpload);
+  const id = Number.isFinite(opts.doc.id) ? String(opts.doc.id) : '';
+  const url = cleanLine(opts.doc.url);
+
+  const normalized = String(opts.extractedText || '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .join('\n');
+  const snippet = clipTelegramText(normalized, 2800);
+
+  const lines: string[] = [`🧾 Resumo do documento — ${code}`];
+  if (docType) lines.push(`🗂️ ${docType}`);
+  if (upload) lines.push(`🗓️ Upload: ${upload}`);
+  if (id) lines.push(`🆔 ID: ${id}`);
+  if (snippet) lines.push('', snippet);
+  if (url) lines.push('', `🔗 ${url}`);
   return lines.join('\n').trim();
 }
 

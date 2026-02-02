@@ -24,6 +24,7 @@ export type BotCommand =
   | { kind: 'categories' }
   | { kind: 'confirm' }
   | { kind: 'cancel' }
+  | { kind: 'resumo-documento'; codes: string[] }
   | { kind: 'set'; codes: string[] }
   | { kind: 'add'; codes: string[] }
   | { kind: 'remove'; codes: string[] }
@@ -46,6 +47,12 @@ export function parseBotCommand(text: string): BotCommand {
   if (withoutMention === 'confirm' || withoutMention === 'confirmar' || withoutMention === 'sim') return { kind: 'confirm' };
   if (withoutMention === 'cancel' || withoutMention === 'cancelar' || withoutMention === 'nao' || withoutMention === 'não')
     return { kind: 'cancel' };
+
+  const resumoMatch = raw.match(/^(\/)?resumo[-_\s]?documento\b(.*)$/i);
+  if (resumoMatch) {
+    const rest = normalizeText(resumoMatch[2] || '');
+    return { kind: 'resumo-documento', codes: extractFundCodes(rest) };
+  }
 
   const documentosMatch = raw.match(/^(\/)?documentos\b(.*)$/i);
   if (documentosMatch) {
@@ -93,6 +100,9 @@ export function parseBotCommand(text: string): BotCommand {
       'minha',
       'categorias',
       'categoria',
+      'resumo-documento',
+      'resumodocumento',
+      'resumo_documento',
       'documentos',
       'pesquisa',
       'cotation',
@@ -121,6 +131,7 @@ export function formatHelp(): string {
     '- /menu',
     '- /lista',
     '- /categorias',
+    '- /resumo-documento [FUNDO1 FUNDO2]',
     '- /documentos [FUNDO] [N]',
     '- /pesquisa FUNDO',
     '- /cotation FUNDO',
@@ -135,6 +146,8 @@ export function formatHelp(): string {
     'Exemplo: /documentos 10',
     'Exemplo: /documentos HGLG11',
     'Exemplo: /documentos HGLG11 5',
+    'Exemplo: /resumo-documento',
+    'Exemplo: /resumo-documento HGLG11 MXRF11',
     'Exemplo: /pesquisa HGLG11',
     'Exemplo: /cotation HGLG11',
   ].join('\n');

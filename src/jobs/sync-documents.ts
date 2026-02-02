@@ -1,9 +1,8 @@
 import { fetchDocuments, fetchFIIDetails, fetchDividends } from '../services/client';
 import { getDb, nowIso } from '../db';
 import * as repo from '../db/repo';
-import { createJobLogger, forEachConcurrent, forEachConcurrentUntil, resolveConcurrency } from './utils';
+import { createJobLogger, forEachConcurrentUntil, resolveConcurrency } from './utils';
 import { syncFundDocuments } from '../core/sync/sync-fund-documents';
-import { syncFundDetailsAndDividends } from '../core/sync/sync-fund-details';
 import { createTelegramService } from '../telegram-bot/telegram-api';
 import { listTelegramChatIdsByFundCode } from '../telegram-bot/storage';
 
@@ -17,41 +16,6 @@ export async function syncDocuments(): Promise<{ ran: boolean }> {
   const candidatesLimit = Math.min(5000, Math.max(batchSize, batchSize * 5));
   const codes = repo.listFundCodesForDocumentsBatch(db, candidatesLimit);
   const concurrency = resolveConcurrency({ envKey: 'DOCUMENTS_CONCURRENCY', fallback: 3, max: 10 });
-
-  const dividendsTotal = repo.getDividendsTotalCount(db);
-  if (dividendsTotal === 0) {
-    const logDividends = createJobLogger('sync-dividends');
-    const divConcurrency = resolveConcurrency({ envKey: 'DIVIDENDS_CONCURRENCY', fallback: 3, max: 10 });
-    logDividends.start({ candidates: codes.length, concurrency: divConcurrency });
-
-    let okDiv = 0;
-    let errDiv = 0;
-    let totalMsDiv = 0;
-    let maxMsDiv = 0;
-    await forEachConcurrent(codes, divConcurrency, async (code, i) => {
-      logDividends.progress(i + 1, codes.length, code);
-      const startedAt = Date.now();
-      let status: 'ok' | 'err' = 'ok';
-      try {
-        await syncFundDetailsAndDividends(db, code, { fetcher: { fetchFIIDetails, fetchDividends }, repo });
-        okDiv++;
-      } catch (err) {
-        errDiv++;
-        status = 'err';
-        const message = err instanceof Error ? err.stack || err.message : String(err);
-        process.stderr.write(`sync-dividends:${code}:${message.replace(/\n/g, '\\n')}\n`);
-      } finally {
-        const durationMs = Date.now() - startedAt;
-        totalMsDiv += durationMs;
-        maxMsDiv = Math.max(maxMsDiv, durationMs);
-        logDividends.progressDone(i + 1, codes.length, code, { status, duration_ms: durationMs });
-      }
-    });
-
-    const avgMsDiv = codes.length > 0 ? Math.round(totalMsDiv / codes.length) : 0;
-    logDividends.end({ ok: okDiv, err: errDiv, avg_ms: avgMsDiv, max_ms: maxMsDiv });
-    return { ran: true };
-  }
 
   const timeBudgetMsRaw = Number.parseInt(process.env.DOCUMENTS_TIME_BUDGET_MS || '55000', 10);
   const timeBudgetMs = Number.isFinite(timeBudgetMsRaw) && timeBudgetMsRaw > 1000 ? Math.min(timeBudgetMsRaw, 10 * 60 * 1000) : 55000;

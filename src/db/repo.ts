@@ -222,6 +222,19 @@ export function listFundCodesForIndicatorsBatch(db: Database.Database, limit: nu
   return rows.map((r) => r.code);
 }
 
+export function listFundCodesForDetailsSyncBatch(db: Database.Database, limit: number): string[] {
+  const orm = drizzle(db);
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 5000) : 100;
+  const rows = orm
+    .select({ code: fundMaster.code })
+    .from(fundMaster)
+    .leftJoin(fundState, eq(fundState.fund_code, fundMaster.code))
+    .orderBy(asc(fundState.last_details_sync_at), asc(fundMaster.code))
+    .limit(safeLimit)
+    .all();
+  return rows.map((r) => r.code);
+}
+
 export function listFundCodesForCotationsTodayBatch(db: Database.Database, limit: number): string[] {
   const orm = drizzle(db);
   const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 5000) : 100;
@@ -305,6 +318,21 @@ export function getFundIndicatorsState(
   const row = orm
     .select({
       last_indicators_at: fundState.last_indicators_at,
+    })
+    .from(fundState)
+    .where(eq(fundState.fund_code, code.toUpperCase()))
+    .get();
+  return row ?? null;
+}
+
+export function getFundDetailsSyncState(
+  db: Database.Database,
+  code: string
+): { last_details_sync_at: string | null } | null {
+  const orm = drizzle(db);
+  const row = orm
+    .select({
+      last_details_sync_at: fundState.last_details_sync_at,
     })
     .from(fundState)
     .where(eq(fundState.fund_code, code.toUpperCase()))

@@ -4,6 +4,10 @@ services:
     environment:
       PORT: "${PORT:-8080}"
       DB_PATH: "${DB_PATH:-/data/data.sqlite}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      LOG_FORMAT: "${LOG_FORMAT:-text}"
+      LOG_REQUESTS: "${LOG_REQUESTS:-1}"
     ports:
       - "8080:8080"
     volumes:
@@ -13,7 +17,7 @@ services:
     image: cloudflare/cloudflared:latest
     restart: always
     environment:
-      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+      - TUNNEL_TOKEN=e${TUNNEL_TOKEN}
     command: tunnel --url http://minha-api:8080
 
   jobs:
@@ -54,6 +58,7 @@ services:
       TOR_PROXY_MODE: "${TOR_PROXY_MODE:-fallback}"
       TOR_PROXY_SERVICE: "${TOR_PROXY_SERVICE:-tor}"
       TOR_PROXY_PORT: "${TOR_PROXY_PORT:-8118}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
     volumes:
       - ./data:/data
 

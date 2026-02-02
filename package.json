@@ -10,13 +10,14 @@
     "start:jobs": "node dist/jobs/cli.js",
     "start:jobs:cron": "node dist/jobs/cron.js",
     "build": "tsc",
+    "docker:build": "docker-compose build --no-cache minha-api",
     "docker:api": "docker compose up -d --build minha-api",
     "docker:jobs": "docker compose up -d --build jobs",
     "test": "node --test --import tsx \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@hono/zod-openapi": "^0.16.0",
     "@hono/node-server": "^1.14.0",
+    "@hono/zod-openapi": "^0.16.0",
     "better-sqlite3": "^11.8.1",
     "drizzle-orm": "^0.44.5",
     "hono": "^4.6.0",

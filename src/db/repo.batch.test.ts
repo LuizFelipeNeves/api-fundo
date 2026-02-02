@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
-import { listFundCodesForCotationsTodayBatch, listFundCodesForDocumentsBatch, listFundCodesForIndicatorsBatch } from './repo';
+import { listFundCodesForCotationsTodayBatch, listFundCodesForDetailsSyncBatch, listFundCodesForDocumentsBatch, listFundCodesForIndicatorsBatch } from './repo';
 
 test('listFundCodesForCotationsTodayBatch ordena por last_cotations_today_at asc e limita', () => {
   const db = new Database(':memory:');
@@ -80,3 +80,27 @@ test('listFundCodesForDocumentsBatch filtra por cnpj e ordena por last_documents
   assert.deepEqual(listFundCodesForDocumentsBatch(db, 10), ['C', 'B']);
 });
 
+test('listFundCodesForDetailsSyncBatch ordena por last_details_sync_at asc e limita', () => {
+  const db = new Database(':memory:');
+  db.exec(`
+    PRAGMA foreign_keys=ON;
+    CREATE TABLE fund_master (code TEXT PRIMARY KEY, id TEXT, cnpj TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE fund_state (
+      fund_code TEXT PRIMARY KEY REFERENCES fund_master(code) ON DELETE CASCADE,
+      last_details_sync_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+  const now = new Date().toISOString();
+  const insFund = db.prepare('insert into fund_master(code, id, cnpj, created_at, updated_at) values (?, ?, ?, ?, ?)');
+  const insState = db.prepare('insert into fund_state(fund_code, last_details_sync_at, created_at, updated_at) values (?, ?, ?, ?)');
+  insFund.run('A', null, null, now, now);
+  insFund.run('B', null, null, now, now);
+  insFund.run('C', null, null, now, now);
+  insState.run('A', '2026-01-02T00:00:00.000Z', now, now);
+  insState.run('B', null, now, now);
+  insState.run('C', '2026-01-01T00:00:00.000Z', now, now);
+
+  assert.deepEqual(listFundCodesForDetailsSyncBatch(db, 2), ['B', 'C']);
+});

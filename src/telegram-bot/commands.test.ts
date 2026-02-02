@@ -16,3 +16,8 @@ test('parseBotCommand entende /confirm e /cancel', () => {
   assert.deepEqual(parseBotCommand('/confirm'), { kind: 'confirm' });
   assert.deepEqual(parseBotCommand('/cancel'), { kind: 'cancel' });
 });
+
+test('parseBotCommand entende /resumo-documento', () => {
+  assert.deepEqual(parseBotCommand('/resumo-documento'), { kind: 'resumo-documento', codes: [] });
+  assert.deepEqual(parseBotCommand('/resumo_documento HGLG11 MXRF11'), { kind: 'resumo-documento', codes: ['HGLG11', 'MXRF11'] });
+});

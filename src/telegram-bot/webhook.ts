@@ -30,6 +30,7 @@ import {
   formatRemoveMessage,
   formatSetMessage,
 } from './webhook-messages';
+import { handleResumoDocumentoCommand } from './resumo-documento';
 
 const app = new OpenAPIHono();
 
@@ -113,6 +114,11 @@ app.post('/webhook', async (c) => {
 
   if (cmd.kind === 'help') {
     await telegram.sendText(chatIdStr, formatHelp());
+    return c.json({ ok: true });
+  }
+
+  if (cmd.kind === 'resumo-documento') {
+    await handleResumoDocumentoCommand({ db, chatId: chatIdStr, telegram, codes: cmd.codes });
     return c.json({ ok: true });
   }
 

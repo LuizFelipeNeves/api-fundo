@@ -1,6 +1,7 @@
 import { syncFundsList } from './sync-funds-list';
 import { syncCotationsToday } from './sync-cotations-today';
 import { syncIndicators } from './sync-indicators';
+import { syncDetailsDividends } from './sync-details-dividends';
 import { syncDocuments } from './sync-documents';
 import { syncEodCotation } from './sync-eod-cotation';
 
@@ -20,6 +21,7 @@ async function runOnce() {
   await runStep('sync-funds-list', syncFundsList);
   await runStep('sync-cotations-today', syncCotationsToday);
   await runStep('sync-indicators', syncIndicators);
+  await runStep('sync-details-dividends', syncDetailsDividends);
   await runStep('sync-documents', syncDocuments);
   await runStep('sync-eod-cotation', syncEodCotation);
 }
