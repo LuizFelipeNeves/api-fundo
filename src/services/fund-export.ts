@@ -86,9 +86,45 @@ function monthKeyDiff(a: string, b: string): number {
   return (bp.y - ap.y) * 12 + (bp.m - ap.m);
 }
 
+function monthKeyAdd(monthKey: string, deltaMonths: number): string {
+  const p = monthKeyToParts(monthKey);
+  if (!p) return '';
+  const base = p.y * 12 + (p.m - 1);
+  const next = base + deltaMonths;
+  const y = Math.floor(next / 12);
+  const m = (next % 12) + 1;
+  const ys = String(y).padStart(4, '0');
+  const ms = String(m).padStart(2, '0');
+  return `${ys}-${ms}`;
+}
+
+function listMonthKeysBetweenInclusive(startKey: string, endKey: string): string[] {
+  const diff = monthKeyDiff(startKey, endKey);
+  if (diff < 0) return [];
+  const out: string[] = [];
+  for (let i = 0; i <= diff; i++) out.push(monthKeyAdd(startKey, i));
+  return out.filter(Boolean);
+}
+
 function parseIsoMs(iso: string): number {
   const ms = Date.parse(iso);
   return Number.isFinite(ms) ? ms : 0;
+}
+
+function countWeekdaysBetweenIso(startIso: string, endIso: string): number {
+  const start = new Date(`${startIso}T00:00:00.000Z`);
+  const end = new Date(`${endIso}T00:00:00.000Z`);
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return 0;
+  let count = 0;
+  const cursor = new Date(startMs);
+  while (cursor.getTime() <= endMs) {
+    const d = cursor.getUTCDay();
+    if (d >= 1 && d <= 5) count++;
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return count;
 }
 
 function computeDrawdown(prices: number[]) {
@@ -231,6 +267,12 @@ export function exportFundJson(
   const priceInitial = cotationPrices.length ? cotationPrices[0] : 0;
   const priceFinal = cotationPrices.length ? cotationPrices[cotationPrices.length - 1] : 0;
   const simpleReturn = priceInitial > 0 ? priceFinal / priceInitial - 1 : 0;
+  let cumulativeReturn = 0;
+  if (dailyReturns.length) {
+    let acc = 1;
+    for (const r of dailyReturns) acc *= 1 + r;
+    cumulativeReturn = acc - 1;
+  }
 
   const priceMin = cotationPrices.length ? Math.min(...cotationPrices) : 0;
   const priceMax = cotationPrices.length ? Math.max(...cotationPrices) : 0;
@@ -289,10 +331,13 @@ export function exportFundJson(
     dividendByMonth.set(mk, (dividendByMonth.get(mk) ?? 0) + d.value);
   }
   const paidMonths = Array.from(dividendByMonth.keys()).sort();
-  const totalMonths = monthKeys.length;
-  const monthsWithPayment = paidMonths.length;
-  const monthsWithoutPayment = Math.max(0, totalMonths - monthsWithPayment);
-  const regularity = totalMonths > 0 ? monthsWithPayment / totalMonths : 0;
+  const firstMonth = monthKeys[0] ?? '';
+  const lastMonth = monthKeys.length ? monthKeys[monthKeys.length - 1] : '';
+  const allMonths = firstMonth && lastMonth ? listMonthKeysBetweenInclusive(firstMonth, lastMonth) : monthKeys;
+  const expectedMonths = allMonths.length;
+  const monthsWithPayment = allMonths.filter((mk) => (dividendByMonth.get(mk) ?? 0) > 0).length;
+  const monthsWithoutPayment = Math.max(0, expectedMonths - monthsWithPayment);
+  const regularity = expectedMonths > 0 ? monthsWithPayment / expectedMonths : 0;
 
   const sortedPaymentIso = dividendsOnly
     .map((d) => toDateIsoFromBr(d.payment))
@@ -308,7 +353,7 @@ export function exportFundJson(
   }
   const avgPaymentIntervalDays = mean(paymentIntervalsDays);
 
-  const dividendMonthlySeries = paidMonths.map((mk, idx) => ({ x: idx, y: dividendByMonth.get(mk) ?? 0 }));
+  const dividendMonthlySeries = allMonths.map((mk, idx) => ({ x: idx, y: dividendByMonth.get(mk) ?? 0 }));
   const dividendTrendSlope = linearSlope(dividendMonthlySeries);
 
   const dyPeriod = priceMean > 0 ? dividendTotal / priceMean : 0;
@@ -348,9 +393,13 @@ export function exportFundJson(
   const liqMean = mean(liqValues);
   const liqMin = liqValues.length ? Math.min(...liqValues) : 0;
   const liqMax = liqValues.length ? Math.max(...liqValues) : 0;
-  const liqZeroDays = liqValues.filter((v) => v <= 0).length;
-  const pctDaysTraded = liqValues.length ? liqValues.filter((v) => v > 0).length / liqValues.length : 0;
   const liqTrendSlope = linearSlope(liquiditySeries.map((p, idx) => ({ x: idx, y: p.value })));
+
+  const expectedTradingDays =
+    cotationDatesIso.length >= 2 ? countWeekdaysBetweenIso(cotationDatesIso[0], cotationDatesIso[cotationDatesIso.length - 1]) : cotationDatesIso.length;
+  const tradedDays = cotationDatesIso.length;
+  const pctDaysTraded = expectedTradingDays > 0 ? tradedDays / expectedTradingDays : 0;
+  const liqZeroDays = Math.max(0, expectedTradingDays - tradedDays);
 
   const plValues = plSeries.map((p) => p.value);
   const plGrowth12m = computeGrowth(plSeries, 365);
@@ -362,37 +411,38 @@ export function exportFundJson(
   const cotistasGrowth = computeGrowth(cotistasSeries, 365);
 
   const maxConsecPaid = (() => {
-    if (!paidMonths.length) return 0;
-    const months = paidMonths.slice().sort();
-    let best = 1;
-    let cur = 1;
-    for (let i = 1; i < months.length; i++) {
-      const prev = months[i - 1];
-      const next = months[i];
-      if (monthKeyDiff(prev, next) === 1) cur++;
-      else cur = 1;
-      best = Math.max(best, cur);
+    if (!allMonths.length) return 0;
+    let best = 0;
+    let cur = 0;
+    for (const mk of allMonths) {
+      const paid = (dividendByMonth.get(mk) ?? 0) > 0;
+      if (paid) {
+        cur++;
+        best = Math.max(best, cur);
+      } else {
+        cur = 0;
+      }
     }
     return best;
   })();
 
   const maxConsecNoPay = (() => {
-    if (!monthKeys.length) return 0;
+    if (!allMonths.length) return 0;
     let best = 0;
     let cur = 0;
-    for (const mk of monthKeys) {
+    for (const mk of allMonths) {
       const paid = (dividendByMonth.get(mk) ?? 0) > 0;
-      if (paid) {
+      if (!paid) {
+        cur++;
+        best = Math.max(best, cur);
+      } else {
         cur = 0;
-        continue;
       }
-      cur++;
-      best = Math.max(best, cur);
     }
     return best;
   })();
 
-  const pctMonthsWithHistory = clamp01(totalMonths / 60);
+  const pctMonthsWithHistory = expectedMonths > 0 ? monthKeys.length / expectedMonths : 0;
   const fundAgeDays = periodDays;
 
   const scoreStability = clamp01(regularity * (1 - Math.min(1, dividendCv)));
@@ -408,6 +458,19 @@ export function exportFundJson(
   const todayMin = todayPrices.length ? Math.min(...todayPrices) : 0;
   const todayMax = todayPrices.length ? Math.max(...todayPrices) : 0;
   const todayReturn = todayFirst > 0 ? todayLast / todayFirst - 1 : 0;
+  const todayReturns: number[] = [];
+  for (let i = 1; i < todayPrices.length; i++) {
+    const prev = todayPrices[i - 1];
+    const cur = todayPrices[i];
+    if (prev > 0) todayReturns.push(cur / prev - 1);
+  }
+  const todayMaxTickDrop = todayReturns.length ? Math.min(...todayReturns) : 0;
+  const todayMaxTickGain = todayReturns.length ? Math.max(...todayReturns) : 0;
+  const todayPositiveTicks = todayReturns.filter((r) => r > 0).length;
+  const todayNegativeTicks = todayReturns.filter((r) => r < 0).length;
+  const todayPctPositiveTicks = todayReturns.length ? todayPositiveTicks / todayReturns.length : 0;
+  const todayVolatility = stdev(todayReturns);
+  const todayAmplitude = todayMin > 0 ? todayMax / todayMin - 1 : 0;
 
   const documentsAll = getDocuments(db, fundCode) ?? [];
   const documentsLimit = Number.isFinite(opts?.documentsLimit) && (opts?.documentsLimit as number) > 0 ? Math.min(Math.floor(opts!.documentsLimit!), 200) : 20;
@@ -420,7 +483,7 @@ export function exportFundJson(
     data: {
       cotations: cotations?.real ?? [],
       dividends: dividendsInPeriod,
-      indicators_latest: getLatestIndicatorsSnapshots(db, fundCode, 1)[0]?.data ?? null,
+      indicators_latest: indicatorSnapshots[0]?.data ?? null,
       cotations_today: cotationsToday,
       documents: { total: documentsAll.length, items: documents },
     },
@@ -432,7 +495,7 @@ export function exportFundJson(
         max: priceMax,
         mean: priceMean,
         simple_return: simpleReturn,
-        cumulative_return: simpleReturn,
+        cumulative_return: cumulativeReturn,
         avg_monthly_return: avgMonthlyReturn,
         volatility: volatility,
         downside_volatility: downsideVolatility,
@@ -494,12 +557,14 @@ export function exportFundJson(
       },
       structure: {
         net_worth_series_points: plSeries.length,
+        net_worth_series: plSeries,
         net_worth_growth_12m: plGrowth12m,
         net_worth_growth_3m: plGrowth3m,
         net_worth_min: plMin,
         net_worth_max: plMax,
         net_worth_volatility: plVol,
         cotistas_series_points: cotistasSeries.length,
+        cotistas_series: cotistasSeries,
         cotistas_growth_12m: cotistasGrowth,
       },
       consistency: {
@@ -521,6 +586,14 @@ export function exportFundJson(
         min: todayMin,
         max: todayMax,
         return: todayReturn,
+        ticks: todayPrices.length,
+        max_tick_drop: todayMaxTickDrop,
+        max_tick_gain: todayMaxTickGain,
+        positive_ticks: todayPositiveTicks,
+        negative_ticks: todayNegativeTicks,
+        pct_positive_ticks: todayPctPositiveTicks,
+        volatility: todayVolatility,
+        variation_amplitude: todayAmplitude,
       },
     },
   };

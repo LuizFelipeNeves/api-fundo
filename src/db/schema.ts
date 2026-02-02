@@ -70,12 +70,13 @@ export const cotationsTodaySnapshot = sqliteTable(
     fund_code: text('fund_code')
       .notNull()
       .references(() => fundMaster.code, { onDelete: 'cascade' }),
+    date_iso: text('date_iso').notNull(),
     fetched_at: text('fetched_at').notNull(),
     data_hash: text('data_hash').notNull(),
     data_json: text('data_json').notNull(),
   },
   (t: any) => ({
-    uniq: uniqueIndex('cotations_today_snapshot_fund_hash').on(t.fund_code, t.data_hash),
+    uniq: uniqueIndex('cotations_today_snapshot_fund_date').on(t.fund_code, t.date_iso),
   })
 );
 

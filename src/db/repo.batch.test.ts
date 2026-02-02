@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
-import { hasDividend, listDividendKeys, listFundCodesForCotationsTodayBatch, listFundCodesForDetailsSyncBatch, listFundCodesForDocumentsBatch, listFundCodesForIndicatorsBatch } from './repo';
+import { hasDividend, listDividendKeys, listFundCodesForCotationsTodayBatch, listFundCodesForDetailsSyncBatch, listFundCodesForDocumentsBatch, listFundCodesForIndicatorsBatch, upsertCotationsTodaySnapshot } from './repo';
 
 test('listFundCodesForCotationsTodayBatch ordena por last_cotations_today_at asc e limita', () => {
   const db = new Database(':memory:');
@@ -179,4 +179,62 @@ test('listDividendKeys lista date_iso e type ordenado por date_iso desc', () => 
     { date_iso: '2026-02-01', type: 'Dividendos' },
     { date_iso: '2026-01-01', type: 'Dividendos' },
   ]);
+});
+
+test('upsertCotationsTodaySnapshot atualiza snapshot do mesmo dia', () => {
+  const db = new Database(':memory:');
+  db.exec(`
+    PRAGMA foreign_keys=ON;
+    CREATE TABLE fund_master (code TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE fund_state (
+      fund_code TEXT PRIMARY KEY REFERENCES fund_master(code) ON DELETE CASCADE,
+      last_documents_max_id INTEGER,
+      last_documents_at TEXT,
+      last_details_sync_at TEXT,
+      last_indicators_hash TEXT,
+      last_indicators_at TEXT,
+      last_cotations_today_hash TEXT,
+      last_cotations_today_at TEXT,
+      last_historical_cotations_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE cotations_today_snapshot (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
+      date_iso TEXT NOT NULL,
+      fetched_at TEXT NOT NULL,
+      data_hash TEXT NOT NULL,
+      data_json TEXT NOT NULL,
+      UNIQUE(fund_code, date_iso)
+    );
+  `);
+  const now = '2026-01-01T10:00:00.000Z';
+  db.prepare('insert into fund_master(code, created_at, updated_at) values (?, ?, ?)').run('ABCD11', now, now);
+
+  const changed1 = upsertCotationsTodaySnapshot(db, 'abcd11', now, 'h1', [{ price: 1, hour: '10:00' }] as any);
+  assert.equal(changed1, true);
+  const count1 = db.prepare('select count(1) as c from cotations_today_snapshot').get() as any;
+  assert.equal(count1.c, 1);
+
+  const later = '2026-01-01T12:00:00.000Z';
+  const changed2 = upsertCotationsTodaySnapshot(db, 'abcd11', later, 'h2', [{ price: 2, hour: '12:00' }] as any);
+  assert.equal(changed2, true);
+  const count2 = db.prepare('select count(1) as c from cotations_today_snapshot').get() as any;
+  assert.equal(count2.c, 1);
+
+  const row = db
+    .prepare('select fund_code, date_iso, fetched_at, data_hash, data_json from cotations_today_snapshot')
+    .get() as any;
+  assert.equal(row.fund_code, 'ABCD11');
+  assert.equal(row.date_iso, '2026-01-01');
+  assert.equal(row.fetched_at, later);
+  assert.equal(row.data_hash, 'h2');
+  assert.ok(String(row.data_json).includes('12:00'));
+
+  const state = db
+    .prepare('select last_cotations_today_hash as h, last_cotations_today_at as at from fund_state where fund_code=?')
+    .get('ABCD11') as any;
+  assert.equal(state.h, 'h2');
+  assert.equal(state.at, later);
 });

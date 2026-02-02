@@ -491,17 +491,30 @@ export function getLatestIndicatorsSnapshots(
 export function upsertCotationsTodaySnapshot(db: Database.Database, fundCode: string, fetchedAt: string, dataHash: string, data: CotationsTodayData) {
   const orm = drizzle(db);
   const fundCodeUpper = fundCode.toUpperCase();
+  const dateIso = String(fetchedAt || '').slice(0, 10);
   const json = JSON.stringify(data);
-  const inserted = orm
+  const existing = orm
+    .select({ data_hash: cotationsTodaySnapshot.data_hash })
+    .from(cotationsTodaySnapshot)
+    .where(and(eq(cotationsTodaySnapshot.fund_code, fundCodeUpper), eq(cotationsTodaySnapshot.date_iso, dateIso)))
+    .get();
+
+  const changed = !existing || existing.data_hash !== dataHash;
+
+  orm
     .insert(cotationsTodaySnapshot)
     .values({
       fund_code: fundCodeUpper,
+      date_iso: dateIso,
       fetched_at: fetchedAt,
       data_hash: dataHash,
       data_json: json,
     })
-    .onConflictDoNothing({ target: [cotationsTodaySnapshot.fund_code, cotationsTodaySnapshot.data_hash] })
-    .run().changes;
+    .onConflictDoUpdate({
+      target: [cotationsTodaySnapshot.fund_code, cotationsTodaySnapshot.date_iso],
+      set: { fetched_at: fetchedAt, data_hash: dataHash, data_json: json },
+    })
+    .run();
 
   orm
     .insert(fundState)
@@ -509,28 +522,17 @@ export function upsertCotationsTodaySnapshot(db: Database.Database, fundCode: st
     .onConflictDoNothing()
     .run();
 
-  if (inserted > 0) {
-    orm
-      .update(fundState)
-      .set({
-        last_cotations_today_hash: dataHash,
-        last_cotations_today_at: fetchedAt,
-        updated_at: fetchedAt,
-      })
-      .where(eq(fundState.fund_code, fundCodeUpper))
-      .run();
-  } else {
-    orm
-      .update(fundState)
-      .set({
-        last_cotations_today_at: fetchedAt,
-        updated_at: fetchedAt,
-      })
-      .where(eq(fundState.fund_code, fundCodeUpper))
-      .run();
-  }
+  orm
+    .update(fundState)
+    .set({
+      last_cotations_today_hash: dataHash,
+      last_cotations_today_at: fetchedAt,
+      updated_at: fetchedAt,
+    })
+    .where(eq(fundState.fund_code, fundCodeUpper))
+    .run();
 
-  return inserted > 0;
+  return changed;
 }
 
 export function getLatestCotationsToday(db: Database.Database, fundCode: string): CotationsTodayData | null {

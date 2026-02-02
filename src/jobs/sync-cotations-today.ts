@@ -18,8 +18,8 @@ export async function syncCotationsToday(): Promise<{ ran: boolean }> {
   const codes = repo.listFundCodesForCotationsTodayBatch(db, candidatesLimit);
   const concurrency = resolveConcurrency({ envKey: 'COTATIONS_TODAY_CONCURRENCY', fallback: 5, max: 20 });
 
-  const minIntervalMinRaw = Number.parseInt(process.env.COTATIONS_TODAY_MIN_INTERVAL_MIN || '5', 10);
-  const minIntervalMin = Number.isFinite(minIntervalMinRaw) && minIntervalMinRaw > 0 ? Math.min(minIntervalMinRaw, 24 * 60) : 5;
+  const minIntervalMinRaw = Number.parseInt(process.env.COTATIONS_TODAY_MIN_INTERVAL_MIN || '1', 10);
+  const minIntervalMin = Number.isFinite(minIntervalMinRaw) && minIntervalMinRaw > 0 ? Math.min(minIntervalMinRaw, 24 * 60) : 1;
   const minIntervalMs = minIntervalMin * 60 * 1000;
 
   const timeBudgetMsRaw = Number.parseInt(process.env.COTATIONS_TODAY_TIME_BUDGET_MS || '55000', 10);

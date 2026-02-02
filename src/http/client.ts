@@ -8,6 +8,8 @@ const DEFAULT_RETRY_MAX = 4;
 const DEFAULT_RETRY_BASE_MS = 600;
 const DEFAULT_HOST_CONCURRENCY = 3;
 const DEFAULT_HOST_MIN_TIME_MS = 150;
+const DEFAULT_STATUSINVEST_HOST_CONCURRENCY = 1;
+const DEFAULT_STATUSINVEST_HOST_MIN_TIME_MS = 120;
 const DEFAULT_OTHER_HOST_CONCURRENCY = 6;
 const DEFAULT_OTHER_HOST_MIN_TIME_MS = 0;
 const DEFAULT_FNET_HOST_CONCURRENCY = 2;
@@ -16,6 +18,8 @@ const DEFAULT_FNET_HOST_MIN_TIME_MS = 150;
 interface RequestOptions {
   timeout?: number;
   headers?: Record<string, string>;
+  retryMax?: number;
+  retryBaseMs?: number;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -237,6 +241,16 @@ const I10_HOST_MIN_TIME_MS = clampInt(
   0,
   60000
 );
+const STATUSINVEST_HOST_CONCURRENCY = clampInt(
+  parsePositiveInt(process.env.STATUSINVEST_CONCURRENCY, DEFAULT_STATUSINVEST_HOST_CONCURRENCY),
+  1,
+  20
+);
+const STATUSINVEST_HOST_MIN_TIME_MS = clampInt(
+  parsePositiveInt(process.env.STATUSINVEST_MIN_TIME_MS, DEFAULT_STATUSINVEST_HOST_MIN_TIME_MS),
+  0,
+  60000
+);
 const OTHER_HOST_CONCURRENCY = clampInt(
   parsePositiveInt(process.env.OTHER_HOST_CONCURRENCY, DEFAULT_OTHER_HOST_CONCURRENCY),
   1,
@@ -282,6 +296,9 @@ function getHostLimiter(hostname: string): HostLimiterState {
 function getHostPolicy(hostname: string): { maxConcurrent: number; minTimeMs: number } {
   if (hostname === 'investidor10.com.br' || hostname.endsWith('.investidor10.com.br')) {
     return { maxConcurrent: I10_HOST_CONCURRENCY, minTimeMs: I10_HOST_MIN_TIME_MS };
+  }
+  if (hostname === 'statusinvest.com.br' || hostname.endsWith('.statusinvest.com.br')) {
+    return { maxConcurrent: STATUSINVEST_HOST_CONCURRENCY, minTimeMs: STATUSINVEST_HOST_MIN_TIME_MS };
   }
   if (hostname === 'fnet.bmfbovespa.com.br' || hostname.endsWith('.bmfbovespa.com.br')) {
     return { maxConcurrent: FNET_HOST_CONCURRENCY, minTimeMs: FNET_HOST_MIN_TIME_MS };
@@ -364,14 +381,27 @@ function parseRetryAfterMs(headerValue: string | null): number | null {
   return null;
 }
 
-function computeBackoffMs(attempt: number, status?: number, retryAfterMs?: number | null): number {
+function computeBackoffMs(
+  attempt: number,
+  status: number | undefined,
+  retryAfterMs: number | null | undefined,
+  baseMs: number
+): number {
   if (retryAfterMs !== null && retryAfterMs !== undefined) {
     return clampInt(retryAfterMs, 0, 300000);
   }
-  const base = status === 429 || status === 403 ? HTTP_RETRY_BASE_MS * 2 : HTTP_RETRY_BASE_MS;
+  const base = status === 429 || status === 403 ? baseMs * 2 : baseMs;
   const exp = Math.min(6, Math.max(0, attempt));
   const jitter = Math.floor(Math.random() * 250);
   return clampInt(base * Math.pow(2, exp) + jitter, 0, 300000);
+}
+
+function resolveRetryMax(options: RequestOptions | undefined): number {
+  return clampInt(options?.retryMax ?? HTTP_RETRY_MAX, 1, 50);
+}
+
+function resolveRetryBaseMs(options: RequestOptions | undefined): number {
+  return clampInt(options?.retryBaseMs ?? HTTP_RETRY_BASE_MS, 50, 60000);
 }
 
 async function readResponseSnippet(response: Response, maxChars: number): Promise<string> {
@@ -450,9 +480,11 @@ async function fetchWithRetry(
   options: RequestOptions
 ): Promise<Response> {
   const timeout = options.timeout ?? DEFAULT_TIMEOUT;
+  const retryMax = resolveRetryMax(options);
+  const retryBaseMs = resolveRetryBaseMs(options);
 
   let lastError: unknown = null;
-  for (let attempt = 0; attempt < HTTP_RETRY_MAX; attempt++) {
+  for (let attempt = 0; attempt < retryMax; attempt++) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
     try {
@@ -482,14 +514,14 @@ async function fetchWithRetry(
 
       clearTimeout(timeoutId);
 
-      if (!response.ok && isRetryableStatus(response.status) && attempt + 1 < HTTP_RETRY_MAX) {
+      if (!response.ok && isRetryableStatus(response.status) && attempt + 1 < retryMax) {
         const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
         try {
           response.body?.cancel();
         } catch {
           null;
         }
-        await sleep(computeBackoffMs(attempt, response.status, retryAfterMs));
+        await sleep(computeBackoffMs(attempt, response.status, retryAfterMs, retryBaseMs));
         continue;
       }
 
@@ -500,8 +532,8 @@ async function fetchWithRetry(
         throw new Error(`${method} ${url} -> timeout_after_ms=${timeout}`);
       }
       lastError = error;
-      if (attempt + 1 < HTTP_RETRY_MAX) {
-        await sleep(computeBackoffMs(attempt));
+      if (attempt + 1 < retryMax) {
+        await sleep(computeBackoffMs(attempt, undefined, undefined, retryBaseMs));
         continue;
       }
       throw error;
@@ -515,12 +547,14 @@ async function request<T>(
   url: string,
   options: RequestOptions = {}
 ): Promise<T> {
-  for (let attempt = 0; attempt < HTTP_RETRY_MAX; attempt++) {
+  const retryMax = resolveRetryMax(options);
+  const retryBaseMs = resolveRetryBaseMs(options);
+  for (let attempt = 0; attempt < retryMax; attempt++) {
     const response = await fetchWithRetry(
       'GET',
       url,
       { headers: options.headers ?? getDefaultHeaders() },
-      { timeout: options.timeout }
+      options
     );
 
     if (!response.ok) {
@@ -529,13 +563,13 @@ async function request<T>(
 
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.toLowerCase().includes('application/json')) {
-      if (attempt + 1 < HTTP_RETRY_MAX && contentType.toLowerCase().includes('text/html')) {
+      if (attempt + 1 < retryMax && contentType.toLowerCase().includes('text/html')) {
         try {
           response.body?.cancel();
         } catch {
           null;
         }
-        await sleep(computeBackoffMs(attempt, 503));
+        await sleep(computeBackoffMs(attempt, 503, null, retryBaseMs));
         continue;
       }
       const snippet = await readResponseSnippet(response, 800);
@@ -566,7 +600,9 @@ export async function post<T>(
   body: string,
   options?: RequestOptions
 ): Promise<T> {
-  for (let attempt = 0; attempt < HTTP_RETRY_MAX; attempt++) {
+  const retryMax = resolveRetryMax(options);
+  const retryBaseMs = resolveRetryBaseMs(options);
+  for (let attempt = 0; attempt < retryMax; attempt++) {
     const response = await fetchWithRetry(
       'POST',
       url,
@@ -575,7 +611,7 @@ export async function post<T>(
         headers: options?.headers ?? getDefaultHeaders(),
         body,
       },
-      { timeout: options?.timeout }
+      options ?? {}
     );
 
     if (!response.ok) {
@@ -584,13 +620,13 @@ export async function post<T>(
 
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.toLowerCase().includes('application/json')) {
-      if (attempt + 1 < HTTP_RETRY_MAX && contentType.toLowerCase().includes('text/html')) {
+      if (attempt + 1 < retryMax && contentType.toLowerCase().includes('text/html')) {
         try {
           response.body?.cancel();
         } catch {
           null;
         }
-        await sleep(computeBackoffMs(attempt, 503));
+        await sleep(computeBackoffMs(attempt, 503, null, retryBaseMs));
         continue;
       }
       const snippet = await readResponseSnippet(response, 800);
@@ -682,7 +718,9 @@ export async function fetchWithSession<T>(
     headers['cookie'] = cookies.join('; ');
   }
 
-  for (let attempt = 0; attempt < HTTP_RETRY_MAX; attempt++) {
+  const retryMax = resolveRetryMax(options);
+  const retryBaseMs = resolveRetryBaseMs(options);
+  for (let attempt = 0; attempt < retryMax; attempt++) {
     const dataResponse = await fetchWithRetry('GET', dataUrl, { method: 'GET', headers }, options);
 
     if (!dataResponse.ok) {
@@ -691,13 +729,13 @@ export async function fetchWithSession<T>(
 
     const contentType = dataResponse.headers.get('content-type') || '';
     if (!contentType.toLowerCase().includes('application/json')) {
-      if (attempt + 1 < HTTP_RETRY_MAX && contentType.toLowerCase().includes('text/html')) {
+      if (attempt + 1 < retryMax && contentType.toLowerCase().includes('text/html')) {
         try {
           dataResponse.body?.cancel();
         } catch {
           null;
         }
-        await sleep(computeBackoffMs(attempt, 503));
+        await sleep(computeBackoffMs(attempt, 503, null, retryBaseMs));
         continue;
       }
       const snippet = await readResponseSnippet(dataResponse, 800);

@@ -109,6 +109,8 @@ export async function fetchCotationsToday(code: string): Promise<CotationsTodayD
   const statusInvestBase = 'https://statusinvest.com.br';
   const raw = await post<any>(`${statusInvestBase}/fii/tickerprice`, params.toString(), {
     timeout: INVESTIDOR10_API_TIMEOUT_MS,
+    retryMax: 8,
+    retryBaseMs: 400,
     headers: {
       'accept': '*/*',
       'accept-language': 'pt-BR,pt;q=0.8',
