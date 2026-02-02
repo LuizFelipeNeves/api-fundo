@@ -81,28 +81,50 @@ export interface DividendItem {
 }
 
 export function extractDividendsHistory(html: string): DividendItem[] {
+  const tableMatch = html.match(/<table[^>]*\bid=["']table-dividends-history["'][\s\S]*?<\/table>/i);
+  const tableHtml = tableMatch?.[0] ?? '';
+  const tbodyMatch = tableHtml.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i);
+  const tbodyHtml = tbodyMatch?.[1] ?? '';
+  if (!tbodyHtml) return [];
+
+  const strip = (value: string) =>
+    normalizeText(String(value || '').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim());
+
+  const dateMatch = (value: string) => {
+    const m = strip(value).match(/^\d{1,2}\/\d{1,2}\/\d{4}$/);
+    return m ? m[0] : '';
+  };
+
+  const parseBrlNumber = (value: string) => {
+    const cleaned = strip(value).replace(/\./g, '').replace(',', '.');
+    const n = Number.parseFloat(cleaned);
+    return Number.isFinite(n) ? n : 0;
+  };
+
   const items: DividendItem[] = [];
+  const seen = new Set<string>();
 
-  // Extrair linhas da tabela de dividendos/amortizações
-  const rowRegex = /<tr[^>]*>\s*<td[^>]*class="[^"]*text-center[^"]*"[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*class="[^"]*text-center[^"]*"[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*class="[^"]*text-center[^"]*"[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*class="[^"]*text-center[^"]*"[^>]*>([\s\S]*?)<\/td>\s*<\/tr>/g;
+  const rowRegex =
+    /<tr[^>]*>\s*<td[^>]*>\s*([\s\S]*?)\s*<\/td>\s*<td[^>]*>\s*([\s\S]*?)\s*<\/td>\s*<td[^>]*>\s*([\s\S]*?)\s*<\/td>\s*<td[^>]*>\s*([\s\S]*?)\s*<\/td>\s*<\/tr>/gi;
 
-  let match;
-  while ((match = rowRegex.exec(html)) !== null) {
-    const type = match[1].replace(/<[^>]*>/g, '').trim();
-    const dateCom = match[2].replace(/<[^>]*>/g, '').trim();
-    const payment = match[3].replace(/<[^>]*>/g, '').trim();
-    const valueStr = match[4].replace(/<[^>]*>/g, '').replace(/\./g, '').replace(',', '.').trim();
+  let match: RegExpExecArray | null;
+  while ((match = rowRegex.exec(tbodyHtml)) !== null) {
+    const typeRaw = strip(match[1]);
+    const type = typeRaw === 'Dividendos' || typeRaw === 'Amortização' ? typeRaw : null;
+    if (!type) continue;
 
-    const value = parseFloat(valueStr) || 0;
+    const dateCom = dateMatch(match[2]);
+    const payment = dateMatch(match[3]);
+    if (!dateCom || !payment) continue;
 
-    if (type === 'Dividendos' || type === 'Amortização') {
-      items.push({
-        value,
-        date: dateCom,
-        payment,
-        type: type as 'Dividendos' | 'Amortização',
-      });
-    }
+    const value = parseBrlNumber(match[4]);
+    if (value <= 0) continue;
+
+    const key = `${type}|${dateCom}|${payment}|${value}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    items.push({ type, date: dateCom, payment, value });
   }
 
   return items;
