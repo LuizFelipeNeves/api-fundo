@@ -23,7 +23,7 @@ export async function handleRankHoje({ db, telegram, chatIdStr }: HandlerDeps, c
   const existing = listExistingFundCodes(db, requested);
   const missing = requested.filter((code) => !existing.includes(code));
 
-  const ranked: Array<{ code: string; pvp: number | null; dividendYieldMonthly: number | null; sharpe: number | null }> = [];
+  const ranked: Array<{ code: string; pvp: number | null; dividendYieldMonthly: number | null; sharpe: number | null; todayReturn: number | null }> = [];
   for (const code of existing) {
     const data = exportFundJson(db, code);
     if (!data) continue;
@@ -32,10 +32,13 @@ export async function handleRankHoje({ db, telegram, chatIdStr }: HandlerDeps, c
     const pvp = Number.isFinite(data.metrics?.valuation?.pvp_current) ? (data.metrics.valuation.pvp_current as number) : null;
     const dyMonthly = Number.isFinite(data.metrics?.dividend_yield?.monthly_mean) ? (data.metrics.dividend_yield.monthly_mean as number) : null;
     const sharpe = Number.isFinite(data.metrics?.risk?.sharpe) ? (data.metrics.risk.sharpe as number) : null;
+    const todayReturn = Number.isFinite(data.metrics?.today?.return) ? (data.metrics.today.return as number) : null;
+    const last3dReturn = Number.isFinite(data.metrics?.price?.last_3d_return) ? (data.metrics.price.last_3d_return as number) : null;
 
     if (pvp === null || dyMonthly === null || sharpe === null || vacancia === null || dailyLiquidity === null) continue;
-    if (pvp < 0.94 && dyMonthly > 0.011 && vacancia === 0 && dailyLiquidity > 300_000 && sharpe >= 1.7) {
-      ranked.push({ code, pvp, dividendYieldMonthly: dyMonthly, sharpe });
+    const notMelting = (todayReturn ?? 0) > -0.02 && (last3dReturn ?? 0) > -0.05;
+    if (pvp < 0.94 && dyMonthly > 0.011 && vacancia === 0 && dailyLiquidity > 300_000 && sharpe >= 1.7 && notMelting) {
+      ranked.push({ code, pvp, dividendYieldMonthly: dyMonthly, sharpe, todayReturn });
     }
   }
 
@@ -57,7 +60,7 @@ export async function handleRankV({ db, telegram, chatIdStr }: HandlerDeps) {
     return;
   }
 
-  const ranked: Array<{ code: string; pvp: number | null; dividendYieldMonthly: number | null; regularity: number | null }> = [];
+  const ranked: Array<{ code: string; pvp: number | null; dividendYieldMonthly: number | null; regularity: number | null; todayReturn: number | null }> = [];
   for (const code of allCodes) {
     const data = exportFundJson(db, code);
     if (!data) continue;
@@ -66,6 +69,16 @@ export async function handleRankV({ db, telegram, chatIdStr }: HandlerDeps) {
     const regularity = Number.isFinite(data.metrics?.dividends?.regularity) ? (data.metrics.dividends.regularity as number) : null;
     const monthsWithoutPayment =
       Number.isFinite(data.metrics?.dividends?.months_without_payment) ? (data.metrics.dividends.months_without_payment as number) : null;
+    const todayReturn = Number.isFinite(data.metrics?.today?.return) ? (data.metrics.today.return as number) : null;
+    const last3dReturn = Number.isFinite(data.metrics?.price?.last_3d_return) ? (data.metrics.price.last_3d_return as number) : null;
+    const dividendCv = Number.isFinite(data.metrics?.dividends?.cv) ? (data.metrics.dividends.cv as number) : null;
+    const dividendTrend = Number.isFinite(data.metrics?.dividends?.trend_slope) ? (data.metrics.dividends.trend_slope as number) : null;
+    const drawdownMax = Number.isFinite(data.metrics?.risk?.drawdown_max) ? (data.metrics.risk.drawdown_max as number) : null;
+    const recoveryDays = Number.isFinite(data.metrics?.risk?.recovery_time_days) ? (data.metrics.risk.recovery_time_days as number) : null;
+    const volAnnual = Number.isFinite(data.metrics?.risk?.volatility_annualized) ? (data.metrics.risk.volatility_annualized as number) : null;
+    const pvpPercentile = Number.isFinite(data.metrics?.valuation?.pvp_percentile) ? (data.metrics.valuation.pvp_percentile as number) : null;
+    const liqMean = Number.isFinite(data.metrics?.liquidity?.mean) ? (data.metrics.liquidity.mean as number) : null;
+    const pctDaysTraded = Number.isFinite(data.metrics?.liquidity?.pct_days_traded) ? (data.metrics.liquidity.pct_days_traded as number) : null;
     const rawDividends = Array.isArray(data.data?.dividends) ? data.data.dividends : [];
     const cutoff = new Date();
     cutoff.setUTCFullYear(cutoff.getUTCFullYear() - 1);
@@ -123,6 +136,16 @@ export async function handleRankV({ db, telegram, chatIdStr }: HandlerDeps) {
       dyMonthly === null ||
       regularity === null ||
       monthsWithoutPayment === null ||
+      dividendCv === null ||
+      dividendTrend === null ||
+      drawdownMax === null ||
+      recoveryDays === null ||
+      volAnnual === null ||
+      pvpPercentile === null ||
+      liqMean === null ||
+      pctDaysTraded === null ||
+      last3dReturn === null ||
+      todayReturn === null ||
       dividendMax === null ||
       dividendMin === null ||
       dividendMedian === null ||
@@ -137,17 +160,27 @@ export async function handleRankV({ db, telegram, chatIdStr }: HandlerDeps) {
     const minOk = dividendMean > 0 ? dividendMin >= dividendMean * 0.4 : false;
     const regimeOk = firstHalfMean && lastHalfMean ? lastHalfMean <= firstHalfMean * 1.8 : true;
     const regularityYear = dividendSeries.length >= 12 ? Math.min(1, dividendSeries.length / 12) : 0;
+    const notMelting = todayReturn > -0.01 && last3dReturn >= 0;
     if (
       pvp <= 0.7 &&
       dyMonthly > 0.0116 &&
       monthsWithoutPayment === 0 &&
       regularityYear >= 0.999 &&
+      dividendCv <= 0.6 &&
+      dividendTrend > 0 &&
+      drawdownMax > -0.25 &&
+      recoveryDays <= 120 &&
+      volAnnual <= 0.3 &&
+      pvpPercentile <= 0.25 &&
+      liqMean >= 400000 &&
+      pctDaysTraded >= 0.95 &&
       spikeOk &&
       lastSpikeOk &&
       minOk &&
-      regimeOk
+      regimeOk &&
+      notMelting
     ) {
-      ranked.push({ code, pvp, dividendYieldMonthly: dyMonthly, regularity });
+      ranked.push({ code, pvp, dividendYieldMonthly: dyMonthly, regularity, todayReturn });
     }
   }
 

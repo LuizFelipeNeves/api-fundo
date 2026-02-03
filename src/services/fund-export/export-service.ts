@@ -82,6 +82,10 @@ export function buildFundExportJson({
     cumulativeReturn = acc - 1;
   }
   const cagrAnnualized = annualizeCagr(simpleReturn, periodDays);
+  const last3dReturn =
+    cotationPrices.length >= 3 && cotationPrices[cotationPrices.length - 3] > 0
+      ? cotationPrices[cotationPrices.length - 1] / cotationPrices[cotationPrices.length - 3] - 1
+      : 0;
 
   const priceMin = cotationPrices.length ? Math.min(...cotationPrices) : 0;
   const priceMax = cotationPrices.length ? Math.max(...cotationPrices) : 0;
@@ -299,6 +303,7 @@ export function buildFundExportJson({
         simple_return: r6(simpleReturn),
         cumulative_return: r6(cumulativeReturn),
         cagr_annualized: r6(cagrAnnualized),
+        last_3d_return: r6(last3dReturn),
         avg_monthly_return: r6(avgMonthlyReturn),
         volatility: r6(volatility),
         volatility_annualized: r6(volatilityAnnualized),
@@ -396,6 +401,7 @@ export function buildFundExportJson({
         min: r2(todayMin),
         max: r2(todayMax),
         return: r6(todayReturn),
+        direction: todayReturn > 0.002 ? 'up' : todayReturn < -0.002 ? 'down' : 'flat',
         ticks: r0(todayPrices.length),
         max_tick_drop: r6(todayMaxTickDrop),
         max_tick_gain: r6(todayMaxTickGain),

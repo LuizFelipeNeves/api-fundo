@@ -211,6 +211,7 @@ export type RankHojeItem = {
   pvp: number | null;
   dividendYieldMonthly: number | null;
   sharpe: number | null;
+  todayReturn: number | null;
 };
 
 export type RankVItem = {
@@ -218,6 +219,7 @@ export type RankVItem = {
   pvp: number | null;
   dividendYieldMonthly: number | null;
   regularity: number | null;
+  todayReturn: number | null;
 };
 
 function formatPercent(value: number | null | undefined): string {
@@ -282,7 +284,8 @@ export function formatRankHojeMessage(opts: { items: RankHojeItem[]; total: numb
     const pvp = item.pvp === null ? '—' : formatNumber(item.pvp, 2);
     const dy = item.dividendYieldMonthly === null ? '—' : `${formatNumber(item.dividendYieldMonthly * 100, 2)}%`;
     const sharpe = item.sharpe === null ? '—' : formatNumber(item.sharpe, 2);
-    lines.push(`${idx + 1}. ${item.code} — P/VP ${pvp} | DY mensal ${dy} | Sharpe ${sharpe}`);
+    const day = item.todayReturn === null ? '—' : `${item.todayReturn > 0 ? '+' : ''}${formatNumber(item.todayReturn * 100, 2)}%`;
+    lines.push(`${idx + 1}. ${item.code} — Dia ${day} | P/VP ${pvp} | DY mensal ${dy} | Sharpe ${sharpe}`);
   });
 
   return lines.join('\n').trim();
@@ -304,7 +307,8 @@ export function formatRankVMessage(opts: { items: RankVItem[]; total: number }):
     const pvp = item.pvp === null ? '—' : formatNumber(item.pvp, 2);
     const dy = item.dividendYieldMonthly === null ? '—' : `${formatNumber(item.dividendYieldMonthly * 100, 2)}%`;
     const reg = item.regularity === null ? '—' : `${formatNumber(item.regularity * 100, 1)}%`;
-    lines.push(`${idx + 1}. ${item.code} — P/VP ${pvp} | DY mensal ${dy} | Regularidade ${reg}`);
+    const day = item.todayReturn === null ? '—' : `${item.todayReturn > 0 ? '+' : ''}${formatNumber(item.todayReturn * 100, 2)}%`;
+    lines.push(`${idx + 1}. ${item.code} — Dia ${day} | P/VP ${pvp} | DY mensal ${dy} | Regularidade ${reg}`);
   });
 
   return lines.join('\n').trim();
