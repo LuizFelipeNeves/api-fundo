@@ -25,6 +25,7 @@ export type BotCommand =
   | { kind: 'confirm' }
   | { kind: 'cancel' }
   | { kind: 'rank-hoje'; codes: string[] }
+  | { kind: 'rankv' }
   | { kind: 'export'; codes: string[] }
   | { kind: 'resumo-documento'; codes: string[] }
   | { kind: 'set'; codes: string[] }
@@ -66,6 +67,11 @@ export function parseBotCommand(text: string): BotCommand {
   if (rankMatch) {
     const rest = normalizeText(rankMatch[2] || '');
     return { kind: 'rank-hoje', codes: extractFundCodes(rest) };
+  }
+
+  const rankVMatch = raw.match(/^(\/)?rankv\b/i) || raw.match(/^(\/)?rank[-_\s]?v\b/i);
+  if (rankVMatch) {
+    return { kind: 'rankv' };
   }
 
   const documentosMatch = raw.match(/^(\/)?documentos\b(.*)$/i);
@@ -121,6 +127,7 @@ export function parseBotCommand(text: string): BotCommand {
       'exportar',
       'rank',
       'rankhoje',
+      'rankv',
       'documentos',
       'pesquisa',
       'cotation',
@@ -151,6 +158,7 @@ export function formatHelp(): string {
     '- /categorias',
     '- /export [FUNDO1 FUNDO2]',
     '- /rank hoje [FUNDO1 FUNDO2]',
+    '- /rankv',
     '- /resumo-documento [FUNDO1 FUNDO2]',
     '- /documentos [FUNDO] [N]',
     '- /pesquisa FUNDO',
@@ -170,6 +178,7 @@ export function formatHelp(): string {
     'Exemplo: /export HGLG11 MXRF11',
     'Exemplo: /rank hoje',
     'Exemplo: /rank hoje HGLG11 MXRF11',
+    'Exemplo: /rankv',
     'Exemplo: /resumo-documento',
     'Exemplo: /resumo-documento HGLG11 MXRF11',
     'Exemplo: /pesquisa HGLG11',

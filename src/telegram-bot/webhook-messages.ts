@@ -213,6 +213,13 @@ export type RankHojeItem = {
   sharpe: number | null;
 };
 
+export type RankVItem = {
+  code: string;
+  pvp: number | null;
+  dividendYieldMonthly: number | null;
+  regularity: number | null;
+};
+
 function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—';
   const pct = value * 100;
@@ -262,7 +269,7 @@ function formatPrice(value: number | null | undefined): string {
 export function formatRankHojeMessage(opts: { items: RankHojeItem[]; total: number; missing: string[] }): string {
   const lines: string[] = [];
   lines.push('🏆 Rank hoje — Value Investing FII (v2)');
-  lines.push('Filtro: P/VP <= 0.94 | DY mensal > 1,10% | Vacância = 0% | Liquidez >= 300.000');
+  lines.push('Filtro: 0.35 <= P/VP <= 0.83 | DY mensal > 1,18% | Sharpe > 1.8');
   lines.push(`Selecionados: ${opts.items.length} de ${opts.total}${opts.missing.length ? ` (${opts.missing.length} não encontrados)` : ''}`);
 
   if (!opts.items.length) {
@@ -276,6 +283,28 @@ export function formatRankHojeMessage(opts: { items: RankHojeItem[]; total: numb
     const dy = item.dividendYieldMonthly === null ? '—' : `${formatNumber(item.dividendYieldMonthly * 100, 2)}%`;
     const sharpe = item.sharpe === null ? '—' : formatNumber(item.sharpe, 2);
     lines.push(`${idx + 1}. ${item.code} — P/VP ${pvp} | DY mensal ${dy} | Sharpe ${sharpe}`);
+  });
+
+  return lines.join('\n').trim();
+}
+
+export function formatRankVMessage(opts: { items: RankVItem[]; total: number }): string {
+  const lines: string[] = [];
+  lines.push('🏆 RankV — Value (todos os fundos)');
+  lines.push('Filtro: P/VP <= 0,70 | DY mensal > 1,16% | Pagou todos os meses');
+  lines.push(`Selecionados: ${opts.items.length} de ${opts.total}`);
+
+  if (!opts.items.length) {
+    lines.push('', 'Nenhum fundo atende aos critérios agora.');
+    return lines.join('\n').trim();
+  }
+
+  lines.push('', 'Aporte Prioritário:');
+  opts.items.forEach((item, idx) => {
+    const pvp = item.pvp === null ? '—' : formatNumber(item.pvp, 2);
+    const dy = item.dividendYieldMonthly === null ? '—' : `${formatNumber(item.dividendYieldMonthly * 100, 2)}%`;
+    const reg = item.regularity === null ? '—' : `${formatNumber(item.regularity * 100, 1)}%`;
+    lines.push(`${idx + 1}. ${item.code} — P/VP ${pvp} | DY mensal ${dy} | Regularidade ${reg}`);
   });
 
   return lines.join('\n').trim();
