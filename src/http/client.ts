@@ -93,16 +93,41 @@ async function refreshTorProxyPool(): Promise<void> {
     previous.delete(url);
   }
 
-  for (const removed of previous) {
-    const agent = TOR_PROXY_POOL.agentsByUrl.get(removed);
-    try {
-      (agent as any)?.close?.();
-      (agent as any)?.destroy?.();
-    } catch {
-      null;
+  // Remove agents antigos
+  destroyAgents(previous);
+}
+
+function destroyAgents(urls: Iterable<string>): void {
+  for (const url of urls) {
+    const agent = TOR_PROXY_POOL.agentsByUrl.get(url);
+    if (agent) {
+      try {
+        (agent as any)?.close?.();
+        (agent as any)?.destroy?.();
+      } catch {
+        null;
+      }
+      TOR_PROXY_POOL.agentsByUrl.delete(url);
     }
-    TOR_PROXY_POOL.agentsByUrl.delete(removed);
   }
+}
+
+// Cleanup periódico de agents órfãos (stale)
+if (typeof setInterval !== 'undefined') {
+  setInterval(() => {
+    if (!TOR_PROXY_ENABLED) return;
+    // Remove agents que não estão no pool atual
+    const staleUrls: string[] = [];
+    for (const url of TOR_PROXY_POOL.agentsByUrl.keys()) {
+      if (!TOR_PROXY_POOL.proxyUrls.includes(url)) {
+        staleUrls.push(url);
+      }
+    }
+    if (staleUrls.length > 0) {
+      destroyAgents(staleUrls);
+      process.stderr.write(`[http] destroyed ${staleUrls.length} stale tor agents\n`);
+    }
+  }, TOR_PROXY_REFRESH_MS);
 }
 
 type TorProxySelection = { proxyUrl: string; dispatcher: ProxyAgent };
@@ -275,6 +300,7 @@ const FNET_HOST_MIN_TIME_MS = clampInt(
 type HostLimiterState = {
   inflight: number;
   lastStartAt: number;
+  lastAccessAt: number;
   queue: Array<{
     run: () => Promise<Response>;
     resolve: (value: Response) => void;
@@ -284,13 +310,40 @@ type HostLimiterState = {
 };
 
 const HOST_LIMITERS = new Map<string, HostLimiterState>();
+const HOST_LIMITER_IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutos
 
 function getHostLimiter(hostname: string): HostLimiterState {
+  const now = Date.now();
   const existing = HOST_LIMITERS.get(hostname);
-  if (existing) return existing;
-  const created: HostLimiterState = { inflight: 0, lastStartAt: 0, queue: [], draining: false };
+  if (existing) {
+    existing.lastAccessAt = now;
+    return existing;
+  }
+  const created: HostLimiterState = { inflight: 0, lastStartAt: 0, lastAccessAt: now, queue: [], draining: false };
   HOST_LIMITERS.set(hostname, created);
   return created;
+}
+
+function cleanupIdleHostLimiters(): number {
+  const now = Date.now();
+  let cleaned = 0;
+  for (const [hostname, state] of HOST_LIMITERS) {
+    if (state.inflight === 0 && state.queue.length === 0 && now - state.lastAccessAt > HOST_LIMITER_IDLE_TIMEOUT_MS) {
+      HOST_LIMITERS.delete(hostname);
+      cleaned++;
+    }
+  }
+  return cleaned;
+}
+
+// Cleanup periódico de limiters inativos
+if (typeof setInterval !== 'undefined') {
+  setInterval(() => {
+    const cleaned = cleanupIdleHostLimiters();
+    if (cleaned > 0) {
+      process.stderr.write(`[http] cleaned ${cleaned} idle host limiters\n`);
+    }
+  }, 60 * 1000); // a cada minuto
 }
 
 function getHostPolicy(hostname: string): { maxConcurrent: number; minTimeMs: number } {

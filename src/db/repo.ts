@@ -9,55 +9,56 @@ import type { DividendData } from '../parsers/dividends';
 import type { NormalizedCotations } from '../parsers/cotations';
 import { toDateIsoFromBr } from './index';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { and, asc, desc, eq, gt, isNotNull, isNull, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { cotation, cotationsTodaySnapshot, dividend, document, fundMaster, fundState, indicatorsSnapshot } from './schema';
 
 export function upsertFundList(db: Database.Database, data: FIIResponse) {
   const now = nowIso();
   const orm = drizzle(db);
 
-  orm.transaction((tx) => {
-    for (const item of data.data) {
-      const code = item.code.toUpperCase();
+  // Batch insert para fundMaster
+  const fundMasterValues = data.data.map((item) => ({
+    code: item.code.toUpperCase(),
+    sector: item.sector,
+    p_vp: item.p_vp,
+    dividend_yield: item.dividend_yield,
+    dividend_yield_last_5_years: item.dividend_yield_last_5_years,
+    daily_liquidity: item.daily_liquidity,
+    net_worth: item.net_worth,
+    type: item.type,
+    created_at: now,
+    updated_at: now,
+  }));
 
-      tx.insert(fundMaster)
-        .values({
-          code,
-          sector: item.sector,
-          p_vp: item.p_vp,
-          dividend_yield: item.dividend_yield,
-          dividend_yield_last_5_years: item.dividend_yield_last_5_years,
-          daily_liquidity: item.daily_liquidity,
-          net_worth: item.net_worth,
-          type: item.type,
-          created_at: now,
-          updated_at: now,
-        })
-        .onConflictDoUpdate({
-          target: fundMaster.code,
-          set: {
-            sector: item.sector,
-            p_vp: item.p_vp,
-            dividend_yield: item.dividend_yield,
-            dividend_yield_last_5_years: item.dividend_yield_last_5_years,
-            daily_liquidity: item.daily_liquidity,
-            net_worth: item.net_worth,
-            type: item.type,
-            updated_at: now,
-          },
-        })
-        .run();
+  // Upsert batch fundMaster
+  orm.insert(fundMaster)
+    .values(fundMasterValues)
+    .onConflictDoUpdate({
+      target: fundMaster.code,
+      set: {
+        sector: sql`excluded.sector`,
+        p_vp: sql`excluded.p_vp`,
+        dividend_yield: sql`excluded.dividend_yield`,
+        dividend_yield_last_5_years: sql`excluded.dividend_yield_last_5_years`,
+        daily_liquidity: sql`excluded.daily_liquidity`,
+        net_worth: sql`excluded.net_worth`,
+        type: sql`excluded.type`,
+        updated_at: now,
+      },
+    })
+    .run();
 
-      tx.insert(fundState)
-        .values({
-          fund_code: code,
-          created_at: now,
-          updated_at: now,
-        })
-        .onConflictDoNothing()
-        .run();
-    }
-  });
+  // Batch insert fundState (apenas os que não existem)
+  const fundStateValues = data.data.map((item) => ({
+    fund_code: item.code.toUpperCase(),
+    created_at: now,
+    updated_at: now,
+  }));
+
+  orm.insert(fundState)
+    .values(fundStateValues)
+    .onConflictDoNothing()
+    .run();
 }
 
 export function updateFundDetails(db: Database.Database, details: FIIDetails) {
@@ -631,31 +632,40 @@ export function upsertCotationsHistoricalBrl(db: Database.Database, fundCode: st
   const orm = drizzle(db);
   const fundCodeUpper = fundCode.toUpperCase();
 
-  return orm.transaction((tx) => {
-    let changes = 0;
-    for (const item of items) {
+  // Batch values com date_iso válido
+  const validItems = items
+    .map((item) => {
       const dateIso = toDateIsoFromBr(item.date);
-      if (!dateIso) continue;
-      changes += tx
-        .insert(cotation)
-        .values({
-          fund_code: fundCodeUpper,
-          date_iso: dateIso,
-          date: item.date,
-          price: item.price,
-        })
-        .onConflictDoUpdate({
-          target: [cotation.fund_code, cotation.date_iso],
-          set: { price: item.price, date: item.date },
-        })
-        .run().changes;
-    }
+      return dateIso ? { ...item, dateIso } : null;
+    })
+    .filter((v): v is typeof v & { dateIso: string } => v !== null);
 
-    tx.insert(fundState).values({ fund_code: fundCodeUpper, created_at: now, updated_at: now }).onConflictDoNothing().run();
-    tx.update(fundState).set({ last_historical_cotations_at: now, updated_at: now }).where(eq(fundState.fund_code, fundCodeUpper)).run();
+  if (validItems.length === 0) return 0;
 
-    return changes;
-  });
+  const cotationValues = validItems.map((item) => ({
+    fund_code: fundCodeUpper,
+    date_iso: item.dateIso,
+    date: item.date,
+    price: item.price,
+  }));
+
+  // Batch insert com upsert
+  const result = orm
+    .insert(cotation)
+    .values(cotationValues)
+    .onConflictDoUpdate({
+      target: [cotation.fund_code, cotation.date_iso],
+      set: {
+        price: sql`excluded.price`,
+        date: sql`excluded.date`,
+      },
+    })
+    .run();
+
+  orm.insert(fundState).values({ fund_code: fundCodeUpper, created_at: now, updated_at: now }).onConflictDoNothing().run();
+  orm.update(fundState).set({ last_historical_cotations_at: now, updated_at: now }).where(eq(fundState.fund_code, fundCodeUpper)).run();
+
+  return result.changes;
 }
 
 export function getCotations(db: Database.Database, fundCode: string, days: number): NormalizedCotations | null {
@@ -686,48 +696,45 @@ export function upsertDocuments(db: Database.Database, fundCode: string, docs: D
   const orm = drizzle(db);
   const fundCodeUpper = fundCode.toUpperCase();
 
-  return orm.transaction((tx) => {
-    let inserted = 0;
-    let maxId = 0;
-    for (const d of docs) {
-      maxId = Math.max(maxId, d.id);
-      const uploadIso = toDateIsoFromBr(d.dateUpload) || toDateIsoFromBr(d.date) || now.slice(0, 10);
+  // Batch values
+  const documentValues = docs.map((d) => ({
+    fund_code: fundCodeUpper,
+    document_id: d.id,
+    title: d.title,
+    category: d.category,
+    type: d.type,
+    date: d.date,
+    date_upload_iso: toDateIsoFromBr(d.dateUpload) || toDateIsoFromBr(d.date) || now.slice(0, 10),
+    dateUpload: d.dateUpload,
+    url: d.url,
+    status: d.status,
+    version: d.version,
+    created_at: now,
+  }));
 
-      inserted += tx
-        .insert(document)
-        .values({
-          fund_code: fundCodeUpper,
-          document_id: d.id,
-          title: d.title,
-          category: d.category,
-          type: d.type,
-          date: d.date,
-          date_upload_iso: uploadIso,
-          dateUpload: d.dateUpload,
-          url: d.url,
-          status: d.status,
-          version: d.version,
-          created_at: now,
-        })
-        .onConflictDoUpdate({
-          target: [document.fund_code, document.document_id],
-          set: {
-            title: d.title,
-            category: d.category,
-            type: d.type,
-            date: d.date,
-            date_upload_iso: uploadIso,
-            dateUpload: d.dateUpload,
-            url: d.url,
-            status: d.status,
-            version: d.version,
-          },
-        })
-        .run().changes;
-    }
+  const maxId = docs.reduce((max, d) => Math.max(max, d.id), 0);
 
-    return { inserted, maxId };
-  });
+  // Batch insert com upsert
+  const result = orm
+    .insert(document)
+    .values(documentValues)
+    .onConflictDoUpdate({
+      target: [document.fund_code, document.document_id],
+      set: {
+        title: sql`excluded.title`,
+        category: sql`excluded.category`,
+        type: sql`excluded.type`,
+        date: sql`excluded.date`,
+        date_upload_iso: sql`excluded.date_upload_iso`,
+        dateUpload: sql`excluded.dateUpload`,
+        url: sql`excluded.url`,
+        status: sql`excluded.status`,
+        version: sql`excluded.version`,
+      },
+    })
+    .run();
+
+  return { inserted: result.changes, maxId };
 }
 
 export function updateDocumentsMaxId(db: Database.Database, fundCode: string, maxId: number) {
@@ -811,35 +818,42 @@ export function upsertDividends(db: Database.Database, fundCode: string, dividen
   const orm = drizzle(db);
   const fundCodeUpper = fundCode.toUpperCase();
 
-  return orm.transaction((tx) => {
-    let changes = 0;
-    for (const d of dividends) {
+  // Batch values com date_iso válido
+  const validDividends = dividends
+    .map((d) => {
       const dateIso = toDateIsoFromBr(d.date);
-      if (!dateIso) continue;
-      changes += tx
-        .insert(dividend)
-        .values({
-          fund_code: fundCodeUpper,
-          date_iso: dateIso,
-          date: d.date,
-          payment: d.payment,
-          type: d.type,
-          value: d.value,
-          yield: d.yield,
-        })
-        .onConflictDoUpdate({
-          target: [dividend.fund_code, dividend.date_iso, dividend.type],
-          set: {
-            date: d.date,
-            payment: d.payment,
-            value: d.value,
-            yield: d.yield,
-          },
-        })
-        .run().changes;
-    }
-    return changes;
-  });
+      return dateIso ? { ...d, dateIso } : null;
+    })
+    .filter((v): v is typeof v & { dateIso: string } => v !== null);
+
+  if (validDividends.length === 0) return 0;
+
+  const dividendValues = validDividends.map((d) => ({
+    fund_code: fundCodeUpper,
+    date_iso: d.dateIso,
+    date: d.date,
+    payment: d.payment,
+    type: d.type,
+    value: d.value,
+    yield: d.yield,
+  }));
+
+  // Batch insert com upsert
+  const result = orm
+    .insert(dividend)
+    .values(dividendValues)
+    .onConflictDoUpdate({
+      target: [dividend.fund_code, dividend.date_iso, dividend.type],
+      set: {
+        date: sql`excluded.date`,
+        payment: sql`excluded.payment`,
+        value: sql`excluded.value`,
+        yield: sql`excluded.yield`,
+      },
+    })
+    .run();
+
+  return result.changes;
 }
 
 export function getDividends(db: Database.Database, fundCode: string): DividendData[] | null {
