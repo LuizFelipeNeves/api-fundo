@@ -696,6 +696,8 @@ export function upsertDocuments(db: Database.Database, fundCode: string, docs: D
   const orm = drizzle(db);
   const fundCodeUpper = fundCode.toUpperCase();
 
+  if (docs.length === 0) return { inserted: 0, maxId: 0 };
+
   // Batch values
   const documentValues = docs.map((d) => ({
     fund_code: fundCodeUpper,
