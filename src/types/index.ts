@@ -26,6 +26,7 @@ export interface FIIDetails {
   prazo_duracao: string;
   tipo_gestao: string;
   taxa_adminstracao: string;
+  daily_liquidity?: number | null;
   vacancia: number;
   numero_cotistas: number;
   cotas_emitidas: number;

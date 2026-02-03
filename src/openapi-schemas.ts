@@ -44,6 +44,7 @@ export const FIIDetailsSchema = z.object({
   prazo_duracao: z.string().openapi({ example: 'Indeterminado' }),
   tipo_gestao: z.string().openapi({ example: 'Ativa' }),
   taxa_adminstracao: z.string().openapi({ example: '1,25% a.a.' }),
+  daily_liquidity: z.number().nullable().openapi({ example: 300000 }),
   vacancia: z.number().openapi({ example: 0.9 }),
   numero_cotistas: z.number().openapi({ example: 2405 }),
   cotas_emitidas: z.number().openapi({ example: 11733209 }),

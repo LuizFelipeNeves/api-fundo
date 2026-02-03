@@ -10,7 +10,6 @@ import { formatHelp, parseBotCommand, type BotCommand } from './commands';
 import { getOrComputeCotationStats } from './cotation-stats';
 import { createTelegramService, type TelegramUpdate } from './telegram-api';
 import { exportFundJson } from '../services/fund-export';
-import { pickIndicatorValue } from '../services/fund-export/analytics';
 import {
   addTelegramUserFunds,
   clearTelegramPendingAction,
@@ -264,27 +263,28 @@ app.post('/webhook', async (c) => {
     const existing = listExistingFundCodes(db, requested);
     const missing = requested.filter((code) => !existing.includes(code));
 
-    const ranked: Array<{ code: string; pvp: number | null; dividendYield12m: number | null; liquidity: number | null }> = [];
+    const ranked: Array<{ code: string; pvp: number | null; dividendYieldMonthly: number | null; sharpe: number | null }> = [];
     for (const code of existing) {
       const data = exportFundJson(db, code);
-      if (!data?.data?.indicators_latest) continue;
-      const indicators = data.data.indicators_latest as Record<string, Array<{ year: string; value: number | null }>>;
-      const pvp = pickIndicatorValue(indicators, 'pvp');
-      const dy = pickIndicatorValue(indicators, 'dividend_yield');
-      const liq = pickIndicatorValue(indicators, 'liquidez_diaria');
+      if (!data) continue;
+      const vacancia = Number.isFinite(data.fund?.vacancia) ? (data.fund.vacancia as number) : null;
+      const dailyLiquidity = Number.isFinite(data.fund?.daily_liquidity) ? (data.fund.daily_liquidity as number) : null;
+      const pvp = Number.isFinite(data.metrics?.valuation?.pvp_current) ? (data.metrics.valuation.pvp_current as number) : null;
+      const dyMonthly = Number.isFinite(data.metrics?.dividend_yield?.monthly_mean) ? (data.metrics.dividend_yield.monthly_mean as number) : null;
+      const sharpe = Number.isFinite(data.metrics?.risk?.sharpe) ? (data.metrics.risk.sharpe as number) : null;
 
-      if (pvp === null || dy === null || liq === null) continue;
-      if (pvp <= 0.82 && dy >= 14.0 && liq >= 600000) {
-        ranked.push({ code, pvp, dividendYield12m: dy, liquidity: liq });
+      if (pvp === null || dyMonthly === null || sharpe === null || vacancia === null || dailyLiquidity === null) continue;
+      if (pvp < 0.94 && dyMonthly > 0.011 && vacancia === 0 && dailyLiquidity > 300_000) {
+        ranked.push({ code, pvp, dividendYieldMonthly: dyMonthly, sharpe });
       }
     }
 
     ranked.sort((a, b) => {
-      const dy = (b.dividendYield12m ?? 0) - (a.dividendYield12m ?? 0);
+      const dy = (b.dividendYieldMonthly ?? 0) - (a.dividendYieldMonthly ?? 0);
       if (dy) return dy;
-      const pvp = (a.pvp ?? 0) - (b.pvp ?? 0);
-      if (pvp) return pvp;
-      return (b.liquidity ?? 0) - (a.liquidity ?? 0);
+      const sharpeDiff = (b.sharpe ?? 0) - (a.sharpe ?? 0);
+      if (sharpeDiff) return sharpeDiff;
+      return (a.pvp ?? 0) - (b.pvp ?? 0);
     });
 
     await telegram.sendText(chatIdStr, formatRankHojeMessage({ items: ranked, total: existing.length, missing }));

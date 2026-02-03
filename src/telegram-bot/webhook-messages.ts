@@ -209,8 +209,8 @@ export type LatestDocumentRow = {
 export type RankHojeItem = {
   code: string;
   pvp: number | null;
-  dividendYield12m: number | null;
-  liquidity: number | null;
+  dividendYieldMonthly: number | null;
+  sharpe: number | null;
 };
 
 function formatPercent(value: number | null | undefined): string {
@@ -261,8 +261,8 @@ function formatPrice(value: number | null | undefined): string {
 
 export function formatRankHojeMessage(opts: { items: RankHojeItem[]; total: number; missing: string[] }): string {
   const lines: string[] = [];
-  lines.push('🏆 Rank hoje — Oportunidades de Valorização');
-  lines.push('Filtro: P/VP <= 0.82 | DY 12m >= 14.0 | Liquidez >= 600.000');
+  lines.push('🏆 Rank hoje — Value Investing FII (v2)');
+  lines.push('Filtro: P/VP <= 0.94 | DY mensal > 1,10% | Vacância = 0% | Liquidez >= 300.000');
   lines.push(`Selecionados: ${opts.items.length} de ${opts.total}${opts.missing.length ? ` (${opts.missing.length} não encontrados)` : ''}`);
 
   if (!opts.items.length) {
@@ -273,9 +273,9 @@ export function formatRankHojeMessage(opts: { items: RankHojeItem[]; total: numb
   lines.push('', 'Aporte Prioritário:');
   opts.items.forEach((item, idx) => {
     const pvp = item.pvp === null ? '—' : formatNumber(item.pvp, 2);
-    const dy = item.dividendYield12m === null ? '—' : formatNumber(item.dividendYield12m, 2);
-    const liq = item.liquidity === null ? '—' : formatNumber(item.liquidity, 0);
-    lines.push(`${idx + 1}. ${item.code} — P/VP ${pvp} | DY 12m ${dy} | Liquidez ${liq}`);
+    const dy = item.dividendYieldMonthly === null ? '—' : `${formatNumber(item.dividendYieldMonthly * 100, 2)}%`;
+    const sharpe = item.sharpe === null ? '—' : formatNumber(item.sharpe, 2);
+    lines.push(`${idx + 1}. ${item.code} — P/VP ${pvp} | DY mensal ${dy} | Sharpe ${sharpe}`);
   });
 
   return lines.join('\n').trim();
