@@ -1,84 +1,27 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
-import { getDb, toDateIsoFromBr } from '../db';
-import { promises as fs } from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { desc, eq, inArray } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { document, fundMaster } from '../db/schema';
-import { formatHelp, parseBotCommand, type BotCommand } from './commands';
-import { getOrComputeCotationStats } from './cotation-stats';
+import { getDb } from '../db';
+import { parseBotCommand, type BotCommand } from './commands';
 import { createTelegramService, type TelegramUpdate } from './telegram-api';
-import { exportFundJson } from '../services/fund-export';
-import { listFundCodes } from '../db/repo';
+import { upsertTelegramUser } from './storage';
 import {
-  addTelegramUserFunds,
-  clearTelegramPendingAction,
-  getTelegramPendingAction,
-  listExistingFundCodes,
-  listFundCategoryInfoByCodes,
-  listTelegramUserFunds,
-  removeTelegramUserFunds,
-  setTelegramUserFunds,
-  upsertTelegramPendingAction,
-  upsertTelegramUser,
-} from './storage';
-import {
-  formatAddMessage,
-  formatCategoriesMessage,
-  formatConfirmRemoveMessage,
-  formatConfirmSetMessage,
-  formatCotationMessage,
-  formatDocumentsMessage,
-  formatFundsListMessage,
-  formatPesquisaMessage,
-  formatRankHojeMessage,
-  formatRankVMessage,
-  formatRemoveMessage,
-  formatSetMessage,
-} from './webhook-messages';
-import { handleResumoDocumentoCommand } from './resumo-documento';
+  handleAdd,
+  handleCancel,
+  handleCategories,
+  handleConfirm,
+  handleCotation,
+  handleDocumentos,
+  handleExport,
+  handleHelp,
+  handleList,
+  handlePesquisa,
+  handleRankHoje,
+  handleRankV,
+  handleRemove,
+  handleResumoDocumento,
+  handleSet,
+} from './webhook-handlers';
 
 const app = new OpenAPIHono();
-
-function pickLimit(value: number | undefined, fallback: number): number {
-  if (!Number.isFinite(value) || (value as number) <= 0) return fallback;
-  return Math.min(Math.max(1, Math.floor(value as number)), 50);
-}
-
-function isExpired(iso: string, ttlMs: number): boolean {
-  const t = new Date(iso).getTime();
-  if (!Number.isFinite(t)) return true;
-  return Date.now() - t > ttlMs;
-}
-
-function medianValue(values: number[]): number {
-  if (!values.length) return 0;
-  const sorted = values.slice().sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 1) return sorted[mid];
-  return (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-function listLatestDocuments(db: ReturnType<typeof getDb>, fundCodes: string[], limit: number) {
-  const codes = Array.from(new Set(fundCodes.map((c) => c.toUpperCase()))).filter(Boolean);
-  if (!codes.length) return [];
-  const orm = drizzle(db);
-  return orm
-    .select({
-      fund_code: document.fund_code,
-      title: document.title,
-      category: document.category,
-      type: document.type,
-      dateUpload: document.dateUpload,
-      url: document.url,
-    })
-    .from(document)
-    .where(inArray(document.fund_code, codes))
-    .orderBy(desc(document.date_upload_iso), desc(document.document_id))
-    .limit(limit)
-    .all();
-}
 
 app.post('/webhook', async (c) => {
   const secret = (process.env.TELEGRAM_WEBHOOK_SECRET || '').trim();
@@ -111,6 +54,7 @@ app.post('/webhook', async (c) => {
   if (callback?.id) {
     await telegram.ackCallbackQuery(callback.id);
   }
+
   let callbackKind: 'confirm' | 'cancel' | null = null;
   let callbackToken: string | null = null;
   if (callbackData) {
@@ -127,442 +71,57 @@ app.post('/webhook', async (c) => {
         ? { kind: 'cancel' }
         : parseBotCommand(text);
 
-  if (cmd.kind === 'help') {
-    await telegram.sendText(chatIdStr, formatHelp());
-    return c.json({ ok: true });
+  const deps = { db, telegram, chatIdStr };
+  switch (cmd.kind) {
+    case 'help':
+      await handleHelp(deps);
+      break;
+    case 'resumo-documento':
+      await handleResumoDocumento(deps, cmd.codes);
+      break;
+    case 'cancel':
+      await handleCancel(deps, callbackToken);
+      break;
+    case 'confirm':
+      await handleConfirm(deps, callbackToken);
+      break;
+    case 'list':
+      await handleList(deps);
+      break;
+    case 'categories':
+      await handleCategories(deps);
+      break;
+    case 'export':
+      await handleExport(deps, cmd.codes);
+      break;
+    case 'rank-hoje':
+      await handleRankHoje(deps, cmd.codes);
+      break;
+    case 'rankv':
+      await handleRankV(deps);
+      break;
+    case 'documentos':
+      await handleDocumentos(deps, { code: cmd.code, limit: cmd.limit });
+      break;
+    case 'pesquisa':
+      await handlePesquisa(deps, cmd.code);
+      break;
+    case 'cotation':
+      await handleCotation(deps, cmd.code);
+      break;
+    case 'set':
+      await handleSet(deps, cmd.codes);
+      break;
+    case 'add':
+      await handleAdd(deps, cmd.codes);
+      break;
+    case 'remove':
+      await handleRemove(deps, cmd.codes);
+      break;
+    default:
+      await handleHelp(deps);
   }
 
-  if (cmd.kind === 'resumo-documento') {
-    await handleResumoDocumentoCommand({ db, chatId: chatIdStr, telegram, codes: cmd.codes });
-    return c.json({ ok: true });
-  }
-
-  if (cmd.kind === 'cancel') {
-    if (callbackToken) {
-      const pending = getTelegramPendingAction(db, chatIdStr);
-      if (!pending) {
-        await telegram.sendText(chatIdStr, 'Não há nenhuma ação pendente para cancelar.');
-        return c.json({ ok: true });
-      }
-      if (pending.createdAt !== callbackToken) {
-        await telegram.sendText(chatIdStr, 'Essa ação não é mais válida. Envie o comando novamente.');
-        return c.json({ ok: true });
-      }
-    }
-    clearTelegramPendingAction(db, chatIdStr);
-    await telegram.sendText(chatIdStr, '✅ Ok, ação cancelada.');
-    return c.json({ ok: true });
-  }
-
-  if (cmd.kind === 'confirm') {
-    const pending = getTelegramPendingAction(db, chatIdStr);
-    if (!pending) {
-      await telegram.sendText(chatIdStr, 'Não há nenhuma ação pendente para confirmar.');
-      return c.json({ ok: true });
-    }
-    if (callbackToken && pending.createdAt !== callbackToken) {
-      await telegram.sendText(chatIdStr, 'Essa confirmação não é mais válida. Envie o comando novamente.');
-      return c.json({ ok: true });
-    }
-    if (isExpired(pending.createdAt, 10 * 60 * 1000)) {
-      clearTelegramPendingAction(db, chatIdStr);
-      await telegram.sendText(chatIdStr, 'Essa confirmação expirou. Envie o comando novamente.');
-      return c.json({ ok: true });
-    }
-
-    if (pending.action.kind === 'set') {
-      const codes = pending.action.codes;
-      const existing = listExistingFundCodes(db, codes);
-      const missing = codes.map((c) => c.toUpperCase()).filter((code) => !existing.includes(code));
-      const before = listTelegramUserFunds(db, chatIdStr);
-      setTelegramUserFunds(db, chatIdStr, existing);
-      clearTelegramPendingAction(db, chatIdStr);
-      const removed = before.filter((code) => !existing.includes(code));
-      const added = existing.filter((code) => !before.includes(code));
-      await telegram.sendText(chatIdStr, `✅ Confirmado\n\n${formatSetMessage({ existing, added, removed, missing })}`);
-      return c.json({ ok: true });
-    }
-
-    if (pending.action.kind === 'remove') {
-      const codes = pending.action.codes;
-      const existing = listExistingFundCodes(db, codes);
-      const missing = codes.map((c) => c.toUpperCase()).filter((code) => !existing.includes(code));
-      const removedCount = removeTelegramUserFunds(db, chatIdStr, existing);
-      clearTelegramPendingAction(db, chatIdStr);
-      const nowList = listTelegramUserFunds(db, chatIdStr);
-      await telegram.sendText(chatIdStr, `✅ Confirmado\n\n${formatRemoveMessage({ removedCount, nowList, missing })}`);
-      return c.json({ ok: true });
-    }
-
-    clearTelegramPendingAction(db, chatIdStr);
-    await telegram.sendText(chatIdStr, 'Não consegui interpretar a ação pendente. Envie o comando novamente.');
-    return c.json({ ok: true });
-  }
-
-  if (cmd.kind === 'list') {
-    const funds = listTelegramUserFunds(db, chatIdStr);
-    await telegram.sendText(chatIdStr, formatFundsListMessage(funds));
-    return c.json({ ok: true });
-  }
-
-  if (cmd.kind === 'categories') {
-    const funds = listTelegramUserFunds(db, chatIdStr);
-    if (!funds.length) {
-      await telegram.sendText(chatIdStr, 'Sua lista está vazia.');
-      return c.json({ ok: true });
-    }
-    const info = listFundCategoryInfoByCodes(db, funds);
-    await telegram.sendText(chatIdStr, formatCategoriesMessage(funds, info));
-    return c.json({ ok: true });
-  }
-
-  if (cmd.kind === 'export') {
-    const requested = cmd.codes.length ? cmd.codes.map((c) => c.toUpperCase()) : listTelegramUserFunds(db, chatIdStr);
-    if (!requested.length) {
-      await telegram.sendText(chatIdStr, 'Sua lista está vazia.');
-      return c.json({ ok: true });
-    }
-
-    const existing = listExistingFundCodes(db, requested);
-    const missing = requested.filter((code) => !existing.includes(code));
-
-    const funds: Array<{ code: string; ok: boolean; data?: any; error?: string }> = [];
-    for (const code of existing) {
-      const data = exportFundJson(db, code);
-      if (!data) {
-        funds.push({ code, ok: false, error: 'FII não encontrado' });
-      } else {
-        funds.push({ code, ok: true, data });
-      }
-    }
-
-    const payload = {
-      generated_at: new Date().toISOString(),
-      source: 'telegram',
-      chat_id: chatIdStr,
-      requested_codes: requested,
-      exported_codes: existing,
-      missing_codes: missing,
-      funds,
-    };
-
-    const safeStamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `fii-export-${chatIdStr}-${safeStamp}.json`;
-    const filePath = path.join(os.tmpdir(), filename);
-    await fs.writeFile(filePath, JSON.stringify(payload), 'utf8');
-    try {
-      const caption = `Export JSON: ${existing.length} fundo(s)${missing.length ? ` (${missing.length} não encontrado(s))` : ''}`;
-      const res = await telegram.sendDocument(chatIdStr, { filePath, filename, caption, contentType: 'application/json' });
-      if (!res.ok) {
-        await telegram.sendText(chatIdStr, 'Não consegui enviar o arquivo agora. Tente novamente.');
-      }
-    } finally {
-      await fs.unlink(filePath).catch(() => {});
-    }
-
-    return c.json({ ok: true });
-  }
-
-  if (cmd.kind === 'rank-hoje') {
-    const requested = cmd.codes.length ? cmd.codes.map((c) => c.toUpperCase()) : listTelegramUserFunds(db, chatIdStr);
-    if (!requested.length) {
-      await telegram.sendText(chatIdStr, 'Sua lista está vazia.');
-      return c.json({ ok: true });
-    }
-
-    const existing = listExistingFundCodes(db, requested);
-    const missing = requested.filter((code) => !existing.includes(code));
-
-    const ranked: Array<{ code: string; pvp: number | null; dividendYieldMonthly: number | null; sharpe: number | null }> = [];
-    for (const code of existing) {
-      const data = exportFundJson(db, code);
-      if (!data) continue;
-      const vacancia = Number.isFinite(data.fund?.vacancia) ? (data.fund.vacancia as number) : null;
-      const dailyLiquidity = Number.isFinite(data.fund?.daily_liquidity) ? (data.fund.daily_liquidity as number) : null;
-      const pvp = Number.isFinite(data.metrics?.valuation?.pvp_current) ? (data.metrics.valuation.pvp_current as number) : null;
-      const dyMonthly = Number.isFinite(data.metrics?.dividend_yield?.monthly_mean) ? (data.metrics.dividend_yield.monthly_mean as number) : null;
-      const sharpe = Number.isFinite(data.metrics?.risk?.sharpe) ? (data.metrics.risk.sharpe as number) : null;
-
-      if (pvp === null || dyMonthly === null || sharpe === null || vacancia === null || dailyLiquidity === null) continue;
-      if (pvp < 0.94 && dyMonthly > 0.011 && vacancia === 0 && dailyLiquidity > 300_000 && sharpe >= 1.7) {
-        ranked.push({ code, pvp, dividendYieldMonthly: dyMonthly, sharpe });
-      }
-    }
-
-    ranked.sort((a, b) => {
-      const dy = (b.dividendYieldMonthly ?? 0) - (a.dividendYieldMonthly ?? 0);
-      if (dy) return dy;
-      const sharpeDiff = (b.sharpe ?? 0) - (a.sharpe ?? 0);
-      if (sharpeDiff) return sharpeDiff;
-      return (a.pvp ?? 0) - (b.pvp ?? 0);
-    });
-
-    await telegram.sendText(chatIdStr, formatRankHojeMessage({ items: ranked, total: existing.length, missing }));
-    return c.json({ ok: true });
-  }
-
-  if (cmd.kind === 'rankv') {
-    const allCodes = listFundCodes(db);
-    if (!allCodes.length) {
-      await telegram.sendText(chatIdStr, 'Não encontrei fundos na base.');
-      return c.json({ ok: true });
-    }
-
-    const ranked: Array<{ code: string; pvp: number | null; dividendYieldMonthly: number | null; regularity: number | null }> = [];
-    for (const code of allCodes) {
-      const data = exportFundJson(db, code);
-      if (!data) continue;
-      const pvp = Number.isFinite(data.metrics?.valuation?.pvp_current) ? (data.metrics.valuation.pvp_current as number) : null;
-      const dyMonthly = Number.isFinite(data.metrics?.dividend_yield?.monthly_mean) ? (data.metrics.dividend_yield.monthly_mean as number) : null;
-      const regularity = Number.isFinite(data.metrics?.dividends?.regularity) ? (data.metrics.dividends.regularity as number) : null;
-      const monthsWithoutPayment =
-        Number.isFinite(data.metrics?.dividends?.months_without_payment) ? (data.metrics.dividends.months_without_payment as number) : null;
-      const rawDividends = Array.isArray(data.data?.dividends) ? data.data.dividends : [];
-      const cutoff = new Date();
-      cutoff.setUTCFullYear(cutoff.getUTCFullYear() - 1);
-      const cutoffIso = cutoff.toISOString().slice(0, 10);
-      const dividendSeries = rawDividends
-        .map((d: any) => {
-          if (!d || d.type !== 'Dividendos' || !Number.isFinite(d.value) || d.value <= 0) return null;
-          const iso = toDateIsoFromBr(d.date || '');
-          if (!iso) return null;
-          if (iso < cutoffIso) return null;
-          return { iso, value: Number(d.value) };
-        })
-        .filter(Boolean) as Array<{ iso: string; value: number }>;
-      dividendSeries.sort((a, b) => a.iso.localeCompare(b.iso));
-      const dividendValues = dividendSeries.map((d) => d.value);
-      const dividendMax = dividendValues.length ? Math.max(...dividendValues) : null;
-      const dividendMin = dividendValues.length ? Math.min(...dividendValues) : null;
-      const dividendMedian = dividendValues.length ? medianValue(dividendValues) : null;
-      const dividendMean = dividendValues.length ? dividendValues.reduce((a, b) => a + b, 0) / dividendValues.length : null;
-      const lastDividend = dividendSeries.length ? dividendSeries[dividendSeries.length - 1].value : null;
-      const prevMedian =
-        dividendSeries.length >= 4 ? medianValue(dividendSeries.slice(0, -1).map((d) => d.value)) : null;
-      const prevMean =
-        dividendSeries.length >= 4
-          ? dividendSeries.slice(0, -1).map((d) => d.value).reduce((a, b) => a + b, 0) / (dividendSeries.length - 1)
-          : null;
-
-      if (code === 'RBRD11') {
-        const lastInfo = dividendSeries.length ? dividendSeries[dividendSeries.length - 1] : null;
-        console.log('[rankv][debug]', {
-          code,
-          pvp,
-          dyMonthly,
-          regularity,
-          monthsWithoutPayment,
-          dividendMax,
-          dividendMedian,
-          dividendMean,
-          lastDividend,
-          lastDividendIso: lastInfo?.iso ?? null,
-          prevMedian,
-          prevMean,
-          dividendCount: dividendSeries.length,
-          dividendSeries: dividendSeries.map((d) => ({ iso: d.iso, value: d.value })),
-        });
-      }
-
-      const split = dividendSeries.length >= 6 ? Math.floor(dividendSeries.length / 2) : 0;
-      const firstHalfMean =
-        split >= 3 ? dividendSeries.slice(0, split).reduce((a, b) => a + b.value, 0) / split : null;
-      const lastHalfMean =
-        split >= 3 ? dividendSeries.slice(split).reduce((a, b) => a + b.value, 0) / (dividendSeries.length - split) : null;
-
-      if (
-        pvp === null ||
-        dyMonthly === null ||
-        regularity === null ||
-        monthsWithoutPayment === null ||
-        dividendMax === null ||
-        dividendMin === null ||
-        dividendMedian === null ||
-        dividendMean === null ||
-        lastDividend === null
-      ) {
-        continue;
-      }
-      if (dividendSeries.length < 12) continue;
-      const spikeOk = dividendMean > 0 ? dividendMax <= dividendMean * 2.5 : false;
-      const lastSpikeOk = prevMean && prevMean > 0 ? lastDividend <= prevMean * 2.2 : false;
-      const minOk = dividendMean > 0 ? dividendMin >= dividendMean * 0.4 : false;
-      const regimeOk =
-        firstHalfMean && lastHalfMean ? lastHalfMean <= firstHalfMean * 1.8 : true;
-      const regularityYear = dividendSeries.length >= 12 ? Math.min(1, dividendSeries.length / 12) : 0;
-      if (
-        pvp <= 0.7 &&
-        dyMonthly > 0.0116 &&
-        monthsWithoutPayment === 0 &&
-        regularityYear >= 0.999 &&
-        spikeOk &&
-        lastSpikeOk &&
-        minOk &&
-        regimeOk
-      ) {
-        ranked.push({ code, pvp, dividendYieldMonthly: dyMonthly, regularity });
-      }
-    }
-
-    ranked.sort((a, b) => {
-      const dy = (b.dividendYieldMonthly ?? 0) - (a.dividendYieldMonthly ?? 0);
-      if (dy) return dy;
-      const pvp = (a.pvp ?? 0) - (b.pvp ?? 0);
-      if (pvp) return pvp;
-      return (b.regularity ?? 0) - (a.regularity ?? 0);
-    });
-
-    await telegram.sendText(chatIdStr, formatRankVMessage({ items: ranked, total: allCodes.length }));
-    return c.json({ ok: true });
-  }
-
-  if (cmd.kind === 'documentos') {
-    const limit = pickLimit(cmd.limit, 5);
-    const code = cmd.code?.toUpperCase();
-
-    if (code) {
-      const existing = listExistingFundCodes(db, [code]);
-      if (!existing.length) {
-        await telegram.sendText(chatIdStr, `Fundo não encontrado: ${code}`);
-        return c.json({ ok: true });
-      }
-      const docs = listLatestDocuments(db, [code], limit);
-      await telegram.sendText(chatIdStr, formatDocumentsMessage({ docs, limit, code }));
-      return c.json({ ok: true });
-    }
-
-    const funds = listTelegramUserFunds(db, chatIdStr);
-    if (!funds.length) {
-      await telegram.sendText(chatIdStr, 'Sua lista está vazia.');
-      return c.json({ ok: true });
-    }
-    const docs = listLatestDocuments(db, funds, limit);
-    await telegram.sendText(chatIdStr, formatDocumentsMessage({ docs, limit }));
-    return c.json({ ok: true });
-  }
-
-  if (cmd.kind === 'pesquisa') {
-    const code = cmd.code.toUpperCase();
-    const existing = listExistingFundCodes(db, [code]);
-    if (!existing.length) {
-      await telegram.sendText(chatIdStr, `Fundo não encontrado: ${code}`);
-      return c.json({ ok: true });
-    }
-
-    const orm = drizzle(db);
-    const fund = orm
-      .select({
-        code: fundMaster.code,
-        sector: fundMaster.sector,
-        type: fundMaster.type,
-        segmento: fundMaster.segmento,
-        tipo_fundo: fundMaster.tipo_fundo,
-        p_vp: fundMaster.p_vp,
-        dividend_yield: fundMaster.dividend_yield,
-        dividend_yield_last_5_years: fundMaster.dividend_yield_last_5_years,
-        daily_liquidity: fundMaster.daily_liquidity,
-        net_worth: fundMaster.net_worth,
-        razao_social: fundMaster.razao_social,
-        cnpj: fundMaster.cnpj,
-        publico_alvo: fundMaster.publico_alvo,
-        mandato: fundMaster.mandato,
-        prazo_duracao: fundMaster.prazo_duracao,
-        tipo_gestao: fundMaster.tipo_gestao,
-        taxa_adminstracao: fundMaster.taxa_adminstracao,
-        vacancia: fundMaster.vacancia,
-        numero_cotistas: fundMaster.numero_cotistas,
-        cotas_emitidas: fundMaster.cotas_emitidas,
-        valor_patrimonial_cota: fundMaster.valor_patrimonial_cota,
-        valor_patrimonial: fundMaster.valor_patrimonial,
-        ultimo_rendimento: fundMaster.ultimo_rendimento,
-        updated_at: fundMaster.updated_at,
-      })
-      .from(fundMaster)
-      .where(eq(fundMaster.code, code))
-      .get();
-
-    if (!fund) {
-      await telegram.sendText(chatIdStr, `Fundo não encontrado: ${code}`);
-      return c.json({ ok: true });
-    }
-
-    await telegram.sendText(chatIdStr, formatPesquisaMessage({ fund }));
-    return c.json({ ok: true });
-  }
-
-  if (cmd.kind === 'cotation') {
-    const code = cmd.code.toUpperCase();
-    const existing = listExistingFundCodes(db, [code]);
-    if (!existing.length) {
-      await telegram.sendText(chatIdStr, `Fundo não encontrado: ${code}`);
-      return c.json({ ok: true });
-    }
-
-    const stats = getOrComputeCotationStats(db, code);
-    if (!stats) {
-      await telegram.sendText(chatIdStr, `Sem cotações históricas para ${code}.`);
-      return c.json({ ok: true });
-    }
-    await telegram.sendText(chatIdStr, formatCotationMessage(stats));
-    return c.json({ ok: true });
-  }
-
-  const existing = listExistingFundCodes(db, cmd.codes);
-  const missing = cmd.codes.filter((code) => !existing.includes(code));
-
-  if (cmd.kind === 'set') {
-    const before = listTelegramUserFunds(db, chatIdStr);
-    const removed = before.filter((code) => !existing.includes(code));
-    const added = existing.filter((code) => !before.includes(code));
-    if (removed.length > 0) {
-      const createdAt = upsertTelegramPendingAction(db, chatIdStr, { kind: 'set', codes: cmd.codes.map((c) => c.toUpperCase()) });
-      await telegram.sendText(
-        chatIdStr,
-        formatConfirmSetMessage({ beforeCount: before.length, afterCodes: existing, added, removed, missing }),
-        {
-          replyMarkup: {
-            inline_keyboard: [[
-              { text: '✅ Confirmar', callback_data: `confirm:${createdAt}` },
-              { text: '❌ Cancelar', callback_data: `cancel:${createdAt}` },
-            ]],
-          },
-        }
-      );
-      return c.json({ ok: true });
-    }
-    setTelegramUserFunds(db, chatIdStr, existing);
-    await telegram.sendText(chatIdStr, formatSetMessage({ existing, added, removed, missing }));
-    return c.json({ ok: true });
-  }
-
-  if (cmd.kind === 'add') {
-    const addedCount = addTelegramUserFunds(db, chatIdStr, existing);
-    const nowList = listTelegramUserFunds(db, chatIdStr);
-    await telegram.sendText(chatIdStr, formatAddMessage({ addedCount, nowList, missing }));
-    return c.json({ ok: true });
-  }
-
-  if (cmd.kind === 'remove') {
-    const before = listTelegramUserFunds(db, chatIdStr);
-    const beforeSet = new Set(before);
-    const toRemove = existing.filter((code) => beforeSet.has(code));
-    if (toRemove.length > 0) {
-      const createdAt = upsertTelegramPendingAction(db, chatIdStr, { kind: 'remove', codes: cmd.codes.map((c) => c.toUpperCase()) });
-      await telegram.sendText(chatIdStr, formatConfirmRemoveMessage({ beforeCount: before.length, toRemove, missing }), {
-        replyMarkup: {
-          inline_keyboard: [[
-            { text: '✅ Confirmar', callback_data: `confirm:${createdAt}` },
-            { text: '❌ Cancelar', callback_data: `cancel:${createdAt}` },
-          ]],
-        },
-      });
-      return c.json({ ok: true });
-    }
-    await telegram.sendText(chatIdStr, formatRemoveMessage({ removedCount: 0, nowList: before, missing }));
-    return c.json({ ok: true });
-  }
-
-  await telegram.sendText(chatIdStr, formatHelp());
   return c.json({ ok: true });
 });
 
