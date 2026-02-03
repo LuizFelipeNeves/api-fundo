@@ -1,12 +1,35 @@
 import type Database from 'better-sqlite3';
 import { toDateIsoFromBr } from '../db';
-import { getCotations, getDividends, getDocuments, getFundDetails, getLatestCotationsToday, getLatestIndicatorsSnapshots } from '../db/repo';
+import { getCotations, getDividends, getFundDetails, getLatestCotationsToday, getLatestIndicatorsSnapshots } from '../db/repo';
 
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0;
   if (value <= 0) return 0;
   if (value >= 1) return 1;
   return value;
+}
+
+function roundTo(value: number, decimals: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const d = Math.max(0, Math.min(12, Math.floor(decimals)));
+  const p = Math.pow(10, d);
+  return Math.round(value * p) / p;
+}
+
+function r0(value: number): number {
+  return Math.round(Number.isFinite(value) ? value : 0);
+}
+
+function r2(value: number): number {
+  return roundTo(value, 2);
+}
+
+function r4(value: number): number {
+  return roundTo(value, 4);
+}
+
+function r6(value: number): number {
+  return roundTo(value, 6);
 }
 
 function mean(values: number[]): number {
@@ -241,7 +264,7 @@ function percentileRank(values: number[], current: number): number {
 export function exportFundJson(
   db: Database.Database,
   code: string,
-  opts?: { cotationsDays?: number; indicatorsSnapshotsLimit?: number; documentsLimit?: number }
+  opts?: { cotationsDays?: number; indicatorsSnapshotsLimit?: number }
 ) {
   const fundCode = String(code || '').trim().toUpperCase();
   const details = getFundDetails(db, fundCode);
@@ -472,10 +495,6 @@ export function exportFundJson(
   const todayVolatility = stdev(todayReturns);
   const todayAmplitude = todayMin > 0 ? todayMax / todayMin - 1 : 0;
 
-  const documentsAll = getDocuments(db, fundCode) ?? [];
-  const documentsLimit = Number.isFinite(opts?.documentsLimit) && (opts?.documentsLimit as number) > 0 ? Math.min(Math.floor(opts!.documentsLimit!), 200) : 20;
-  const documents = documentsAll.slice(0, documentsLimit);
-
   return {
     generated_at: new Date().toISOString(),
     fund: details,
@@ -485,115 +504,114 @@ export function exportFundJson(
       dividends: dividendsInPeriod,
       indicators_latest: indicatorSnapshots[0]?.data ?? null,
       cotations_today: cotationsToday,
-      documents: { total: documentsAll.length, items: documents },
     },
     metrics: {
       price: {
-        initial: priceInitial,
-        final: priceFinal,
-        min: priceMin,
-        max: priceMax,
-        mean: priceMean,
-        simple_return: simpleReturn,
-        cumulative_return: cumulativeReturn,
-        avg_monthly_return: avgMonthlyReturn,
-        volatility: volatility,
-        downside_volatility: downsideVolatility,
-        drawdown_max: dd.maxDrawdown,
-        drawdown_duration_days: dd.maxDurationDays,
-        recovery_time_days: dd.maxRecoveryDays,
-        max_daily_drop: maxDown,
-        max_daily_gain: maxUp,
-        positive_days: posDays,
-        negative_days: negDays,
-        pct_positive_days: pctPositiveDays,
-        variation_amplitude: variationAmplitude,
+        initial: r2(priceInitial),
+        final: r2(priceFinal),
+        min: r2(priceMin),
+        max: r2(priceMax),
+        mean: r2(priceMean),
+        simple_return: r6(simpleReturn),
+        cumulative_return: r6(cumulativeReturn),
+        avg_monthly_return: r6(avgMonthlyReturn),
+        volatility: r6(volatility),
+        downside_volatility: r6(downsideVolatility),
+        drawdown_max: r6(dd.maxDrawdown),
+        drawdown_duration_days: r0(dd.maxDurationDays),
+        recovery_time_days: r0(dd.maxRecoveryDays),
+        max_daily_drop: r6(maxDown),
+        max_daily_gain: r6(maxUp),
+        positive_days: r0(posDays),
+        negative_days: r0(negDays),
+        pct_positive_days: r6(pctPositiveDays),
+        variation_amplitude: r6(variationAmplitude),
       },
       dividends: {
-        total: dividendTotal,
-        payments: dividendCount,
-        mean: dividendMean,
-        median: dividendMedian,
-        max: dividendMax,
-        min: dividendMin,
-        stdev: dividendStd,
-        cv: dividendCv,
-        months_with_payment: monthsWithPayment,
-        months_without_payment: monthsWithoutPayment,
-        regularity: regularity,
-        avg_interval_days: avgPaymentIntervalDays,
-        trend_slope: dividendTrendSlope,
+        total: r2(dividendTotal),
+        payments: r0(dividendCount),
+        mean: r4(dividendMean),
+        median: r4(dividendMedian),
+        max: r4(dividendMax),
+        min: r4(dividendMin),
+        stdev: r6(dividendStd),
+        cv: r6(dividendCv),
+        months_with_payment: r0(monthsWithPayment),
+        months_without_payment: r0(monthsWithoutPayment),
+        regularity: r6(regularity),
+        avg_interval_days: r0(avgPaymentIntervalDays),
+        trend_slope: r6(dividendTrendSlope),
       },
       dividend_yield: {
-        period: dyPeriod,
-        monthly_mean: dyMonthly,
-        annualized: dyAnnualized,
+        period: r6(dyPeriod),
+        monthly_mean: r6(dyMonthly),
+        annualized: r6(dyAnnualized),
       },
       valuation: {
-        pvp_current: pvpCurrent,
-        pvp_mean: pvpMean,
-        pvp_min: pvpMin,
-        pvp_max: pvpMax,
-        pvp_stdev: pvpStd,
-        pvp_percentile: pvpPercentile,
-        pct_days_pvp_gt_1: pvpTimeAbove1,
-        pvp_amplitude: pvpAmplitude,
+        pvp_current: r4(pvpCurrent),
+        pvp_mean: r4(pvpMean),
+        pvp_min: r4(pvpMin),
+        pvp_max: r4(pvpMax),
+        pvp_stdev: r6(pvpStd),
+        pvp_percentile: r6(pvpPercentile),
+        pct_days_pvp_gt_1: r6(pvpTimeAbove1),
+        pvp_amplitude: r6(pvpAmplitude),
       },
       liquidity: {
-        mean: liqMean,
-        min: liqMin,
-        max: liqMax,
-        zero_days: liqZeroDays,
-        pct_days_traded: pctDaysTraded,
-        trend_slope: liqTrendSlope,
+        mean: r2(liqMean),
+        min: r2(liqMin),
+        max: r2(liqMax),
+        zero_days: r0(liqZeroDays),
+        pct_days_traded: r6(pctDaysTraded),
+        trend_slope: r6(liqTrendSlope),
       },
       risk: {
-        volatility: volatility,
-        downside_volatility: downsideVolatility,
-        drawdown_max: dd.maxDrawdown,
-        drawdown_duration_days: dd.maxDurationDays,
-        recovery_time_days: dd.maxRecoveryDays,
-        var_95: var95,
+        volatility: r6(volatility),
+        downside_volatility: r6(downsideVolatility),
+        drawdown_max: r6(dd.maxDrawdown),
+        drawdown_duration_days: r0(dd.maxDurationDays),
+        recovery_time_days: r0(dd.maxRecoveryDays),
+        var_95: r6(var95),
       },
       structure: {
-        net_worth_series_points: plSeries.length,
-        net_worth_series: plSeries,
-        net_worth_growth_12m: plGrowth12m,
-        net_worth_growth_3m: plGrowth3m,
-        net_worth_min: plMin,
-        net_worth_max: plMax,
-        net_worth_volatility: plVol,
-        cotistas_series_points: cotistasSeries.length,
-        cotistas_series: cotistasSeries,
-        cotistas_growth_12m: cotistasGrowth,
+        net_worth_series_points: r0(plSeries.length),
+        net_worth_series: plSeries.map((p) => ({ at: p.at, value: r2(p.value) })),
+        net_worth_growth_12m: r6(plGrowth12m),
+        net_worth_growth_3m: r6(plGrowth3m),
+        net_worth_min: r2(plMin),
+        net_worth_max: r2(plMax),
+        net_worth_volatility: r6(plVol),
+        cotistas_series_points: r0(cotistasSeries.length),
+        cotistas_series: cotistasSeries.map((p) => ({ at: p.at, value: r0(p.value) })),
+        cotistas_growth_12m: r6(cotistasGrowth),
       },
       consistency: {
-        max_consecutive_months_paid: maxConsecPaid,
-        max_consecutive_months_unpaid: maxConsecNoPay,
-        pct_months_with_history: pctMonthsWithHistory,
-        fund_age_days: fundAgeDays,
+        max_consecutive_months_paid: r0(maxConsecPaid),
+        max_consecutive_months_unpaid: r0(maxConsecNoPay),
+        pct_months_with_history: r6(pctMonthsWithHistory),
+        fund_age_days: r0(fundAgeDays),
       },
       quality: {
-        score_stability: scoreStability,
-        score_volatility: scoreVolatility,
-        score_liquidity: scoreLiquidity,
-        score_consistency: scoreConsistency,
-        score_composite: scoreComposite,
+        score_stability: r6(scoreStability),
+        score_volatility: r6(scoreVolatility),
+        score_liquidity: r6(scoreLiquidity),
+        score_consistency: r6(scoreConsistency),
+        score_composite: r6(scoreComposite),
       },
       today: {
-        first: todayFirst,
-        last: todayLast,
-        min: todayMin,
-        max: todayMax,
-        return: todayReturn,
-        ticks: todayPrices.length,
-        max_tick_drop: todayMaxTickDrop,
-        max_tick_gain: todayMaxTickGain,
-        positive_ticks: todayPositiveTicks,
-        negative_ticks: todayNegativeTicks,
-        pct_positive_ticks: todayPctPositiveTicks,
-        volatility: todayVolatility,
-        variation_amplitude: todayAmplitude,
+        first: r2(todayFirst),
+        last: r2(todayLast),
+        min: r2(todayMin),
+        max: r2(todayMax),
+        return: r6(todayReturn),
+        ticks: r0(todayPrices.length),
+        max_tick_drop: r6(todayMaxTickDrop),
+        max_tick_gain: r6(todayMaxTickGain),
+        positive_ticks: r0(todayPositiveTicks),
+        negative_ticks: r0(todayNegativeTicks),
+        pct_positive_ticks: r6(todayPctPositiveTicks),
+        volatility: r6(todayVolatility),
+        variation_amplitude: r6(todayAmplitude),
       },
     },
   };
