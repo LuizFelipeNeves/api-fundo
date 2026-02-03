@@ -24,6 +24,7 @@ export type BotCommand =
   | { kind: 'categories' }
   | { kind: 'confirm' }
   | { kind: 'cancel' }
+  | { kind: 'rank-hoje'; codes: string[] }
   | { kind: 'export'; codes: string[] }
   | { kind: 'resumo-documento'; codes: string[] }
   | { kind: 'set'; codes: string[] }
@@ -59,6 +60,12 @@ export function parseBotCommand(text: string): BotCommand {
   if (exportMatch) {
     const rest = normalizeText(exportMatch[3] || '');
     return { kind: 'export', codes: extractFundCodes(rest) };
+  }
+
+  const rankMatch = raw.match(/^(\/)?rank\b(.*)$/i) || raw.match(/^(\/)?rank[-_\s]?hoje\b(.*)$/i);
+  if (rankMatch) {
+    const rest = normalizeText(rankMatch[2] || '');
+    return { kind: 'rank-hoje', codes: extractFundCodes(rest) };
   }
 
   const documentosMatch = raw.match(/^(\/)?documentos\b(.*)$/i);
@@ -112,6 +119,8 @@ export function parseBotCommand(text: string): BotCommand {
       'resumo_documento',
       'export',
       'exportar',
+      'rank',
+      'rankhoje',
       'documentos',
       'pesquisa',
       'cotation',
@@ -141,6 +150,7 @@ export function formatHelp(): string {
     '- /lista',
     '- /categorias',
     '- /export [FUNDO1 FUNDO2]',
+    '- /rank hoje [FUNDO1 FUNDO2]',
     '- /resumo-documento [FUNDO1 FUNDO2]',
     '- /documentos [FUNDO] [N]',
     '- /pesquisa FUNDO',
@@ -158,6 +168,8 @@ export function formatHelp(): string {
     'Exemplo: /documentos HGLG11 5',
     'Exemplo: /export',
     'Exemplo: /export HGLG11 MXRF11',
+    'Exemplo: /rank hoje',
+    'Exemplo: /rank hoje HGLG11 MXRF11',
     'Exemplo: /resumo-documento',
     'Exemplo: /resumo-documento HGLG11 MXRF11',
     'Exemplo: /pesquisa HGLG11',

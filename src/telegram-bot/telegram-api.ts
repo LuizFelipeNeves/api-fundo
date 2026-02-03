@@ -186,6 +186,7 @@ export function createTelegramService(token: string) {
       { command: 'lista', description: 'Ver sua lista de fundos' },
       { command: 'categorias', description: 'Resumo por categoria da sua lista' },
       { command: 'export', description: 'Exportar JSON da sua lista (ou fundos específicos)' },
+      { command: 'rank', description: 'Rank hoje (oportunidades de valorização)' },
       { command: 'documentos', description: 'Últimos documentos (da lista ou por fundo)' },
       { command: 'resumo_documento', description: 'Resumo do último documento (2 fundos)' },
       { command: 'pesquisa', description: 'Resumo do fundo' },

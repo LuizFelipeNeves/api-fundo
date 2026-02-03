@@ -10,6 +10,7 @@ import { formatHelp, parseBotCommand, type BotCommand } from './commands';
 import { getOrComputeCotationStats } from './cotation-stats';
 import { createTelegramService, type TelegramUpdate } from './telegram-api';
 import { exportFundJson } from '../services/fund-export';
+import { pickIndicatorValue } from '../services/fund-export/analytics';
 import {
   addTelegramUserFunds,
   clearTelegramPendingAction,
@@ -31,6 +32,7 @@ import {
   formatDocumentsMessage,
   formatFundsListMessage,
   formatPesquisaMessage,
+  formatRankHojeMessage,
   formatRemoveMessage,
   formatSetMessage,
 } from './webhook-messages';
@@ -249,6 +251,43 @@ app.post('/webhook', async (c) => {
       await fs.unlink(filePath).catch(() => {});
     }
 
+    return c.json({ ok: true });
+  }
+
+  if (cmd.kind === 'rank-hoje') {
+    const requested = cmd.codes.length ? cmd.codes.map((c) => c.toUpperCase()) : listTelegramUserFunds(db, chatIdStr);
+    if (!requested.length) {
+      await telegram.sendText(chatIdStr, 'Sua lista está vazia.');
+      return c.json({ ok: true });
+    }
+
+    const existing = listExistingFundCodes(db, requested);
+    const missing = requested.filter((code) => !existing.includes(code));
+
+    const ranked: Array<{ code: string; pvp: number | null; dividendYield12m: number | null; liquidity: number | null }> = [];
+    for (const code of existing) {
+      const data = exportFundJson(db, code);
+      if (!data?.data?.indicators_latest) continue;
+      const indicators = data.data.indicators_latest as Record<string, Array<{ year: string; value: number | null }>>;
+      const pvp = pickIndicatorValue(indicators, 'pvp');
+      const dy = pickIndicatorValue(indicators, 'dividend_yield');
+      const liq = pickIndicatorValue(indicators, 'liquidez_diaria');
+
+      if (pvp === null || dy === null || liq === null) continue;
+      if (pvp <= 0.82 && dy >= 14.0 && liq >= 600000) {
+        ranked.push({ code, pvp, dividendYield12m: dy, liquidity: liq });
+      }
+    }
+
+    ranked.sort((a, b) => {
+      const dy = (b.dividendYield12m ?? 0) - (a.dividendYield12m ?? 0);
+      if (dy) return dy;
+      const pvp = (a.pvp ?? 0) - (b.pvp ?? 0);
+      if (pvp) return pvp;
+      return (b.liquidity ?? 0) - (a.liquidity ?? 0);
+    });
+
+    await telegram.sendText(chatIdStr, formatRankHojeMessage({ items: ranked, total: existing.length, missing }));
     return c.json({ ok: true });
   }
 
