@@ -86,7 +86,7 @@ function migrate(db: Database.Database) {
       fetched_at TEXT NOT NULL,
       data_hash TEXT NOT NULL,
       data_json TEXT NOT NULL,
-      UNIQUE(fund_code, data_hash)
+      UNIQUE(fund_code)
     );
 
     CREATE TABLE IF NOT EXISTS cotations_today_snapshot (
@@ -167,8 +167,6 @@ function migrate(db: Database.Database) {
       data_json TEXT NOT NULL
     );
   `);
-
-  migrateCotationsTodaySnapshot(db);
 }
 
 export function nowIso(): string {
@@ -189,45 +187,4 @@ export function toDateIsoFromBr(dateStr: string): string {
   if (!day || !month || !year) return '';
   const iso = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0)).toISOString().slice(0, 10);
   return iso;
-}
-
-function migrateCotationsTodaySnapshot(db: Database.Database) {
-  const cols = db.prepare(`PRAGMA table_info('cotations_today_snapshot')`).all() as Array<{ name: string }>;
-  const hasDateIso = cols.some((c) => c.name === 'date_iso');
-  if (hasDateIso) return;
-
-  db.exec('BEGIN');
-  try {
-    db.exec(`
-      CREATE TABLE cotations_today_snapshot_v2 (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
-        date_iso TEXT NOT NULL,
-        fetched_at TEXT NOT NULL,
-        data_hash TEXT NOT NULL,
-        data_json TEXT NOT NULL,
-        UNIQUE(fund_code, date_iso)
-      );
-
-      INSERT INTO cotations_today_snapshot_v2 (fund_code, date_iso, fetched_at, data_hash, data_json)
-      SELECT s.fund_code, substr(s.fetched_at, 1, 10) AS date_iso, s.fetched_at, s.data_hash, s.data_json
-      FROM cotations_today_snapshot s
-      WHERE s.id IN (
-        SELECT max(id) FROM cotations_today_snapshot
-        GROUP BY fund_code, substr(fetched_at, 1, 10)
-      );
-
-      DROP TABLE cotations_today_snapshot;
-      ALTER TABLE cotations_today_snapshot_v2 RENAME TO cotations_today_snapshot;
-      CREATE INDEX IF NOT EXISTS idx_cotations_today_fund_date ON cotations_today_snapshot(fund_code, date_iso);
-    `);
-    db.exec('COMMIT');
-  } catch (err) {
-    try {
-      db.exec('ROLLBACK');
-    } catch {
-      null;
-    }
-    throw err;
-  }
 }

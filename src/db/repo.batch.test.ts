@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
-import { hasDividend, listDividendKeys, listFundCodesForCotationsTodayBatch, listFundCodesForDetailsSyncBatch, listFundCodesForDocumentsBatch, listFundCodesForIndicatorsBatch, upsertCotationsTodaySnapshot } from './repo';
+import { hasDividend, listDividendKeys, listFundCodesForCotationsTodayBatch, listFundCodesForDetailsSyncBatch, listFundCodesForDocumentsBatch, listFundCodesForIndicatorsBatch, upsertCotationsTodaySnapshot, upsertIndicatorsSnapshot } from './repo';
 import { sha256 } from './index';
 
 test('listFundCodesForCotationsTodayBatch ordena por last_cotations_today_at asc e limita', () => {
@@ -289,4 +289,57 @@ test('upsertCotationsTodaySnapshot salva ordenado e sem duplicar por hora', () =
     { price: 1, hour: '10:00' },
     { price: 3, hour: '10:01' },
   ]);
+});
+
+test('upsertIndicatorsSnapshot mantém um registro por fundo', () => {
+  const db = new Database(':memory:');
+  db.exec(`
+    PRAGMA foreign_keys=ON;
+    CREATE TABLE fund_master (code TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE fund_state (
+      fund_code TEXT PRIMARY KEY REFERENCES fund_master(code) ON DELETE CASCADE,
+      last_documents_max_id INTEGER,
+      last_documents_at TEXT,
+      last_details_sync_at TEXT,
+      last_indicators_hash TEXT,
+      last_indicators_at TEXT,
+      last_cotations_today_hash TEXT,
+      last_cotations_today_at TEXT,
+      last_historical_cotations_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE indicators_snapshot (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
+      fetched_at TEXT NOT NULL,
+      data_hash TEXT NOT NULL,
+      data_json TEXT NOT NULL,
+      UNIQUE(fund_code)
+    );
+  `);
+
+  const t1 = '2026-01-01T10:00:00.000Z';
+  const t2 = '2026-01-01T12:00:00.000Z';
+  db.prepare('insert into fund_master(code, created_at, updated_at) values (?, ?, ?)').run('ABCD11', t1, t1);
+
+  const c1 = upsertIndicatorsSnapshot(db, 'abcd11', t1, 'h1', { p_vp: [{ year: 'Atual', value: 1 }] } as any);
+  assert.equal(c1, true);
+  const count1 = db.prepare('select count(1) as c from indicators_snapshot').get() as any;
+  assert.equal(count1.c, 1);
+
+  const c2 = upsertIndicatorsSnapshot(db, 'abcd11', t2, 'h2', { p_vp: [{ year: 'Atual', value: 2 }] } as any);
+  assert.equal(c2, true);
+  const count2 = db.prepare('select count(1) as c from indicators_snapshot').get() as any;
+  assert.equal(count2.c, 1);
+
+  const row = db.prepare('select fund_code, fetched_at, data_hash, data_json from indicators_snapshot').get() as any;
+  assert.equal(row.fund_code, 'ABCD11');
+  assert.equal(row.fetched_at, t2);
+  assert.equal(row.data_hash, 'h2');
+  assert.ok(String(row.data_json).includes('"p_vp"'));
+
+  const state = db.prepare('select last_indicators_hash as h, last_indicators_at as at from fund_state where fund_code=?').get('ABCD11') as any;
+  assert.equal(state.h, 'h2');
+  assert.equal(state.at, t2);
 });

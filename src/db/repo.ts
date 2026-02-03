@@ -417,7 +417,15 @@ export function upsertIndicatorsSnapshot(db: Database.Database, fundCode: string
   const orm = drizzle(db);
   const fundCodeUpper = fundCode.toUpperCase();
   const json = JSON.stringify(data);
-  const inserted = orm
+  const existing = orm
+    .select({ data_hash: indicatorsSnapshot.data_hash })
+    .from(indicatorsSnapshot)
+    .where(eq(indicatorsSnapshot.fund_code, fundCodeUpper))
+    .get();
+
+  const changed = !existing || existing.data_hash !== dataHash;
+
+  orm
     .insert(indicatorsSnapshot)
     .values({
       fund_code: fundCodeUpper,
@@ -425,8 +433,11 @@ export function upsertIndicatorsSnapshot(db: Database.Database, fundCode: string
       data_hash: dataHash,
       data_json: json,
     })
-    .onConflictDoNothing({ target: [indicatorsSnapshot.fund_code, indicatorsSnapshot.data_hash] })
-    .run().changes;
+    .onConflictDoUpdate({
+      target: indicatorsSnapshot.fund_code,
+      set: { fetched_at: fetchedAt, data_hash: dataHash, data_json: json },
+    })
+    .run();
 
   orm
     .insert(fundState)
@@ -434,7 +445,7 @@ export function upsertIndicatorsSnapshot(db: Database.Database, fundCode: string
     .onConflictDoNothing()
     .run();
 
-  if (inserted > 0) {
+  if (changed) {
     orm
       .update(fundState)
       .set({
@@ -455,7 +466,7 @@ export function upsertIndicatorsSnapshot(db: Database.Database, fundCode: string
       .run();
   }
 
-  return inserted > 0;
+  return changed;
 }
 
 export function getLatestIndicators(db: Database.Database, fundCode: string): NormalizedIndicators | null {

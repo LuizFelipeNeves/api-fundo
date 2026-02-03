@@ -59,7 +59,7 @@ export const indicatorsSnapshot = sqliteTable(
     data_json: text('data_json').notNull(),
   },
   (t: any) => ({
-    uniq: uniqueIndex('indicators_snapshot_fund_hash').on(t.fund_code, t.data_hash),
+    uniq: uniqueIndex('indicators_snapshot_fund').on(t.fund_code),
   })
 );
 
