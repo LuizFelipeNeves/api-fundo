@@ -1,5 +1,30 @@
 import { sqliteTable, text, real, integer, primaryKey, uniqueIndex, index } from 'drizzle-orm/sqlite-core';
 
+// Common timestamp fields
+const timestamps = {
+  created_at: text('created_at').notNull(),
+  updated_at: text('updated_at').notNull(),
+};
+
+// Foreign key reference helper for fund_code
+const fundCodeRef = (t: any) =>
+  text('fund_code')
+    .notNull()
+    .references(() => fundMaster.code, { onDelete: 'cascade' });
+
+// Snapshot common fields
+const snapshotFields = {
+  fetched_at: text('fetched_at').notNull(),
+  data_hash: text('data_hash').notNull(),
+  data_json: text('data_json').notNull(),
+};
+
+// Date fields common to cotation/dividend
+const dateFields = {
+  date_iso: text('date_iso').notNull(),
+  date: text('date').notNull(),
+};
+
 export const fundMaster = sqliteTable('fund_master', {
   code: text('code').primaryKey(),
   id: text('id'),
@@ -27,8 +52,7 @@ export const fundMaster = sqliteTable('fund_master', {
   valor_patrimonial: real('valor_patrimonial'),
   ultimo_rendimento: real('ultimo_rendimento'),
 
-  created_at: text('created_at').notNull(),
-  updated_at: text('updated_at').notNull(),
+  ...timestamps,
 });
 
 export const fundState = sqliteTable('fund_state', {
@@ -43,17 +67,14 @@ export const fundState = sqliteTable('fund_state', {
   last_cotations_today_hash: text('last_cotations_today_hash'),
   last_cotations_today_at: text('last_cotations_today_at'),
   last_historical_cotations_at: text('last_historical_cotations_at'),
-  created_at: text('created_at').notNull(),
-  updated_at: text('updated_at').notNull(),
+  ...timestamps,
 });
 
 export const indicatorsSnapshot = sqliteTable(
   'indicators_snapshot',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    fund_code: text('fund_code')
-      .notNull()
-      .references(() => fundMaster.code, { onDelete: 'cascade' }),
+    fund_code: fundCodeRef({} as any),
     fetched_at: text('fetched_at').notNull(),
     data_hash: text('data_hash').notNull(),
     data_json: text('data_json').notNull(),
@@ -67,13 +88,9 @@ export const cotationsTodaySnapshot = sqliteTable(
   'cotations_today_snapshot',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    fund_code: text('fund_code')
-      .notNull()
-      .references(() => fundMaster.code, { onDelete: 'cascade' }),
+    fund_code: fundCodeRef({} as any),
     date_iso: text('date_iso').notNull(),
-    fetched_at: text('fetched_at').notNull(),
-    data_hash: text('data_hash').notNull(),
-    data_json: text('data_json').notNull(),
+    ...snapshotFields,
   },
   (t: any) => ({
     uniq: uniqueIndex('cotations_today_snapshot_fund_date').on(t.fund_code, t.date_iso),
@@ -83,11 +100,8 @@ export const cotationsTodaySnapshot = sqliteTable(
 export const cotation = sqliteTable(
   'cotation',
   {
-    fund_code: text('fund_code')
-      .notNull()
-      .references(() => fundMaster.code, { onDelete: 'cascade' }),
-    date_iso: text('date_iso').notNull(),
-    date: text('date').notNull(),
+    fund_code: fundCodeRef({} as any),
+    ...dateFields,
     price: real('price').notNull(),
   },
   (t: any) => ({
@@ -99,11 +113,8 @@ export const cotation = sqliteTable(
 export const dividend = sqliteTable(
   'dividend',
   {
-    fund_code: text('fund_code')
-      .notNull()
-      .references(() => fundMaster.code, { onDelete: 'cascade' }),
-    date_iso: text('date_iso').notNull(),
-    date: text('date').notNull(),
+    fund_code: fundCodeRef({} as any),
+    ...dateFields,
     payment: text('payment').notNull(),
     type: text('type', { enum: ['Dividendos', 'Amortização'] }).notNull(),
     value: real('value').notNull(),
@@ -118,9 +129,7 @@ export const dividend = sqliteTable(
 export const document = sqliteTable(
   'document',
   {
-    fund_code: text('fund_code')
-      .notNull()
-      .references(() => fundMaster.code, { onDelete: 'cascade' }),
+    fund_code: fundCodeRef({} as any),
     document_id: integer('document_id').notNull(),
     title: text('title').notNull(),
     category: text('category').notNull(),
@@ -144,8 +153,7 @@ export const telegramUser = sqliteTable('telegram_user', {
   username: text('username'),
   first_name: text('first_name'),
   last_name: text('last_name'),
-  created_at: text('created_at').notNull(),
-  updated_at: text('updated_at').notNull(),
+  ...timestamps,
 });
 
 export const telegramUserFund = sqliteTable(
@@ -154,9 +162,7 @@ export const telegramUserFund = sqliteTable(
     chat_id: text('chat_id')
       .notNull()
       .references(() => telegramUser.chat_id, { onDelete: 'cascade' }),
-    fund_code: text('fund_code')
-      .notNull()
-      .references(() => fundMaster.code, { onDelete: 'cascade' }),
+    fund_code: fundCodeRef({} as any),
     created_at: text('created_at').notNull(),
   },
   (t: any) => ({
