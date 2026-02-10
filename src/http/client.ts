@@ -96,7 +96,6 @@ async function fetchWithRetry(method: string, url: string, init: RequestInit, op
   const retryBase = clampInt(opts.retryBaseMs ?? HTTP_RETRY_BASE_MS, 50, 60000);
   const hostname = new URL(url).hostname;
   const agent = getAgent(hostname);
-  let lastError: unknown = null;
 
   for (let attempt = 0; attempt < retryMax; attempt++) {
     try {
@@ -120,7 +119,6 @@ async function fetchWithRetry(method: string, url: string, init: RequestInit, op
         return res;
       } finally { clearTimeout(tid); }
     } catch (e) {
-      lastError = e;
       if (attempt + 1 >= retryMax) {
         const errMsg = e instanceof Error && e.name === 'AbortError' ? `timeout_after_ms=${timeout}` : String(e);
         throw new Error(`${method} ${url} -> retry_failed after ${attempt + 1}/${retryMax}: ${errMsg}`);
@@ -256,14 +254,14 @@ export async function fetchFnetWithSession<T>(
   // STEP 1: INIT para obter JSESSIONID se necessário
   if (!canReuse) {
     const initRes = await fetch(initUrl, { method: 'GET', headers: getFnetInitHeaders(), dispatcher: AGENTS.fnet });
-    if (!initRes.ok) throwHttpError(initRes, 'GET', initUrl);
+    if (!initRes.ok) await throwHttpError(initRes, 'GET', initUrl);
     const newId = extractJSessionId(initRes);
     if (newId) { jsessionId = newId; lastValidAt = now; saveSession(cnpj, jsessionId, lastValidAt); }
     else throw new Error('FNET_INIT_NO_JSESSIONID');
     try { initRes.body?.cancel(); } catch { null; }
   }
 
-  const validId = jsessionId!;
+  let validId = jsessionId!;
   const headers = getFnetHeaders(validId);
   const retryMax = clampInt(opts.retryMax ?? HTTP_RETRY_MAX, 1, 50);
   const retryBase = clampInt(opts.retryBaseMs ?? HTTP_RETRY_BASE_MS, 50, 60000);
@@ -278,13 +276,17 @@ export async function fetchFnetWithSession<T>(
           const initRes = await fetch(initUrl, { method: 'GET', headers: getFnetInitHeaders(), dispatcher: AGENTS.fnet });
           if (initRes.ok) {
             const newId = extractJSessionId(initRes);
-            if (newId) { saveSession(cnpj, newId, Date.now()); headers['Cookie'] = validId; }
+            if (newId) {
+              validId = newId;
+              saveSession(cnpj, validId, Date.now());
+              headers['Cookie'] = validId;
+            }
           }
           try { initRes.body?.cancel(); } catch { null; }
 
           if (attempt + 1 < retryMax) { await sleep(computeBackoff(attempt, res.status, null, retryBase)); continue; }
         }
-        throwHttpError(res, 'GET', dataUrl);
+        await throwHttpError(res, 'GET', dataUrl);
       }
 
       const ct = res.headers.get('content-type') || '';
