@@ -16,7 +16,19 @@ export async function syncFundDocuments<Db>(
   const state = deps.repo.getFundState(db, code);
   const lastMaxId = state?.last_documents_max_id ?? null;
 
-  const docs = await deps.fetcher.fetchDocuments(cnpj);
+  // 🔥 Carrega sessão do banco para este CNPJ
+  const sessionData = deps.repo.getFnetSession(db, cnpj);
+
+  // 🔥 Callbacks para gerenciar sessão (persiste diretamente no banco)
+  const callbacks = {
+    getSession: () => sessionData,
+    saveSession: (c: string, jsId: string, ts: number) => {
+      deps.repo.saveFnetSession(db, c, jsId, ts);
+    },
+  };
+
+  const docs = await deps.fetcher.fetchDocuments(cnpj, callbacks);
+
   const { inserted, maxId } = deps.repo.upsertDocuments(db, code, docs);
 
   if (maxId) deps.repo.updateDocumentsMaxId(db, code, maxId);

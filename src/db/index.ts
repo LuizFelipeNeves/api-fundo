@@ -166,6 +166,12 @@ function migrate(db: Database.Database) {
       computed_at TEXT NOT NULL,
       data_json TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS fnet_session (
+      cnpj TEXT PRIMARY KEY,
+      jsession_id TEXT NOT NULL,
+      last_valid_at TEXT NOT NULL
+    );
   `);
 }
 
@@ -187,4 +193,30 @@ export function toDateIsoFromBr(dateStr: string): string {
   if (!day || !month || !year) return '';
   const iso = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0)).toISOString().slice(0, 10);
   return iso;
+}
+
+/* ======================================================
+   🔥 FNET SESSION (persistida por CNPJ)
+====================================================== */
+
+export interface FnetSessionData {
+  jsessionId: string | null;
+  lastValidAt: number | null;
+}
+
+export function getFnetSession(db: Database.Database, cnpj: string): FnetSessionData {
+  const stmt = db.prepare('SELECT jsession_id, last_valid_at FROM fnet_session WHERE cnpj = ?');
+  const row = stmt.get(cnpj) as { jsession_id: string; last_valid_at: string } | undefined;
+  if (!row) return { jsessionId: null, lastValidAt: null };
+  return { jsessionId: row.jsession_id, lastValidAt: Date.parse(row.last_valid_at) };
+}
+
+export function saveFnetSession(db: Database.Database, cnpj: string, jsessionId: string, lastValidAt: number): void {
+  db.prepare(`
+    INSERT INTO fnet_session (cnpj, jsession_id, last_valid_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(cnpj) DO UPDATE SET
+      jsession_id = excluded.jsession_id,
+      last_valid_at = excluded.last_valid_at
+  `).run(cnpj, jsessionId, new Date(lastValidAt).toISOString());
 }

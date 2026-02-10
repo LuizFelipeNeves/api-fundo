@@ -884,3 +884,23 @@ export function getDividends(db: Database.Database, fundCode: string): DividendD
     type: r.type,
   }));
 }
+
+/* ======================================================
+   🔥 FNET SESSION (persistida por CNPJ)
+====================================================== */
+
+export function getFnetSession(db: Database.Database, cnpj: string): { jsessionId: string | null; lastValidAt: number | null } {
+  const row = db.prepare('SELECT jsession_id, last_valid_at FROM fnet_session WHERE cnpj = ?').get(cnpj) as { jsession_id: string; last_valid_at: string } | undefined;
+  if (!row) return { jsessionId: null, lastValidAt: null };
+  return { jsessionId: row.jsession_id, lastValidAt: Date.parse(row.last_valid_at) };
+}
+
+export function saveFnetSession(db: Database.Database, cnpj: string, jsessionId: string, lastValidAt: number): void {
+  db.prepare(`
+    INSERT INTO fnet_session (cnpj, jsession_id, last_valid_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(cnpj) DO UPDATE SET
+      jsession_id = excluded.jsession_id,
+      last_valid_at = excluded.last_valid_at
+  `).run(cnpj, jsessionId, new Date(lastValidAt).toISOString());
+}

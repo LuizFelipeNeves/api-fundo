@@ -187,3 +187,9 @@ export const fundCotationStats = sqliteTable('fund_cotation_stats', {
   computed_at: text('computed_at').notNull(),
   data_json: text('data_json').notNull(),
 });
+
+export const fnetSession = sqliteTable('fnet_session', {
+  cnpj: text('cnpj').primaryKey(),
+  jsession_id: text('jsession_id').notNull(),
+  last_valid_at: text('last_valid_at').notNull(),
+});

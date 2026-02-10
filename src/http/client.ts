@@ -1,9 +1,55 @@
 import { getDefaultHeaders } from '../config';
 import dns from 'node:dns/promises';
 import net from 'node:net';
-import { ProxyAgent, type Dispatcher } from 'undici';
+import { Agent, ProxyAgent, type Dispatcher } from 'undici';
 
 const DEFAULT_TIMEOUT = 25000; // 25 segundos
+
+/* ======================================================
+   🔥 GOD NETWORK AGENT para FNET (keepalive agressivo)
+====================================================== */
+
+const FNET_AGENT = new Agent({
+  keepAliveTimeout: 60_000,
+  keepAliveMaxTimeout: 120_000,
+  connections: 50,
+  pipelining: 1,
+});
+
+const FNET_SESSION_TTL_MS = 60 * 60 * 1000; // 1 hora
+
+function extractJSessionId(resp: Response): string | null {
+  const raw = resp.headers.get('set-cookie') || resp.headers.get('set-cookie2');
+  console.log('[FNET] extractJSessionId - all headers:', Object.fromEntries(resp.headers.entries()));
+  if (!raw) {
+    console.log('[FNET] extractJSessionId: sem set-cookie');
+    return null;
+  }
+
+  // Bun às vezes concatena cookies em linha única
+  const match = raw.match(/JSESSIONID=[^;]+/i);
+  console.log('[FNET] extractJSessionId:', { raw: raw.slice(0, 200), match: match?.[0] });
+  return match ? match[0] : null;
+}
+
+function getFnetHeaders(cookie?: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    'User-Agent': 'Mozilla/5.0',
+    Accept: 'application/json, text/javascript, */*; q=0.01',
+    'x-requested-with': 'XMLHttpRequest',
+    Connection: 'keep-alive',
+  };
+  if (cookie) headers['Cookie'] = cookie;
+  return headers;
+}
+
+function getFnetInitHeaders(): Record<string, string> {
+  return {
+    'User-Agent': 'Mozilla/5.0',
+    Accept: '*/*',
+    Connection: 'keep-alive',
+  };
+}
 const DEFAULT_RETRY_MAX = 4;
 const DEFAULT_RETRY_BASE_MS = 600;
 const DEFAULT_HOST_CONCURRENCY = 3;
@@ -114,7 +160,7 @@ function destroyAgents(urls: Iterable<string>): void {
 
 // Cleanup periódico de agents órfãos (stale)
 if (typeof setInterval !== 'undefined') {
-  setInterval(() => {
+  const timer = setInterval(() => {
     if (!TOR_PROXY_ENABLED) return;
     // Remove agents que não estão no pool atual
     const staleUrls: string[] = [];
@@ -128,6 +174,7 @@ if (typeof setInterval !== 'undefined') {
       process.stderr.write(`[http] destroyed ${staleUrls.length} stale tor agents\n`);
     }
   }, TOR_PROXY_REFRESH_MS);
+  (timer as any).unref?.();
 }
 
 type TorProxySelection = { proxyUrl: string; dispatcher: ProxyAgent };
@@ -338,12 +385,13 @@ function cleanupIdleHostLimiters(): number {
 
 // Cleanup periódico de limiters inativos
 if (typeof setInterval !== 'undefined') {
-  setInterval(() => {
+  const timer = setInterval(() => {
     const cleaned = cleanupIdleHostLimiters();
     if (cleaned > 0) {
       process.stderr.write(`[http] cleaned ${cleaned} idle host limiters\n`);
     }
   }, 60 * 1000); // a cada minuto
+  (timer as any).unref?.();
 }
 
 function getHostPolicy(hostname: string): { maxConcurrent: number; minTimeMs: number } {
@@ -538,8 +586,6 @@ async function fetchWithRetry(
 
   let lastError: unknown = null;
   for (let attempt = 0; attempt < retryMax; attempt++) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
     try {
       const hostname = new URL(url).hostname;
       const shouldUseTor =
@@ -554,18 +600,22 @@ async function fetchWithRetry(
       if (tor) {
         maybeSignalNewnym(tor.proxyUrl).catch(() => null);
       }
-      const response = await withHostLimit(url, () =>
-        fetch(
-          url,
-          {
-            ...init,
-            signal: controller.signal,
-            ...(tor ? { dispatcher: tor.dispatcher } : {}),
-          } satisfies RequestInitWithDispatcher
-        )
-      );
-
-      clearTimeout(timeoutId);
+      const response = await withHostLimit(url, async () => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
+        try {
+          return await fetch(
+            url,
+            {
+              ...init,
+              signal: controller.signal,
+              ...(tor ? { dispatcher: tor.dispatcher } : {}),
+            } satisfies RequestInitWithDispatcher
+          );
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      });
 
       if (!response.ok && isRetryableStatus(response.status) && attempt + 1 < retryMax) {
         const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
@@ -580,7 +630,6 @@ async function fetchWithRetry(
 
       return response;
     } catch (error) {
-      clearTimeout(timeoutId);
       if (error instanceof Error && error.name === 'AbortError') {
         throw new Error(`${method} ${url} -> timeout_after_ms=${timeout}`);
       }
@@ -808,4 +857,148 @@ export async function fetchWithSession<T>(
   }
 
   throw new Error(`GET ${dataUrl} -> request_failed`);
+}
+
+/* ======================================================
+   🔥 FNET COM SESSION CACHE (JSESSIONID reutilizável)
+====================================================== */
+
+type FnetSessionCallbacks = {
+  getSession: (cnpj: string) => { jsessionId: string | null; lastValidAt: number | null };
+  saveSession: (cnpj: string, jsessionId: string, lastValidAt: number) => void;
+};
+
+export async function fetchFnetWithSession<T>(
+  initUrl: string,
+  dataUrl: string,
+  cnpj: string,
+  options: RequestOptions = {},
+  sessionCallbacks?: FnetSessionCallbacks
+): Promise<T> {
+  const getSession = sessionCallbacks?.getSession;
+  const saveSession = sessionCallbacks?.saveSession;
+
+  if (!getSession || !saveSession) {
+    throw new Error('FNET_SESSION_CALLBACKS_REQUIRED');
+  }
+
+  const now = Date.now();
+  const session = getSession(cnpj);
+  let jsessionId: string | null = session.jsessionId;
+  let lastValidAt = session.lastValidAt;
+
+  // 🔥 Sessão válida e dentro do TTL?
+  const canReuseSession = jsessionId !== null && lastValidAt !== null && now - lastValidAt < FNET_SESSION_TTL_MS;
+
+  // ==========================================
+  // PASSO 1: Se não tiver sessão válida, faz INIT para obter JSESSIONID
+  // ==========================================
+  if (!canReuseSession) {
+    const initResp = await fetch(initUrl, {
+      method: 'GET',
+      headers: getFnetInitHeaders(),
+      dispatcher: FNET_AGENT,
+    });
+
+    if (!initResp.ok) {
+      await throwHttpError(initResp, 'GET', initUrl);
+    }
+
+    const newJsessionId = extractJSessionId(initResp);
+    if (newJsessionId) {
+      jsessionId = newJsessionId;
+      lastValidAt = Date.now();
+      saveSession(cnpj, jsessionId, lastValidAt);
+    } else {
+      throw new Error('FNET_INIT_NO_JSESSIONID');
+    }
+
+    try {
+      initResp.body?.cancel();
+    } catch {
+      null;
+    }
+  }
+
+  // jsessionId agora é garantido não-nulo
+  let validJsessionId = jsessionId!;
+
+  // ==========================================
+  // PASSO 2: Faz a request DATA com o JSESSIONID
+  // ==========================================
+  const headers = getFnetHeaders(validJsessionId);
+  const retryMax = resolveRetryMax(options);
+  const retryBaseMs = resolveRetryBaseMs(options);
+
+  for (let attempt = 0; attempt < retryMax; attempt++) {
+    try {
+      const dataResp = await fetchWithRetry('GET', dataUrl, { method: 'GET', headers }, options);
+
+      if (!dataResp.ok) {
+        // 🔥 Se 401/403, renovar sessão e tentar novamente
+        if (dataResp.status === 401 || dataResp.status === 403) {
+          // Faz INIT para nova sessão
+          const initResp = await fetch(initUrl, {
+            method: 'GET',
+            headers: getFnetInitHeaders(),
+            dispatcher: FNET_AGENT,
+          });
+
+          if (initResp.ok) {
+            const newJsessionId = extractJSessionId(initResp);
+            if (newJsessionId) {
+              validJsessionId = newJsessionId;
+              lastValidAt = Date.now();
+              saveSession(cnpj, validJsessionId, lastValidAt);
+              headers['Cookie'] = validJsessionId;
+            }
+          }
+
+          try {
+            initResp.body?.cancel();
+          } catch {
+            null;
+          }
+
+          // Retry com nova sessão
+          if (attempt + 1 < retryMax) {
+            await sleep(computeBackoffMs(attempt, dataResp.status, null, retryBaseMs));
+            continue;
+          }
+        }
+
+        await throwHttpError(dataResp, 'GET', dataUrl);
+      }
+
+      const contentType = dataResp.headers.get('content-type') || '';
+      if (!contentType.toLowerCase().includes('application/json')) {
+        if (attempt + 1 < retryMax && contentType.toLowerCase().includes('text/html')) {
+          try {
+            dataResp.body?.cancel();
+          } catch {
+            null;
+          }
+          await sleep(computeBackoffMs(attempt, 503, null, retryBaseMs));
+          continue;
+        }
+        const snippet = await readResponseSnippet(dataResp, 800);
+        const typePart = contentType ? ` content_type="${contentType}"` : '';
+        const bodyPart = snippet ? ` body="${snippet}"` : '';
+        throw new Error(`GET ${dataUrl} -> unexpected_response${typePart}${bodyPart}`);
+      }
+
+      // 🔥 Atualiza timestamp de uso da sessão
+      saveSession(cnpj, validJsessionId, Date.now());
+
+      return await dataResp.json() as T;
+    } catch (err) {
+      if (attempt + 1 < retryMax) {
+        await sleep(computeBackoffMs(attempt, undefined, undefined, retryBaseMs));
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw new Error(`FNET ${dataUrl} -> request_failed`);
 }
