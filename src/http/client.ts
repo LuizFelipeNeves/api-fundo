@@ -85,7 +85,7 @@ async function throwHttpError(response: Response, method: string, url: string): 
 }
 
 /* ======================================================
-   🔥 CORE FETCH COM TOR + LIMITS + RETRY
+   🔥 CORE FETCH COM TOR + RETRY (com logs)
 ====================================================== */
 
 interface ReqOptions { timeout?: number; headers?: Record<string, string>; retryMax?: number; retryBaseMs?: number; }
@@ -96,6 +96,7 @@ async function fetchWithRetry(method: string, url: string, init: RequestInit, op
   const retryBase = clampInt(opts.retryBaseMs ?? HTTP_RETRY_BASE_MS, 50, 60000);
   const hostname = new URL(url).hostname;
   const agent = getAgent(hostname);
+  let lastError: unknown = null;
 
   for (let attempt = 0; attempt < retryMax; attempt++) {
     try {
@@ -119,7 +120,11 @@ async function fetchWithRetry(method: string, url: string, init: RequestInit, op
         return res;
       } finally { clearTimeout(tid); }
     } catch (e) {
-      if (attempt + 1 >= retryMax) throw e;
+      lastError = e;
+      if (attempt + 1 >= retryMax) {
+        const errMsg = e instanceof Error && e.name === 'AbortError' ? `timeout_after_ms=${timeout}` : String(e);
+        throw new Error(`${method} ${url} -> retry_failed after ${attempt + 1}/${retryMax}: ${errMsg}`);
+      }
       await sleep(computeBackoff(attempt, undefined, null, retryBase));
     }
   }
@@ -143,22 +148,27 @@ async function request<T>(url: string, opts: ReqOptions = {}, expectJson = true)
   const retryBase = clampInt(opts.retryBaseMs ?? HTTP_RETRY_BASE_MS, 50, 60000);
 
   for (let attempt = 0; attempt < retryMax; attempt++) {
-    const res = await fetchWithRetry('GET', url, { headers: opts.headers ?? getDefaultHeaders() }, opts);
-    if (!res.ok) await throwHttpError(res, 'GET', url);
+    try {
+      const res = await fetchWithRetry('GET', url, { headers: opts.headers ?? getDefaultHeaders() }, opts);
+      if (!res.ok) await throwHttpError(res, 'GET', url);
 
-    if (expectJson) {
-      const ct = res.headers.get('content-type') || '';
-      if (!ct.toLowerCase().includes('application/json')) {
-        if (attempt + 1 < retryMax && ct.toLowerCase().includes('text/html')) {
-          try { res.body?.cancel(); } catch { null; }
-          await sleep(computeBackoff(attempt, 503, null, retryBase));
-          continue;
+      if (expectJson) {
+        const ct = res.headers.get('content-type') || '';
+        if (!ct.toLowerCase().includes('application/json')) {
+          if (attempt + 1 < retryMax && ct.toLowerCase().includes('text/html')) {
+            try { res.body?.cancel(); } catch { null; }
+            await sleep(computeBackoff(attempt, 503, null, retryBase));
+            continue;
+          }
+          throw new Error(`GET ${url} -> unexpected_content_type="${ct}"`);
         }
-        throw new Error(`GET ${url} -> unexpected_content_type="${ct}"`);
+        try { return await res.json() as T; } catch { throw new Error(`GET ${url} -> invalid_json`); }
       }
-      try { return await res.json() as T; } catch { throw new Error(`GET ${url} -> invalid_json`); }
+      return await res.text() as T;
+    } catch (e) {
+      if (attempt + 1 >= retryMax) throw e;
+      await sleep(computeBackoff(attempt, undefined, null, retryBase));
     }
-    return await res.text() as T;
   }
   throw new Error(`GET ${url} -> failed`);
 }
@@ -168,23 +178,28 @@ async function doPost<T>(url: string, body: string, opts: ReqOptions = {}): Prom
   const retryBase = clampInt(opts.retryBaseMs ?? HTTP_RETRY_BASE_MS, 50, 60000);
 
   for (let attempt = 0; attempt < retryMax; attempt++) {
-    const res = await fetchWithRetry('POST', url, {
-      method: 'POST',
-      headers: opts.headers ?? getDefaultHeaders(),
-      body,
-    }, opts);
-    if (!res.ok) await throwHttpError(res, 'POST', url);
+    try {
+      const res = await fetchWithRetry('POST', url, {
+        method: 'POST',
+        headers: opts.headers ?? getDefaultHeaders(),
+        body,
+      }, opts);
+      if (!res.ok) await throwHttpError(res, 'POST', url);
 
-    const ct = res.headers.get('content-type') || '';
-    if (!ct.toLowerCase().includes('application/json')) {
-      if (attempt + 1 < retryMax && ct.toLowerCase().includes('text/html')) {
-        try { res.body?.cancel(); } catch { null; }
-        await sleep(computeBackoff(attempt, 503, null, retryBase));
-        continue;
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.toLowerCase().includes('application/json')) {
+        if (attempt + 1 < retryMax && ct.toLowerCase().includes('text/html')) {
+          try { res.body?.cancel(); } catch { null; }
+          await sleep(computeBackoff(attempt, 503, null, retryBase));
+          continue;
+        }
+        throw new Error(`POST ${url} -> unexpected_content_type="${ct}"`);
       }
-      throw new Error(`POST ${url} -> unexpected_content_type="${ct}"`);
+      try { return await res.json() as T; } catch { throw new Error(`POST ${url} -> invalid_json`); }
+    } catch (e) {
+      if (attempt + 1 >= retryMax) throw e;
+      await sleep(computeBackoff(attempt, undefined, null, retryBase));
     }
-    try { return await res.json() as T; } catch { throw new Error(`POST ${url} -> invalid_json`); }
   }
   throw new Error(`POST ${url} -> failed`);
 }
