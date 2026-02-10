@@ -9,6 +9,8 @@ test('syncFundDocuments busca detalhes e dividendos somente quando há documento
   const repo = {
     getFundIdAndCnpj: () => ({ id: '1', cnpj: '123' }),
     getFundState: () => ({ last_documents_max_id: 10, last_historical_cotations_at: null }),
+    getFnetSession: () => ({ jsessionId: null, lastValidAt: null }),
+    saveFnetSession: () => null,
     getDividendCount: () => 0,
     upsertDocuments: () => {
       calls.push('upsertDocuments');
@@ -71,6 +73,8 @@ test('syncFundDocuments não busca detalhes/dividendos quando documento não é 
   const repo = {
     getFundIdAndCnpj: () => ({ id: '1', cnpj: '123' }),
     getFundState: () => ({ last_documents_max_id: 11, last_historical_cotations_at: null }),
+    getFnetSession: () => ({ jsessionId: null, lastValidAt: null }),
+    saveFnetSession: () => null,
     getDividendCount: () => 1,
     upsertDocuments: () => {
       calls.push('upsertDocuments');
@@ -109,6 +113,8 @@ test('syncFundDocuments busca detalhes e dividendos na primeira carga (sem last_
   const repo = {
     getFundIdAndCnpj: () => ({ id: '1', cnpj: '123' }),
     getFundState: () => ({ last_documents_max_id: null, last_historical_cotations_at: null }),
+    getFnetSession: () => ({ jsessionId: null, lastValidAt: null }),
+    saveFnetSession: () => null,
     getDividendCount: () => 0,
     upsertDocuments: () => {
       calls.push('upsertDocuments');
@@ -169,6 +175,8 @@ test('syncFundDocuments busca dividendos quando não há dividendos no banco', a
   const repo = {
     getFundIdAndCnpj: () => ({ id: '1', cnpj: '123' }),
     getFundState: () => ({ last_documents_max_id: 11, last_historical_cotations_at: null }),
+    getFnetSession: () => ({ jsessionId: null, lastValidAt: null }),
+    saveFnetSession: () => null,
     getDividendCount: () => 0,
     upsertDocuments: () => {
       calls.push('upsertDocuments');
