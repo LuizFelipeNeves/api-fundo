@@ -1,4 +1,6 @@
-import { getWriteDb } from '../pipeline/db';
+import { getWriteDb } from '../db';
+import { cotation, fundCotationStats } from '../db/schema';
+import { eq, desc } from 'drizzle-orm';
 
 export type CotationStats = {
   fundCode: string;
@@ -75,55 +77,94 @@ export function computeCotationStatsFromPrices(fundCode: string, asOfDateIso: st
 
 export async function getOrComputeCotationStats(fundCode: string): Promise<CotationStats | null> {
   const code = fundCode.toUpperCase();
-  const sql = getWriteDb();
+  const db = getWriteDb();
 
-  const latestRows = await sql<{ maxd: string | null }[]>`
-    SELECT max(date_iso) AS maxd
-    FROM cotation
-    WHERE fund_code = ${code}
-  `;
-  const latestDateIso = String(latestRows[0]?.maxd || '');
+  const latestRows = await db.select({ maxd: cotation.dateIso })
+    .from(cotation)
+    .where(eq(cotation.fundCode, code))
+    .orderBy(desc(cotation.dateIso))
+    .limit(1);
+  const latestRow = latestRows[0];
+
+  const latestDateIso = latestRow?.maxd ?? '';
   if (!latestDateIso) return null;
 
-  const cacheRows = await sql<{ src: string; json: string }[]>`
-    SELECT source_last_date_iso AS src, data_json AS json
-    FROM fund_cotation_stats
-    WHERE fund_code = ${code}
-    LIMIT 1
-  `;
-
+  const cacheRows = await db.select({
+    src: fundCotationStats.dateIso,
+  })
+    .from(fundCotationStats)
+    .where(eq(fundCotationStats.fundCode, code))
+    .limit(1);
   const cacheRow = cacheRows[0];
-  if (cacheRow?.src === latestDateIso && cacheRow.json) {
-    try {
-      return JSON.parse(cacheRow.json) as CotationStats;
-    } catch {
-      // fallthrough
+
+  if (cacheRow?.src === latestDateIso) {
+    // Get full stats from the stored columns
+    const statsRows = await db.select({
+      d7: fundCotationStats.d7,
+      d30: fundCotationStats.d30,
+      d90: fundCotationStats.d90,
+      drawdown: fundCotationStats.drawdown,
+      volatility30: fundCotationStats.volatility30,
+      volatility90: fundCotationStats.volatility90,
+      dateIso: fundCotationStats.dateIso,
+    })
+      .from(fundCotationStats)
+      .where(eq(fundCotationStats.fundCode, code));
+    const statsRow = statsRows[0];
+
+    if (statsRow) {
+      return {
+        fundCode: code,
+        asOfDateIso: statsRow.dateIso ?? latestDateIso,
+        lastPrice: 0, // Not stored, but required by type
+        returns: { d7: statsRow.d7, d30: statsRow.d30, d90: statsRow.d90 },
+        drawdown: { max: statsRow.drawdown },
+        volatility: { d30: statsRow.volatility30, d90: statsRow.volatility90 },
+        samples: { prices: 0, returns30: 0, returns90: 0 },
+        computedAt: new Date().toISOString(),
+      };
     }
   }
 
-  const rows = await sql<{ date_iso: string; price: number }[]>`
-    SELECT date_iso, price
-    FROM cotation
-    WHERE fund_code = ${code}
-    ORDER BY date_iso DESC
-    LIMIT 400
-  `;
+  const rows = await db.select({
+    dateIso: cotation.dateIso,
+    price: cotation.price,
+  })
+    .from(cotation)
+    .where(eq(cotation.fundCode, code))
+    .orderBy(desc(cotation.dateIso))
+    .limit(400);
+
   if (!rows.length) return null;
 
   const ordered = rows.slice().reverse();
-  const prices = ordered.map((r) => r.price);
-  const asOf = ordered[ordered.length - 1]?.date_iso || latestDateIso;
-  const computedAt = new Date().toISOString();
-  const stats = computeCotationStatsFromPrices(code, asOf, prices, computedAt);
+  const prices = ordered.map((r) => r.price ?? 0);
+  const asOf = ordered[ordered.length - 1]?.dateIso ?? latestDateIso;
+  const stats = computeCotationStatsFromPrices(code, asOf, prices, new Date().toISOString());
 
-  await sql`
-    INSERT INTO fund_cotation_stats (fund_code, source_last_date_iso, computed_at, data_json)
-    VALUES (${code}, ${latestDateIso}, ${computedAt}, ${JSON.stringify(stats)})
-    ON CONFLICT (fund_code) DO UPDATE SET
-      source_last_date_iso = EXCLUDED.source_last_date_iso,
-      computed_at = EXCLUDED.computed_at,
-      data_json = EXCLUDED.data_json
-  `;
+  await db.insert(fundCotationStats)
+    .values({
+      fundCode: code,
+      dateIso: latestDateIso,
+      d7: stats.returns.d7,
+      d30: stats.returns.d30,
+      d90: stats.returns.d90,
+      drawdown: stats.drawdown.max,
+      volatility30: stats.volatility.d30,
+      volatility90: stats.volatility.d90,
+    })
+    .onConflictDoUpdate({
+      target: fundCotationStats.fundCode,
+      set: {
+        dateIso: latestDateIso,
+        d7: stats.returns.d7,
+        d30: stats.returns.d30,
+        d90: stats.returns.d90,
+        drawdown: stats.drawdown.max,
+        volatility30: stats.volatility.d30,
+        volatility90: stats.volatility.d90,
+      },
+    });
 
   return stats;
 }

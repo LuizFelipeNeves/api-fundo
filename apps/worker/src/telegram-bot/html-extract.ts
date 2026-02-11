@@ -1,4 +1,4 @@
-import cheerio from 'cheerio';
+import * as cheerio from 'cheerio';
 
 export function extract(html: string): Record<string, string> {
   const $ = cheerio.load(html);

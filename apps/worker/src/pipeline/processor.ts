@@ -1,31 +1,38 @@
 import { getReadModelWriter } from '../projections';
-import { getWriteDb } from './db';
+import { getWriteDb } from '../db';
 import { createWriteSide } from './write-side';
 import type { PersistRequest } from './messages';
+import { dividend, cotation } from '../db/schema';
+import { inArray, sql as drizzleSql } from 'drizzle-orm';
 
-type DividendKey = { fund_code: string; date_iso: string; type: number };
+type DividendItem = { fund_code: string; date_iso: string; payment: string; type: number; value: number; yield: number };
 
-async function enrichDividendYields(
-  sql: ReturnType<typeof getWriteDb>,
-  items: Array<{ fund_code: string; date_iso: string; payment: string; type: number; value: number; yield: number }>
-) {
+async function enrichDividendYields(items: DividendItem[]) {
   if (items.length === 0) return items;
 
   const keys = items.map((i) => ({
-    fund_code: i.fund_code.toUpperCase(),
-    date_iso: i.date_iso,
+    fundCode: i.fund_code.toUpperCase(),
+    dateIso: i.date_iso,
     type: i.type,
   }));
 
-  const existingRows = await sql<{ fund_code: string; date_iso: string; type: number; yield: number }[]>`
-    SELECT fund_code, date_iso, type, yield
-    FROM dividend
-    WHERE (fund_code, date_iso, type) IN ${sql(keys.map((k) => [k.fund_code, k.date_iso, k.type]))}
-  `;
+  const existingRows = await getWriteDb().select({
+    fundCode: dividend.fundCode,
+    dateIso: dividend.dateIso,
+    type: dividend.type,
+    yield: dividend.yield,
+  })
+    .from(dividend)
+    .where(
+      inArray(
+        drizzleSql`(${dividend.fundCode}, ${dividend.dateIso}, ${dividend.type})`,
+        keys.map((k) => [k.fundCode, k.dateIso, k.type] as const)
+      )
+    );
 
   const existingMap = new Map<string, number>();
   for (const row of existingRows) {
-    existingMap.set(`${row.fund_code}:${row.date_iso}:${row.type}`, row.yield);
+    existingMap.set(`${row.fundCode}:${row.dateIso}:${row.type}`, row.yield ?? 0);
   }
 
   const needsPrice = items.filter((i) => {
@@ -36,17 +43,27 @@ async function enrichDividendYields(
 
   let priceMap = new Map<string, number>();
   if (needsPrice.length) {
-    const priceKeys: DividendKey[] = needsPrice.map((i) => ({
-      fund_code: i.fund_code.toUpperCase(),
-      date_iso: i.date_iso,
-      type: i.type,
+    const priceKeys = needsPrice.map((i) => ({
+      fundCode: i.fund_code.toUpperCase(),
+      dateIso: i.date_iso,
     }));
-    const priceRows = await sql<{ fund_code: string; date_iso: string; price: number }[]>`
-      SELECT fund_code, date_iso, price
-      FROM cotation
-      WHERE (fund_code, date_iso) IN ${sql(priceKeys.map((k) => [k.fund_code, k.date_iso]))}
-    `;
-    priceMap = new Map(priceRows.map((r) => [`${r.fund_code}:${r.date_iso}`, r.price]));
+    const priceRows = await getWriteDb().select({
+      fundCode: cotation.fundCode,
+      dateIso: cotation.dateIso,
+      price: cotation.price,
+    })
+      .from(cotation)
+      .where(
+        inArray(
+          drizzleSql`(${cotation.fundCode}, ${cotation.dateIso})`,
+          priceKeys.map((k) => [k.fundCode, k.dateIso] as const)
+        )
+      );
+    for (const r of priceRows) {
+      if (r.price !== null) {
+        priceMap.set(`${r.fundCode}:${r.dateIso}`, r.price);
+      }
+    }
   }
 
   return items.map((item) => {
@@ -68,8 +85,7 @@ async function enrichDividendYields(
 }
 
 export async function processPersistRequest(request: PersistRequest): Promise<void> {
-  const sql = getWriteDb();
-  const writeSide = createWriteSide(sql);
+  const writeSide = createWriteSide();
   const readSide = getReadModelWriter();
 
   switch (request.type) {
@@ -107,7 +123,7 @@ export async function processPersistRequest(request: PersistRequest): Promise<vo
       break;
     }
     case 'dividends': {
-      const enriched = await enrichDividendYields(sql, request.items);
+      const enriched = await enrichDividendYields(request.items);
       await writeSide.upsertDividends(enriched);
       await readSide.upsertDividends(enriched);
       break;

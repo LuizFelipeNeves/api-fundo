@@ -215,6 +215,13 @@ export async function post<T>(url: string, body: string, opts?: ReqOptions): Pro
   return doPost<T>(url, body, opts ?? {});
 }
 
+// Alias para post (usado pelos collectors)
+export const postForm = post;
+
+// Aliases para collectors
+export const getJson = get;
+export const getText = (url: string, opts?: ReqOptions) => fetchText(url, opts);
+
 export async function fetchText(url: string, opts?: ReqOptions): Promise<string> {
   const res = await fetchWithRetry('GET', url, {
     method: 'GET',

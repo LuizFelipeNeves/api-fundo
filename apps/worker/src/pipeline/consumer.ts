@@ -12,7 +12,7 @@ export async function startPipelineConsumers(connection: amqplib.Connection) {
   const collectResultsQueue = String(process.env.COLLECT_RESULTS_QUEUE || 'collector.results').trim() || 'collector.results';
 
   await setupQueue(channel, persistQueue, { dlx: 'pipeline.dlx', dlq: 'pipeline.dlq' });
-  await setupQueue(channel, collectResultsQueue, { dlx: 'pipeline.dlx', dlq: 'pipeline.dlq' });
+  await setupQueue(channel, collectResultsQueue, { dlx: 'collector.dlx', dlq: 'collector.dlq' });
 
   const prefetchRaw = Number.parseInt(process.env.PIPELINE_PREFETCH || '8', 10);
   const prefetch = Number.isFinite(prefetchRaw) && prefetchRaw > 0 ? Math.min(prefetchRaw, 100) : 8;

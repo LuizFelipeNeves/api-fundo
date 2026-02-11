@@ -10,7 +10,6 @@ RUN bun install --production
 
 # Copy the rest of your code
 COPY tsconfig.json ./
-COPY src ./src
 COPY apps ./apps
 COPY database ./database
 

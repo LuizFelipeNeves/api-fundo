@@ -1,33 +1,39 @@
-import postgres from 'postgres';
+import { getWriteDb } from '../db';
+import { fundListRead, fundDetailsRead, indicatorsRead, indicatorsSnapshotRead, cotationsRead, cotationsTodayRead, dividendsRead, documentsRead } from '../db/schema';
 
-type Sql = ReturnType<typeof postgres>;
+export function createReadModelWriter() {
+  const db = getWriteDb();
 
-export function createReadModelWriter(sql: Sql) {
   async function upsertFundList(items: Array<{ code: string; sector?: string | null; p_vp?: number | null; dividend_yield?: number | null; dividend_yield_last_5_years?: number | null; daily_liquidity?: number | null; net_worth?: number | null; type?: string | null }>) {
     if (items.length === 0) return;
-    await sql`
-      INSERT INTO fund_list_read (code, sector, p_vp, dividend_yield, dividend_yield_last_5_years, daily_liquidity, net_worth, type, updated_at)
-      VALUES ${sql(items.map((i) => [
-        i.code.toUpperCase(),
-        i.sector ?? null,
-        i.p_vp ?? null,
-        i.dividend_yield ?? null,
-        i.dividend_yield_last_5_years ?? null,
-        i.daily_liquidity ?? null,
-        i.net_worth ?? null,
-        i.type ?? null,
-        new Date(),
-      ]))}
-      ON CONFLICT (code) DO UPDATE SET
-        sector = EXCLUDED.sector,
-        p_vp = EXCLUDED.p_vp,
-        dividend_yield = EXCLUDED.dividend_yield,
-        dividend_yield_last_5_years = EXCLUDED.dividend_yield_last_5_years,
-        daily_liquidity = EXCLUDED.daily_liquidity,
-        net_worth = EXCLUDED.net_worth,
-        type = EXCLUDED.type,
-        updated_at = EXCLUDED.updated_at
-    `;
+    const now = new Date();
+    for (const item of items) {
+      await db.insert(fundListRead)
+        .values({
+          code: item.code.toUpperCase(),
+          sector: item.sector ?? null,
+          pVp: item.p_vp ?? null,
+          dividendYield: item.dividend_yield ?? null,
+          dividendYieldLast5Years: item.dividend_yield_last_5_years ?? null,
+          dailyLiquidity: item.daily_liquidity ?? null,
+          netWorth: item.net_worth ?? null,
+          type: item.type ?? null,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: fundListRead.code,
+          set: {
+            sector: item.sector ?? null,
+            pVp: item.p_vp ?? null,
+            dividendYield: item.dividend_yield ?? null,
+            dividendYieldLast5Years: item.dividend_yield_last_5_years ?? null,
+            dailyLiquidity: item.daily_liquidity ?? null,
+            netWorth: item.net_worth ?? null,
+            type: item.type ?? null,
+            updatedAt: now,
+          },
+        });
+    }
   }
 
   async function upsertFundDetails(item: {
@@ -35,7 +41,7 @@ export function createReadModelWriter(sql: Sql) {
     id?: string | null;
     razao_social?: string | null;
     cnpj?: string | null;
-    publico_alvo?: string | null;
+    público_alvo?: string | null;
     mandato?: string | null;
     segmento?: string | null;
     tipo_fundo?: string | null;
@@ -50,136 +56,159 @@ export function createReadModelWriter(sql: Sql) {
     valor_patrimonial?: number | null;
     ultimo_rendimento?: number | null;
   }) {
-    await sql`
-      INSERT INTO fund_details_read (
-        code, id, razao_social, cnpj, publico_alvo, mandato, segmento, tipo_fundo, prazo_duracao, tipo_gestao,
-        taxa_adminstracao, daily_liquidity, vacancia, numero_cotistas, cotas_emitidas, valor_patrimonial_cota,
-        valor_patrimonial, ultimo_rendimento, updated_at
-      ) VALUES (
-        ${item.code.toUpperCase()},
-        ${item.id ?? null},
-        ${item.razao_social ?? null},
-        ${item.cnpj ?? null},
-        ${item.publico_alvo ?? null},
-        ${item.mandato ?? null},
-        ${item.segmento ?? null},
-        ${item.tipo_fundo ?? null},
-        ${item.prazo_duracao ?? null},
-        ${item.tipo_gestao ?? null},
-        ${item.taxa_adminstracao ?? null},
-        ${item.daily_liquidity ?? null},
-        ${item.vacancia ?? null},
-        ${item.numero_cotistas ?? null},
-        ${item.cotas_emitidas ?? null},
-        ${item.valor_patrimonial_cota ?? null},
-        ${item.valor_patrimonial ?? null},
-        ${item.ultimo_rendimento ?? null},
-        ${new Date()}
-      )
-      ON CONFLICT (code) DO UPDATE SET
-        id = EXCLUDED.id,
-        razao_social = EXCLUDED.razao_social,
-        cnpj = EXCLUDED.cnpj,
-        publico_alvo = EXCLUDED.publico_alvo,
-        mandato = EXCLUDED.mandato,
-        segmento = EXCLUDED.segmento,
-        tipo_fundo = EXCLUDED.tipo_fundo,
-        prazo_duracao = EXCLUDED.prazo_duracao,
-        tipo_gestao = EXCLUDED.tipo_gestao,
-        taxa_adminstracao = EXCLUDED.taxa_adminstracao,
-        daily_liquidity = EXCLUDED.daily_liquidity,
-        vacancia = EXCLUDED.vacancia,
-        numero_cotistas = EXCLUDED.numero_cotistas,
-        cotas_emitidas = EXCLUDED.cotas_emitidas,
-        valor_patrimonial_cota = EXCLUDED.valor_patrimonial_cota,
-        valor_patrimonial = EXCLUDED.valor_patrimonial,
-        ultimo_rendimento = EXCLUDED.ultimo_rendimento,
-        updated_at = EXCLUDED.updated_at
-    `;
+    const now = new Date();
+    await db.insert(fundDetailsRead)
+      .values({
+        code: item.code.toUpperCase(),
+        id: item.id ?? null,
+        razaoSocial: item.razao_social ?? null,
+        cnpj: item.cnpj ?? null,
+        publicAlvo: item.público_alvo ?? null,
+        mandato: item.mandato ?? null,
+        segmento: item.segmento ?? null,
+        tipoFundo: item.tipo_fundo ?? null,
+        prazoDuracao: item.prazo_duracao ?? null,
+        tipoGestao: item.tipo_gestao ?? null,
+        taxaAdministracao: item.taxa_adminstracao ?? null,
+        dailyLiquidity: item.daily_liquidity ?? null,
+        vacancia: item.vacancia ?? null,
+        numeroCotistas: item.numero_cotistas ?? null,
+        cotasEmitidas: item.cotas_emitidas != null ? BigInt(item.cotas_emitidas) : null,
+        valorPatrimonialCota: item.valor_patrimonial_cota ?? null,
+        valorPatrimonial: item.valor_patrimonial ?? null,
+        ultimoRendimento: item.ultimo_rendimento ?? null,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: fundDetailsRead.code,
+        set: {
+          id: item.id ?? null,
+          razaoSocial: item.razao_social ?? null,
+          cnpj: item.cnpj ?? null,
+          publicAlvo: item.público_alvo ?? null,
+          mandato: item.mandato ?? null,
+          segmento: item.segmento ?? null,
+          tipoFundo: item.tipo_fundo ?? null,
+          prazoDuracao: item.prazo_duracao ?? null,
+          tipoGestao: item.tipo_gestao ?? null,
+          taxaAdministracao: item.taxa_adminstracao ?? null,
+          dailyLiquidity: item.daily_liquidity ?? null,
+          vacancia: item.vacancia ?? null,
+          numeroCotistas: item.numero_cotistas ?? null,
+          cotasEmitidas: item.cotas_emitidas != null ? BigInt(item.cotas_emitidas) : null,
+          valorPatrimonialCota: item.valor_patrimonial_cota ?? null,
+          valorPatrimonial: item.valor_patrimonial ?? null,
+          ultimoRendimento: item.ultimo_rendimento ?? null,
+          updatedAt: now,
+        },
+      });
   }
 
   async function upsertIndicatorsLatest(fundCode: string, fetchedAt: Date, dataJson: unknown) {
-    await sql`
-      INSERT INTO indicators_read (fund_code, fetched_at, data_json)
-      VALUES (${fundCode.toUpperCase()}, ${fetchedAt}, ${sql.json(dataJson)})
-      ON CONFLICT (fund_code) DO UPDATE SET
-        fetched_at = EXCLUDED.fetched_at,
-        data_json = EXCLUDED.data_json
-    `;
+    await db.insert(indicatorsRead)
+      .values({
+        fundCode: fundCode.toUpperCase(),
+        fetchedAt,
+        dataJson: dataJson as any,
+      })
+      .onConflictDoUpdate({
+        target: indicatorsRead.fundCode,
+        set: {
+          fetchedAt,
+          dataJson: dataJson as any,
+        },
+      });
   }
 
   async function insertIndicatorsSnapshot(fundCode: string, fetchedAt: Date, dataJson: unknown) {
-    await sql`
-      INSERT INTO indicators_snapshot_read (fund_code, fetched_at, data_json)
-      VALUES (${fundCode.toUpperCase()}, ${fetchedAt}, ${sql.json(dataJson)})
-      ON CONFLICT (fund_code, fetched_at) DO NOTHING
-    `;
+    await db.insert(indicatorsSnapshotRead)
+      .values({
+        fundCode: fundCode.toUpperCase(),
+        fetchedAt,
+        dataJson: dataJson as any,
+      })
+      .onConflictDoNothing();
   }
 
   async function upsertCotations(items: Array<{ fund_code: string; date_iso: string; price: number }>) {
     if (items.length === 0) return;
-    await sql`
-      INSERT INTO cotations_read (fund_code, date_iso, price)
-      VALUES ${sql(items.map((i) => [i.fund_code.toUpperCase(), i.date_iso, i.price]))}
-      ON CONFLICT (fund_code, date_iso) DO UPDATE SET
-        price = EXCLUDED.price
-    `;
+    for (const item of items) {
+      await db.insert(cotationsRead)
+        .values({
+          fundCode: item.fund_code.toUpperCase(),
+          dateIso: item.date_iso,
+          price: item.price,
+        })
+        .onConflictDoUpdate({
+          target: [cotationsRead.fundCode, cotationsRead.dateIso],
+          set: { price: item.price },
+        });
+    }
   }
 
   async function insertCotationsToday(fundCode: string, dateIso: string, fetchedAt: Date, dataJson: unknown) {
-    await sql`
-      INSERT INTO cotations_today_read (fund_code, date_iso, fetched_at, data_json)
-      VALUES (${fundCode.toUpperCase()}, ${dateIso}, ${fetchedAt}, ${sql.json(dataJson)})
-    `;
+    await db.insert(cotationsTodayRead)
+      .values({
+        fundCode: fundCode.toUpperCase(),
+        dateIso,
+        fetchedAt,
+        dataJson: dataJson as any,
+      });
   }
 
   async function upsertDividends(items: Array<{ fund_code: string; date_iso: string; payment: string; type: number; value: number; yield: number }>) {
     if (items.length === 0) return;
-    await sql`
-      INSERT INTO dividends_read (fund_code, date_iso, payment, type, value, yield)
-      VALUES ${sql(items.map((i) => [
-        i.fund_code.toUpperCase(),
-        i.date_iso,
-        i.payment,
-        i.type,
-        i.value,
-        i.yield,
-      ]))}
-      ON CONFLICT (fund_code, date_iso, type) DO UPDATE SET
-        payment = EXCLUDED.payment,
-        value = EXCLUDED.value,
-        yield = EXCLUDED.yield
-    `;
+    for (const item of items) {
+      await db.insert(dividendsRead)
+        .values({
+          fundCode: item.fund_code.toUpperCase(),
+          dateIso: item.date_iso,
+          payment: item.payment,
+          type: item.type,
+          value: item.value,
+          yield: item.yield ?? null,
+        })
+        .onConflictDoUpdate({
+          target: [dividendsRead.fundCode, dividendsRead.dateIso, dividendsRead.type],
+          set: {
+            payment: item.payment,
+            value: item.value,
+            yield: item.yield ?? null,
+          },
+        });
+    }
   }
 
   async function upsertDocuments(items: Array<{ fund_code: string; document_id: number; title: string; category: string; type: string; date: string; date_upload_iso: string; dateUpload: string; url: string; status: string; version: number }>) {
     if (items.length === 0) return;
-    await sql`
-      INSERT INTO documents_read (fund_code, document_id, title, category, type, date, date_upload_iso, "dateUpload", url, status, version)
-      VALUES ${sql(items.map((i) => [
-        i.fund_code.toUpperCase(),
-        i.document_id,
-        i.title,
-        i.category,
-        i.type,
-        i.date,
-        i.date_upload_iso,
-        i.dateUpload,
-        i.url,
-        i.status,
-        i.version,
-      ]))}
-      ON CONFLICT (fund_code, document_id) DO UPDATE SET
-        title = EXCLUDED.title,
-        category = EXCLUDED.category,
-        type = EXCLUDED.type,
-        date = EXCLUDED.date,
-        date_upload_iso = EXCLUDED.date_upload_iso,
-        "dateUpload" = EXCLUDED."dateUpload",
-        url = EXCLUDED.url,
-        status = EXCLUDED.status,
-        version = EXCLUDED.version
-    `;
+    for (const item of items) {
+      await db.insert(documentsRead)
+        .values({
+          fundCode: item.fund_code.toUpperCase(),
+          id: item.document_id,
+          title: item.title,
+          category: item.category,
+          type: item.type,
+          date: item.date,
+          dateUpload: item.date_upload_iso,
+          url: item.url,
+          status: item.status,
+          version: item.version,
+        })
+        .onConflictDoUpdate({
+          target: [documentsRead.fundCode, documentsRead.id],
+          set: {
+            title: item.title,
+            category: item.category,
+            type: item.type,
+            date: item.date,
+            dateUpload: item.date_upload_iso,
+            url: item.url,
+            status: item.status,
+            version: item.version,
+          },
+        });
+    }
   }
 
   return {
