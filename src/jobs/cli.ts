@@ -115,7 +115,7 @@ async function main() {
     const before = Number(beforeRow?.c ?? 0);
     const deleted = db.prepare('delete from cotations_today_snapshot').run().changes;
     const now = nowIso();
-    db.prepare('update fund_state set last_cotations_today_at = null, last_cotations_today_hash = null, updated_at = ?').run(now);
+    db.prepare('update fund_state set last_cotations_today_at = null, updated_at = ?').run(now);
     const afterRow = db.prepare('select count(*) as c from cotations_today_snapshot').get() as { c?: number } | undefined;
     const after = Number(afterRow?.c ?? 0);
     const fundsRow = db.prepare('select count(*) as c from fund_master').get() as { c?: number } | undefined;

@@ -103,7 +103,6 @@ function migrate(db: Database.Database) {
       last_details_sync_at TEXT,
       last_indicators_hash TEXT,
       last_indicators_at TEXT,
-      last_cotations_today_hash TEXT,
       last_cotations_today_at TEXT,
       last_historical_cotations_at TEXT,
       created_at TEXT NOT NULL,
@@ -124,7 +123,6 @@ function migrate(db: Database.Database) {
       fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
       date_iso TEXT NOT NULL,
       fetched_at TEXT NOT NULL,
-      data_hash TEXT NOT NULL,
       data_json TEXT NOT NULL,
       UNIQUE(fund_code, date_iso)
     );
@@ -132,7 +130,6 @@ function migrate(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS cotation (
       fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
       date_iso TEXT NOT NULL,
-      date TEXT NOT NULL,
       price REAL NOT NULL,
       PRIMARY KEY (fund_code, date_iso)
     );
@@ -141,9 +138,8 @@ function migrate(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS dividend (
       fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
       date_iso TEXT NOT NULL,
-      date TEXT NOT NULL,
       payment TEXT NOT NULL,
-      type TEXT NOT NULL,
+      type INTEGER NOT NULL,
       value REAL NOT NULL,
       yield REAL NOT NULL,
       PRIMARY KEY (fund_code, date_iso, type)
@@ -217,6 +213,13 @@ export function toDateIsoFromBr(dateStr: string): string {
   if (!day || !month || !year) return '';
   const iso = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0)).toISOString().slice(0, 10);
   return iso;
+}
+
+export function toDateBrFromIso(dateIso: string): string {
+  const str = String(dateIso || '').trim();
+  const match = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return '';
+  return `${match[3]}/${match[2]}/${match[1]}`;
 }
 
 /* ======================================================

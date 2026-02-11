@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import { hasDividend, listDividendKeys, listFundCodesForCotationsTodayBatch, listFundCodesForDetailsSyncBatch, listFundCodesForDocumentsBatch, listFundCodesForIndicatorsBatch, upsertCotationsTodaySnapshot, upsertIndicatorsSnapshot } from './repo';
-import { sha256 } from './index';
 
 test('listFundCodesForCotationsTodayBatch ordena por last_cotations_today_at asc e limita', () => {
   const db = new Database(':memory:');
@@ -114,9 +113,8 @@ test('hasDividend retorna true quando existe dividend para o fund/date/type', ()
     CREATE TABLE dividend (
       fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
       date_iso TEXT NOT NULL,
-      date TEXT NOT NULL,
       payment TEXT NOT NULL,
-      type TEXT NOT NULL,
+      type INTEGER NOT NULL,
       value REAL NOT NULL,
       yield REAL NOT NULL,
       PRIMARY KEY (fund_code, date_iso, type)
@@ -124,12 +122,11 @@ test('hasDividend retorna true quando existe dividend para o fund/date/type', ()
   `);
   const now = new Date().toISOString();
   db.prepare('insert into fund_master(code, created_at, updated_at) values (?, ?, ?)').run('ABCD11', now, now);
-  db.prepare('insert into dividend(fund_code, date_iso, date, payment, type, value, yield) values (?, ?, ?, ?, ?, ?, ?)').run(
+  db.prepare('insert into dividend(fund_code, date_iso, payment, type, value, yield) values (?, ?, ?, ?, ?, ?)').run(
     'ABCD11',
     '2026-01-01',
-    '01/01/2026',
-    '01/01/2026',
-    'Dividendos',
+    '2026-01-01',
+    2,
     1,
     1
   );
@@ -147,9 +144,8 @@ test('listDividendKeys lista date_iso e type ordenado por date_iso desc', () => 
     CREATE TABLE dividend (
       fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
       date_iso TEXT NOT NULL,
-      date TEXT NOT NULL,
       payment TEXT NOT NULL,
-      type TEXT NOT NULL,
+      type INTEGER NOT NULL,
       value REAL NOT NULL,
       yield REAL NOT NULL,
       PRIMARY KEY (fund_code, date_iso, type)
@@ -157,21 +153,19 @@ test('listDividendKeys lista date_iso e type ordenado por date_iso desc', () => 
   `);
   const now = new Date().toISOString();
   db.prepare('insert into fund_master(code, created_at, updated_at) values (?, ?, ?)').run('ABCD11', now, now);
-  db.prepare('insert into dividend(fund_code, date_iso, date, payment, type, value, yield) values (?, ?, ?, ?, ?, ?, ?)').run(
+  db.prepare('insert into dividend(fund_code, date_iso, payment, type, value, yield) values (?, ?, ?, ?, ?, ?)').run(
     'ABCD11',
     '2026-01-01',
-    '01/01/2026',
-    '01/01/2026',
-    'Dividendos',
+    '2026-01-01',
+    2,
     1,
     1
   );
-  db.prepare('insert into dividend(fund_code, date_iso, date, payment, type, value, yield) values (?, ?, ?, ?, ?, ?, ?)').run(
+  db.prepare('insert into dividend(fund_code, date_iso, payment, type, value, yield) values (?, ?, ?, ?, ?, ?)').run(
     'ABCD11',
     '2026-02-01',
-    '01/02/2026',
-    '01/02/2026',
-    'Dividendos',
+    '2026-02-01',
+    2,
     1,
     1
   );
@@ -194,7 +188,6 @@ test('upsertCotationsTodaySnapshot atualiza snapshot do mesmo dia', () => {
       last_details_sync_at TEXT,
       last_indicators_hash TEXT,
       last_indicators_at TEXT,
-      last_cotations_today_hash TEXT,
       last_cotations_today_at TEXT,
       last_historical_cotations_at TEXT,
       created_at TEXT NOT NULL,
@@ -205,7 +198,6 @@ test('upsertCotationsTodaySnapshot atualiza snapshot do mesmo dia', () => {
       fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
       date_iso TEXT NOT NULL,
       fetched_at TEXT NOT NULL,
-      data_hash TEXT NOT NULL,
       data_json TEXT NOT NULL,
       UNIQUE(fund_code, date_iso)
     );
@@ -225,24 +217,16 @@ test('upsertCotationsTodaySnapshot atualiza snapshot do mesmo dia', () => {
   assert.equal(count2.c, 1);
 
   const row = db
-    .prepare('select fund_code, date_iso, fetched_at, data_hash, data_json from cotations_today_snapshot')
+    .prepare('select fund_code, date_iso, fetched_at, data_json from cotations_today_snapshot')
     .get() as any;
   assert.equal(row.fund_code, 'ABCD11');
   assert.equal(row.date_iso, '2026-01-01');
   assert.equal(row.fetched_at, later);
-  assert.equal(
-    row.data_hash,
-    sha256(JSON.stringify([{ price: 1, hour: '10:00' }, { price: 2, hour: '12:00' }]))
-  );
   assert.deepEqual(JSON.parse(row.data_json), [{ price: 1, hour: '10:00' }, { price: 2, hour: '12:00' }]);
 
   const state = db
-    .prepare('select last_cotations_today_hash as h, last_cotations_today_at as at from fund_state where fund_code=?')
+    .prepare('select last_cotations_today_at as at from fund_state where fund_code=?')
     .get('ABCD11') as any;
-  assert.equal(
-    state.h,
-    sha256(JSON.stringify([{ price: 1, hour: '10:00' }, { price: 2, hour: '12:00' }]))
-  );
   assert.equal(state.at, later);
 });
 
@@ -258,7 +242,6 @@ test('upsertCotationsTodaySnapshot salva ordenado e sem duplicar por hora', () =
       last_details_sync_at TEXT,
       last_indicators_hash TEXT,
       last_indicators_at TEXT,
-      last_cotations_today_hash TEXT,
       last_cotations_today_at TEXT,
       last_historical_cotations_at TEXT,
       created_at TEXT NOT NULL,
@@ -269,7 +252,6 @@ test('upsertCotationsTodaySnapshot salva ordenado e sem duplicar por hora', () =
       fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
       date_iso TEXT NOT NULL,
       fetched_at TEXT NOT NULL,
-      data_hash TEXT NOT NULL,
       data_json TEXT NOT NULL,
       UNIQUE(fund_code, date_iso)
     );
@@ -303,7 +285,6 @@ test('upsertIndicatorsSnapshot mantém um registro por fundo', () => {
       last_details_sync_at TEXT,
       last_indicators_hash TEXT,
       last_indicators_at TEXT,
-      last_cotations_today_hash TEXT,
       last_cotations_today_at TEXT,
       last_historical_cotations_at TEXT,
       created_at TEXT NOT NULL,

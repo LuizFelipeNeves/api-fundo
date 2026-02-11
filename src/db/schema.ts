@@ -12,17 +12,9 @@ const fundCodeRef = (t: any) =>
     .notNull()
     .references(() => fundMaster.code, { onDelete: 'cascade' });
 
-// Snapshot common fields
-const snapshotFields = {
-  fetched_at: text('fetched_at').notNull(),
-  data_hash: text('data_hash').notNull(),
-  data_json: text('data_json').notNull(),
-};
-
 // Date fields common to cotation/dividend
-const dateFields = {
+const dateIsoField = {
   date_iso: text('date_iso').notNull(),
-  date: text('date').notNull(),
 };
 
 export const fundMaster = sqliteTable('fund_master', {
@@ -64,7 +56,6 @@ export const fundState = sqliteTable('fund_state', {
   last_details_sync_at: text('last_details_sync_at'),
   last_indicators_hash: text('last_indicators_hash'),
   last_indicators_at: text('last_indicators_at'),
-  last_cotations_today_hash: text('last_cotations_today_hash'),
   last_cotations_today_at: text('last_cotations_today_at'),
   last_historical_cotations_at: text('last_historical_cotations_at'),
   ...timestamps,
@@ -90,7 +81,8 @@ export const cotationsTodaySnapshot = sqliteTable(
     id: integer('id').primaryKey({ autoIncrement: true }),
     fund_code: fundCodeRef({} as any),
     date_iso: text('date_iso').notNull(),
-    ...snapshotFields,
+    fetched_at: text('fetched_at').notNull(),
+    data_json: text('data_json').notNull(),
   },
   (t: any) => ({
     uniq: uniqueIndex('cotations_today_snapshot_fund_date').on(t.fund_code, t.date_iso),
@@ -101,7 +93,7 @@ export const cotation = sqliteTable(
   'cotation',
   {
     fund_code: fundCodeRef({} as any),
-    ...dateFields,
+    ...dateIsoField,
     price: real('price').notNull(),
   },
   (t: any) => ({
@@ -114,9 +106,9 @@ export const dividend = sqliteTable(
   'dividend',
   {
     fund_code: fundCodeRef({} as any),
-    ...dateFields,
+    ...dateIsoField,
     payment: text('payment').notNull(),
-    type: text('type', { enum: ['Dividendos', 'Amortização'] }).notNull(),
+    type: integer('type').notNull(),
     value: real('value').notNull(),
     yield: real('yield').notNull(),
   },

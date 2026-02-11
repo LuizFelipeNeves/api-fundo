@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { nowIso, sha256 } from './index';
+import { nowIso, toDateBrFromIso } from './index';
 import type { FIIResponse, FIIDetails } from '../types';
 import type { NormalizedIndicators } from '../parsers/indicators';
 import type { CotationsTodayData } from '../parsers/today';
@@ -8,6 +8,7 @@ import type { DocumentData } from '../parsers/documents';
 import type { DividendData } from '../parsers/dividends';
 import type { NormalizedCotations } from '../parsers/cotations';
 import { toDateIsoFromBr } from './index';
+import { dividendTypeFromCode, dividendTypeToCode, type DividendType } from './dividend-type';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { and, asc, desc, eq, gt, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { cotation, cotationsTodaySnapshot, dividend, document, fundMaster, fundState, indicatorsSnapshot } from './schema';
@@ -283,31 +284,32 @@ export function getDividendCount(db: Database.Database, fundCode: string): numbe
   return Number(row?.c ?? 0);
 }
 
-export function hasDividend(db: Database.Database, fundCode: string, dateIso: string, type: 'Dividendos' | 'Amortização'): boolean {
+export function hasDividend(db: Database.Database, fundCode: string, dateIso: string, type: DividendType): boolean {
   const fundCodeUpper = fundCode.toUpperCase();
   const safeDateIso = String(dateIso || '').trim();
   if (!safeDateIso) return false;
+  const typeCode = dividendTypeToCode(type);
   const row = db
     .prepare('select 1 as ok from dividend where fund_code = ? and date_iso = ? and type = ? limit 1')
-    .get(fundCodeUpper, safeDateIso, type) as { ok?: number } | undefined;
+    .get(fundCodeUpper, safeDateIso, typeCode) as { ok?: number } | undefined;
   return Boolean(row?.ok);
 }
 
-export function listDividendKeys(db: Database.Database, fundCode: string, limit?: number): Array<{ date_iso: string; type: 'Dividendos' | 'Amortização' }> {
+export function listDividendKeys(db: Database.Database, fundCode: string, limit?: number): Array<{ date_iso: string; type: DividendType }> {
   const safeLimit = Number.isFinite(limit) && (limit as number) > 0 ? Math.min(Math.floor(limit as number), 5000) : 200;
   const fundCodeUpper = fundCode.toUpperCase();
   const rows = db
     .prepare('select date_iso, type from dividend where fund_code = ? order by date_iso desc limit ?')
-    .all(fundCodeUpper, safeLimit) as Array<{ date_iso?: string; type?: string }>;
+    .all(fundCodeUpper, safeLimit) as Array<{ date_iso?: string; type?: number }>;
 
   return rows
     .map((r) => {
       const date_iso = String(r.date_iso ?? '').trim();
-      const type = r.type === 'Dividendos' || r.type === 'Amortização' ? r.type : null;
+      const type = typeof r.type === 'number' ? dividendTypeFromCode(r.type) : null;
       if (!date_iso || !type) return null;
       return { date_iso, type };
     })
-    .filter((v): v is { date_iso: string; type: 'Dividendos' | 'Amortização' } => Boolean(v));
+    .filter((v): v is { date_iso: string; type: DividendType } => Boolean(v));
 }
 
 export function getDividendsTotalCount(db: Database.Database): number {
@@ -513,14 +515,14 @@ export function getLatestIndicatorsSnapshots(
   return rows.map((r) => ({ fetched_at: r.fetched_at, data: JSON.parse(r.data_json) as NormalizedIndicators }));
 }
 
-export function upsertCotationsTodaySnapshot(db: Database.Database, fundCode: string, fetchedAt: string, dataHash: string, data: CotationsTodayData) {
+export function upsertCotationsTodaySnapshot(db: Database.Database, fundCode: string, fetchedAt: string, _dataHash: string, data: CotationsTodayData) {
   const orm = getOrm(db);
   const fundCodeUpper = fundCode.toUpperCase();
   const dateIso = String(fetchedAt || '').slice(0, 10);
   const incoming = canonicalizeCotationsToday(data);
 
   const existing = orm
-    .select({ data_hash: cotationsTodaySnapshot.data_hash, data_json: cotationsTodaySnapshot.data_json })
+    .select({ data_json: cotationsTodaySnapshot.data_json })
     .from(cotationsTodaySnapshot)
     .where(and(eq(cotationsTodaySnapshot.fund_code, fundCodeUpper), eq(cotationsTodaySnapshot.date_iso, dateIso)))
     .get();
@@ -541,17 +543,22 @@ export function upsertCotationsTodaySnapshot(db: Database.Database, fundCode: st
     existingByHour.set(item.hour, item);
   }
 
-  let hasNew = false;
+  let changed = false;
   for (const item of incoming) {
-    if (!existingByHour.has(item.hour)) {
+    const prev = existingByHour.get(item.hour);
+    if (!prev) {
       existingByHour.set(item.hour, item);
-      hasNew = true;
+      changed = true;
+      continue;
+    }
+    if (prev.price !== item.price) {
+      existingByHour.set(item.hour, item);
+      changed = true;
     }
   }
 
-  const nextItems = hasNew ? canonicalizeCotationsToday(Array.from(existingByHour.values())) : existingItems;
-  const nextJson = existing ? (hasNew ? JSON.stringify(nextItems) : existing.data_json) : JSON.stringify(nextItems);
-  const nextHash = existing ? (hasNew ? sha256(nextJson) : existing.data_hash) : sha256(nextJson);
+  const nextItems = changed ? canonicalizeCotationsToday(Array.from(existingByHour.values())) : existingItems;
+  const nextJson = existing ? (changed ? JSON.stringify(nextItems) : existing.data_json) : JSON.stringify(nextItems);
 
   orm
     .insert(cotationsTodaySnapshot)
@@ -559,12 +566,11 @@ export function upsertCotationsTodaySnapshot(db: Database.Database, fundCode: st
       fund_code: fundCodeUpper,
       date_iso: dateIso,
       fetched_at: fetchedAt,
-      data_hash: nextHash,
       data_json: nextJson,
     })
     .onConflictDoUpdate({
       target: [cotationsTodaySnapshot.fund_code, cotationsTodaySnapshot.date_iso],
-      set: { fetched_at: fetchedAt, data_hash: nextHash, data_json: nextJson },
+      set: { fetched_at: fetchedAt, data_json: nextJson },
     })
     .run();
 
@@ -583,18 +589,7 @@ export function upsertCotationsTodaySnapshot(db: Database.Database, fundCode: st
     .where(eq(fundState.fund_code, fundCodeUpper))
     .run();
 
-  if (hasNew || !existing) {
-    orm
-      .update(fundState)
-      .set({
-        last_cotations_today_hash: nextHash,
-        updated_at: fetchedAt,
-      })
-      .where(eq(fundState.fund_code, fundCodeUpper))
-      .run();
-  }
-
-  return hasNew || !existing;
+  return changed || !existing;
 }
 
 export function getLatestCotationsToday(db: Database.Database, fundCode: string): CotationsTodayData | null {
@@ -616,7 +611,7 @@ export function upsertCotationBrl(
   db: Database.Database,
   fundCode: string,
   dateIso: string,
-  dateBr: string,
+  _dateBr: string,
   price: number
 ): number {
   const orm = getOrm(db);
@@ -626,12 +621,11 @@ export function upsertCotationBrl(
     .values({
       fund_code: fundCodeUpper,
       date_iso: dateIso,
-      date: dateBr,
       price,
     })
     .onConflictDoUpdate({
       target: [cotation.fund_code, cotation.date_iso],
-      set: { price, date: dateBr },
+      set: { price },
     })
     .run().changes;
 }
@@ -656,7 +650,6 @@ export function upsertCotationsHistoricalBrl(db: Database.Database, fundCode: st
   const cotationValues = validItems.map((item) => ({
     fund_code: fundCodeUpper,
     date_iso: item.dateIso,
-    date: item.date,
     price: item.price,
   }));
 
@@ -668,7 +661,6 @@ export function upsertCotationsHistoricalBrl(db: Database.Database, fundCode: st
       target: [cotation.fund_code, cotation.date_iso],
       set: {
         price: sql`excluded.price`,
-        date: sql`excluded.date`,
       },
     })
     .run();
@@ -683,7 +675,7 @@ export function getCotations(db: Database.Database, fundCode: string, days: numb
   const limit = Number.isFinite(days) && days > 0 ? Math.min(days, 5000) : 1825;
   const orm = getOrm(db);
   const rows = orm
-    .select({ date: cotation.date, price: cotation.price })
+    .select({ date_iso: cotation.date_iso, price: cotation.price })
     .from(cotation)
     .where(eq(cotation.fund_code, fundCode.toUpperCase()))
     .orderBy(desc(cotation.date_iso))
@@ -696,7 +688,7 @@ export function getCotations(db: Database.Database, fundCode: string, days: numb
     real: rows
       .slice()
       .reverse()
-      .map((r) => ({ date: r.date, price: r.price })),
+      .map((r) => ({ date: toDateBrFromIso(r.date_iso), price: r.price })),
     dolar: [],
     euro: [],
   };
@@ -841,15 +833,20 @@ export function upsertDividends(db: Database.Database, fundCode: string, dividen
 
   if (validDividends.length === 0) return 0;
 
-  const dividendValues = validDividends.map((d) => ({
-    fund_code: fundCodeUpper,
-    date_iso: d.dateIso,
-    date: d.date,
-    payment: d.payment,
-    type: d.type,
-    value: d.value,
-    yield: d.yield,
-  }));
+  const dividendValues = validDividends
+    .map((d) => {
+      const paymentIso = toDateIsoFromBr(d.payment);
+      if (!paymentIso) return null;
+      return {
+        fund_code: fundCodeUpper,
+        date_iso: d.dateIso,
+        payment: paymentIso,
+        type: dividendTypeToCode(d.type),
+        value: d.value,
+        yield: d.yield,
+      };
+    })
+    .filter((v): v is NonNullable<typeof v> => v !== null);
 
   // Batch insert com upsert
   const result = orm
@@ -858,7 +855,6 @@ export function upsertDividends(db: Database.Database, fundCode: string, dividen
     .onConflictDoUpdate({
       target: [dividend.fund_code, dividend.date_iso, dividend.type],
       set: {
-        date: sql`excluded.date`,
         payment: sql`excluded.payment`,
         value: sql`excluded.value`,
         yield: sql`excluded.yield`,
@@ -873,7 +869,7 @@ export function getDividends(db: Database.Database, fundCode: string): DividendD
   const orm = getOrm(db);
   const rows = orm
     .select({
-      date: dividend.date,
+      date_iso: dividend.date_iso,
       payment: dividend.payment,
       type: dividend.type,
       value: dividend.value,
@@ -885,11 +881,17 @@ export function getDividends(db: Database.Database, fundCode: string): DividendD
     .all();
 
   if (rows.length === 0) return null;
-  return rows.map((r) => ({
-    value: r.value,
-    yield: r.yield,
-    date: r.date,
-    payment: r.payment,
-    type: r.type,
-  }));
+  return rows
+    .map((r) => {
+      const type = dividendTypeFromCode(r.type);
+      if (!type) return null;
+      return {
+        value: r.value,
+        yield: r.yield,
+        date: toDateBrFromIso(r.date_iso),
+        payment: toDateBrFromIso(r.payment),
+        type,
+      };
+    })
+    .filter((v): v is DividendData => v !== null);
 }
