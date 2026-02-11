@@ -196,12 +196,6 @@ function migrate(db: Database.Database) {
       computed_at TEXT NOT NULL,
       data_json TEXT NOT NULL
     );
-
-    CREATE TABLE IF NOT EXISTS fnet_session (
-      cnpj TEXT PRIMARY KEY,
-      jsession_id TEXT NOT NULL,
-      last_valid_at TEXT NOT NULL
-    );
   `);
 }
 

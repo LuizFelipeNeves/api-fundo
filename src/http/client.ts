@@ -62,13 +62,16 @@ const HTTP_RETRY_MAX = clampInt(parsePositiveInt(process.env.HTTP_RETRY_MAX, HTT
 const HTTP_RETRY_BASE_MS = clampInt(parsePositiveInt(process.env.HTTP_RETRY_BASE_MS, HTTP_RETRY_BASE_MS_DEFAULT), 50, 60000);
 
 function isRetryableStatus(status: number): boolean {
-  return status === 403 || status === 429 || status >= 500;
+  return status === 403 || status === 429 || status === 520 || status >= 500;
 }
 
 function computeBackoff(attempt: number, status: number | undefined, retryAfter: number | null, baseMs: number): number {
   if (retryAfter !== null) return clampInt(retryAfter, 0, 300000);
-  const base = status === 429 || status === 403 ? baseMs * 2 : baseMs;
-  return clampInt(base * Math.pow(2, Math.min(6, attempt)) + Math.floor(Math.random() * 250), 0, 300000);
+  const isThrottle = status === 429 || status === 403;
+  const isTempError = status === 520 || status === 503;
+  // 403/429: 2x, 520/503: 2.5x
+  const base = isThrottle ? baseMs * 2 : isTempError ? Math.floor(baseMs * 2.5) : baseMs;
+  return clampInt(base * Math.pow(2, Math.min(4, attempt)) + Math.floor(Math.random() * 200), 0, 30000);
 }
 
 function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
@@ -224,7 +227,7 @@ export async function fetchText(url: string, opts?: ReqOptions): Promise<string>
 }
 
 /* ======================================================
-   🔥 FNET FETCH (sem cache de sessão)
+   🔥 FNET FETCH (com retry no INIT e DATA)
 ====================================================== */
 
 export async function fetchFnetWithSession<T>(
@@ -232,31 +235,40 @@ export async function fetchFnetWithSession<T>(
   dataUrl: string,
   opts: ReqOptions = {}
 ): Promise<T> {
-  // STEP 1: INIT para obter JSESSIONID
-  const initRes = await fetch(initUrl, { method: 'GET', headers: getFnetInitHeaders(), dispatcher: AGENTS.fnet });
-  if (!initRes.ok) await throwHttpError(initRes, 'GET', initUrl);
-  const jsessionId = extractJSessionId(initRes);
-  if (!jsessionId) throw new Error('FNET_INIT_NO_JSESSIONID');
-  try { initRes.body?.cancel(); } catch { null; }
-
-  const headers = getFnetHeaders(jsessionId);
   const retryMax = clampInt(opts.retryMax ?? HTTP_RETRY_MAX, 1, 50);
   const retryBase = clampInt(opts.retryBaseMs ?? HTTP_RETRY_BASE_MS, 50, 60000);
 
   for (let attempt = 0; attempt < retryMax; attempt++) {
+    // STEP 1: INIT para obter JSESSIONID
+    let jsessionId: string | null = null;
+    try {
+      const initRes = await fetch(initUrl, { method: 'GET', headers: getFnetInitHeaders(), dispatcher: AGENTS.fnet });
+      if (!initRes.ok) {
+        try { initRes.body?.cancel(); } catch { null; }
+        if (attempt + 1 < retryMax) { await sleep(computeBackoff(attempt, initRes.status, null, retryBase)); continue; }
+        await throwHttpError(initRes, 'GET', initUrl);
+      }
+      jsessionId = extractJSessionId(initRes);
+      try { initRes.body?.cancel(); } catch { null; }
+    } catch (e) {
+      if (attempt + 1 >= retryMax) throw e;
+      await sleep(computeBackoff(attempt, undefined, null, retryBase));
+      continue;
+    }
+
+    if (!jsessionId) {
+      if (attempt + 1 >= retryMax) throw new Error('FNET_INIT_NO_JSESSIONID');
+      await sleep(computeBackoff(attempt, undefined, null, retryBase));
+      continue;
+    }
+
+    // STEP 2: DATA request com o JSESSIONID
+    const headers = getFnetHeaders(jsessionId);
     try {
       const res = await fetchWithRetry('GET', dataUrl, { method: 'GET', headers }, opts);
 
       if (!res.ok) {
         if (res.status === 401 || res.status === 403) {
-          // Renovar sessão se necessário
-          const newInitRes = await fetch(initUrl, { method: 'GET', headers: getFnetInitHeaders(), dispatcher: AGENTS.fnet });
-          if (newInitRes.ok) {
-            const newId = extractJSessionId(newInitRes);
-            if (newId) { headers['Cookie'] = newId; }
-          }
-          try { newInitRes.body?.cancel(); } catch { null; }
-
           if (attempt + 1 < retryMax) { await sleep(computeBackoff(attempt, res.status, null, retryBase)); continue; }
         }
         await throwHttpError(res, 'GET', dataUrl);

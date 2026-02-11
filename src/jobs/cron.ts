@@ -54,7 +54,6 @@ async function main() {
   timer = setInterval(() => {
     if (shuttingDown) return;
     if (running) {
-      process.stdout.write(`[jobs:cron] skipped reason=previous_tick_still_running at=${new Date().toISOString()}\n`);
       return;
     }
     running = true;
