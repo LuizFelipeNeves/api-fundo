@@ -4,7 +4,6 @@ import { fundDetailsCollector } from './internal/fund-details';
 import { indicatorsCollector } from './internal/indicators';
 import { cotationsCollector } from './internal/cotations';
 import { cotationsTodayCollector } from './internal/cotations-today';
-import { dividendsCollector } from './internal/dividends';
 import { documentsCollector } from './internal/documents';
 
 const collectors: Collector[] = [
@@ -13,7 +12,6 @@ const collectors: Collector[] = [
   indicatorsCollector,
   cotationsCollector,
   cotationsTodayCollector,
-  dividendsCollector,
   documentsCollector,
 ];
 

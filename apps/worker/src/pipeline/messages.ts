@@ -50,14 +50,19 @@ export type PersistCotationsToday = {
   data_json: unknown;
 };
 
-export type PersistDividend = {
+type BaseDividend = {
   fund_code: string;
   date_iso: string;
   payment: string;
   type: number;
   value: number;
+};
+
+export type PersistDividend = BaseDividend & {
   yield: number;
 };
+
+export type Dividend = BaseDividend;
 
 export type PersistDocument = {
   fund_code: string;
@@ -75,11 +80,10 @@ export type PersistDocument = {
 
 export type PersistRequest =
   | { type: 'fund_list'; items: PersistFundListItem[] }
-  | { type: 'fund_details'; item: PersistFundDetailsItem }
+  | { type: 'fund_details'; item: PersistFundDetailsItem; dividends?: Dividend[] }
   | { type: 'indicators'; item: PersistIndicators }
   | { type: 'cotations'; items: PersistCotation[] }
   | { type: 'cotations_today'; item: PersistCotationsToday }
-  | { type: 'dividends'; items: PersistDividend[] }
   | { type: 'documents'; items: PersistDocument[] };
 
 export type CollectResult = {

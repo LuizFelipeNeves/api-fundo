@@ -1,5 +1,7 @@
 import type { Collector, CollectRequest, CollectResult, CollectorContext } from '../types';
 import { fetchFIIDetails } from '../../services/client';
+import { toDateIsoFromBr } from '../../utils/date';
+import { dividendTypeToCode } from '../../utils/dividend-type';
 
 export const fundDetailsCollector: Collector = {
   name: 'fund_details',
@@ -8,7 +10,23 @@ export const fundDetailsCollector: Collector = {
   },
   async collect(request: CollectRequest, _ctx: CollectorContext): Promise<CollectResult> {
     const code = String(request.fund_code || '').toUpperCase();
-    const { details } = await fetchFIIDetails(code);
+    const { details, dividendsHistory } = await fetchFIIDetails(code);
+
+    const dividends = dividendsHistory
+      .map((d) => {
+        const dateIso = toDateIsoFromBr(d.date);
+        const paymentIso = toDateIsoFromBr(d.payment);
+        if (!dateIso || !paymentIso) return null;
+        return {
+          fund_code: code,
+          date_iso: dateIso,
+          payment: paymentIso,
+          type: dividendTypeToCode(d.type),
+          value: d.value,
+        };
+      })
+      .filter((d): d is NonNullable<typeof d> => d !== null);
+
     return {
       collector: 'fund_details',
       fetched_at: new Date().toISOString(),
@@ -35,6 +53,7 @@ export const fundDetailsCollector: Collector = {
             valor_patrimonial: details.valor_patrimonial,
             ultimo_rendimento: details.ultimo_rendimento,
           },
+          dividends,
         },
       },
     };
