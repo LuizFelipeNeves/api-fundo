@@ -2,6 +2,7 @@ import type { ChannelModel } from 'amqplib';
 import { createCollectorPublisher } from '../queues/collector';
 import { shouldRunCotationsToday, shouldRunEodCotation } from '../utils/time';
 import { getWriteDb } from '../pipeline/db';
+import { runEodCotationRoutine } from '../runner/eod-cotation';
 
 const intervalMs = Number.parseInt(process.env.CRON_INTERVAL_MS || String(5 * 60 * 1000), 10);
 
@@ -57,17 +58,6 @@ async function listDocumentsCandidates(limit: number, minIntervalMs: number): Pr
     .map((r) => ({ code: r.code.toUpperCase(), cnpj: r.cnpj! }));
 }
 
-async function listFundCodes(limit: number): Promise<string[]> {
-  const sql = getWriteDb();
-  const rows = await sql<FundRow[]>`
-    SELECT code
-    FROM fund_master
-    ORDER BY code ASC
-    LIMIT ${limit}
-  `;
-  return rows.map((r) => r.code.toUpperCase());
-}
-
 export async function startCronScheduler(connection: ChannelModel) {
   const publisher = await createCollectorPublisher(connection);
 
@@ -117,13 +107,8 @@ export async function startCronScheduler(connection: ChannelModel) {
     }
 
     if (shouldRunEodCotation()) {
-      const codes = await listFundCodes(batchSize);
-      for (const code of codes) {
-        if (!lastRun[`eod:${code}`] || now - lastRun[`eod:${code}`] >= 24 * 60 * 60 * 1000) {
-          await publisher.publish({ collector: 'cotations', fund_code: code, range: { days: 1 }, triggered_by: 'eod' });
-          lastRun[`eod:${code}`] = now;
-        }
-      }
+      const processedCount = await runEodCotationRoutine();
+      process.stderr.write(`[cron] eod_cotation: processed=${processedCount}\n`);
     }
   }
 
