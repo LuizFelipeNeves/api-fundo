@@ -8,7 +8,6 @@ import type { NormalizedCotations } from '../parsers/cotations';
 import type { DividendData } from '../parsers/dividends';
 import type { CotationsTodayData } from '../parsers/today';
 import type { DocumentData } from '../parsers/documents';
-import type { FnetSessionCallbacks } from '../core/sync/types';
 
 const MAX_DAYS = 1825;
 export const FNET_BASE = 'https://fnet.bmfbovespa.com.br/fnet/publico';
@@ -129,16 +128,14 @@ export async function fetchCotationsToday(code: string): Promise<CotationsTodayD
   return normalizeCotationsToday(raw);
 }
 
-export async function fetchDocuments(cnpj: string, callbacks: FnetSessionCallbacks): Promise<DocumentData[]> {
+export async function fetchDocuments(cnpj: string): Promise<DocumentData[]> {
   const initUrl = `${FNET_BASE}/abrirGerenciadorDocumentosCVM?cnpjFundo=${cnpj}`;
   const dataUrl = `${FNET_BASE}/pesquisarGerenciadorDocumentosDados?d=1&s=0&l=100&o%5B0%5D%5BdataReferencia%5D=desc&idCategoriaDocumento=0&idTipoDocumento=0&idEspecieDocumento=0&isSession=true`;
 
   const raw = await fetchFnetWithSession<{ data: any[] }>(
     initUrl,
     dataUrl,
-    cnpj,
-    { timeout: FNET_TIMEOUT_MS },
-    callbacks
+    { timeout: FNET_TIMEOUT_MS }
   );
   return normalizeDocuments(raw.data);
 }

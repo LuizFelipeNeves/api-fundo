@@ -5,6 +5,10 @@ import path from 'node:path';
 
 let dbSingleton: Database.Database | null = null;
 
+function clampInt(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Math.floor(value)));
+}
+
 export function getDb(): Database.Database {
   if (dbSingleton) return dbSingleton;
 
@@ -13,6 +17,32 @@ export function getDb(): Database.Database {
 
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
+
+  const busyTimeoutMsRaw = Number.parseInt(process.env.SQLITE_BUSY_TIMEOUT_MS || '5000', 10);
+  const busyTimeoutMs = Number.isFinite(busyTimeoutMsRaw) ? clampInt(busyTimeoutMsRaw, 0, 60_000) : 5000;
+  db.pragma(`busy_timeout = ${busyTimeoutMs}`);
+
+  const tempStoreRaw = String(process.env.SQLITE_TEMP_STORE || '').trim().toUpperCase();
+  if (tempStoreRaw === 'MEMORY' || tempStoreRaw === 'FILE') {
+    db.pragma(`temp_store = ${tempStoreRaw}`);
+  }
+
+  const cacheKbRaw = Number.parseInt(process.env.SQLITE_CACHE_KB || '', 10);
+  if (Number.isFinite(cacheKbRaw) && cacheKbRaw !== 0) {
+    const safeKb = clampInt(Math.abs(cacheKbRaw), 256, 512_000);
+    db.pragma(`cache_size = ${-safeKb}`);
+  }
+
+  const mmapMbRaw = Number.parseInt(process.env.SQLITE_MMAP_MB || '', 10);
+  if (Number.isFinite(mmapMbRaw) && mmapMbRaw > 0) {
+    const bytes = clampInt(mmapMbRaw, 1, 4096) * 1024 * 1024;
+    db.pragma(`mmap_size = ${bytes}`);
+  }
+
+  const synchronousRaw = String(process.env.SQLITE_SYNCHRONOUS || '').trim().toUpperCase();
+  if (synchronousRaw === 'OFF' || synchronousRaw === 'NORMAL' || synchronousRaw === 'FULL' || synchronousRaw === 'EXTRA') {
+    db.pragma(`synchronous = ${synchronousRaw}`);
+  }
 
   migrate(db);
 

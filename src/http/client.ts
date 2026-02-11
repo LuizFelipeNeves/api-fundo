@@ -24,8 +24,6 @@ function getAgent(hostname: string): Agent {
   return AGENTS.default;
 }
 
-const FNET_SESSION_TTL_MS = 60 * 60 * 1000; // 1 hora
-
 function extractJSessionId(resp: Response): string | null {
   const raw = resp.headers.get('set-cookie') || resp.headers.get('set-cookie2');
   const match = raw?.match(/JSESSIONID=[^;]+/i);
@@ -226,43 +224,22 @@ export async function fetchText(url: string, opts?: ReqOptions): Promise<string>
 }
 
 /* ======================================================
-   🔥 FNET COM SESSION CACHE
+   🔥 FNET FETCH (sem cache de sessão)
 ====================================================== */
-
-type FnetSessionCallbacks = {
-  getSession: (cnpj: string) => { jsessionId: string | null; lastValidAt: number | null };
-  saveSession: (cnpj: string, jsessionId: string, lastValidAt: number) => void;
-};
 
 export async function fetchFnetWithSession<T>(
   initUrl: string,
   dataUrl: string,
-  cnpj: string,
-  opts: ReqOptions = {},
-  callbacks?: FnetSessionCallbacks
+  opts: ReqOptions = {}
 ): Promise<T> {
-  if (!callbacks?.getSession || !callbacks?.saveSession) throw new Error('FNET_SESSION_CALLBACKS_REQUIRED');
+  // STEP 1: INIT para obter JSESSIONID
+  const initRes = await fetch(initUrl, { method: 'GET', headers: getFnetInitHeaders(), dispatcher: AGENTS.fnet });
+  if (!initRes.ok) await throwHttpError(initRes, 'GET', initUrl);
+  const jsessionId = extractJSessionId(initRes);
+  if (!jsessionId) throw new Error('FNET_INIT_NO_JSESSIONID');
+  try { initRes.body?.cancel(); } catch { null; }
 
-  const { getSession, saveSession } = callbacks;
-  const now = Date.now();
-  const session = getSession(cnpj);
-  let jsessionId: string | null = session.jsessionId;
-  let lastValidAt = session.lastValidAt;
-
-  const canReuse = jsessionId !== null && lastValidAt !== null && now - lastValidAt < FNET_SESSION_TTL_MS;
-
-  // STEP 1: INIT para obter JSESSIONID se necessário
-  if (!canReuse) {
-    const initRes = await fetch(initUrl, { method: 'GET', headers: getFnetInitHeaders(), dispatcher: AGENTS.fnet });
-    if (!initRes.ok) await throwHttpError(initRes, 'GET', initUrl);
-    const newId = extractJSessionId(initRes);
-    if (newId) { jsessionId = newId; lastValidAt = now; saveSession(cnpj, jsessionId, lastValidAt); }
-    else throw new Error('FNET_INIT_NO_JSESSIONID');
-    try { initRes.body?.cancel(); } catch { null; }
-  }
-
-  let validId = jsessionId!;
-  const headers = getFnetHeaders(validId);
+  const headers = getFnetHeaders(jsessionId);
   const retryMax = clampInt(opts.retryMax ?? HTTP_RETRY_MAX, 1, 50);
   const retryBase = clampInt(opts.retryBaseMs ?? HTTP_RETRY_BASE_MS, 50, 60000);
 
@@ -272,17 +249,13 @@ export async function fetchFnetWithSession<T>(
 
       if (!res.ok) {
         if (res.status === 401 || res.status === 403) {
-          // Renovar sessão
-          const initRes = await fetch(initUrl, { method: 'GET', headers: getFnetInitHeaders(), dispatcher: AGENTS.fnet });
-          if (initRes.ok) {
-            const newId = extractJSessionId(initRes);
-            if (newId) {
-              validId = newId;
-              saveSession(cnpj, validId, Date.now());
-              headers['Cookie'] = validId;
-            }
+          // Renovar sessão se necessário
+          const newInitRes = await fetch(initUrl, { method: 'GET', headers: getFnetInitHeaders(), dispatcher: AGENTS.fnet });
+          if (newInitRes.ok) {
+            const newId = extractJSessionId(newInitRes);
+            if (newId) { headers['Cookie'] = newId; }
           }
-          try { initRes.body?.cancel(); } catch { null; }
+          try { newInitRes.body?.cancel(); } catch { null; }
 
           if (attempt + 1 < retryMax) { await sleep(computeBackoff(attempt, res.status, null, retryBase)); continue; }
         }
@@ -299,7 +272,6 @@ export async function fetchFnetWithSession<T>(
         throw new Error(`FNET ${dataUrl} -> content_type="${ct}"`);
       }
 
-      saveSession(cnpj, validId, Date.now());
       return await res.json() as T;
     } catch (e) {
       if (attempt + 1 >= retryMax) throw e;
@@ -308,3 +280,4 @@ export async function fetchFnetWithSession<T>(
   }
   throw new Error(`FNET ${dataUrl} -> failed`);
 }
+

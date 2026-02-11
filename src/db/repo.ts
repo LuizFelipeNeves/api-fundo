@@ -12,9 +12,20 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { and, asc, desc, eq, gt, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { cotation, cotationsTodaySnapshot, dividend, document, fundMaster, fundState, indicatorsSnapshot } from './schema';
 
+type Orm = ReturnType<typeof drizzle>;
+const ormCache = new WeakMap<Database.Database, Orm>();
+
+function getOrm(db: Database.Database): Orm {
+  const cached = ormCache.get(db);
+  if (cached) return cached;
+  const orm = drizzle(db);
+  ormCache.set(db, orm);
+  return orm;
+}
+
 export function upsertFundList(db: Database.Database, data: FIIResponse) {
   const now = nowIso();
-  const orm = drizzle(db);
+  const orm = getOrm(db);
 
   // Batch insert para fundMaster
   const fundMasterValues = data.data.map((item) => ({
@@ -63,7 +74,7 @@ export function upsertFundList(db: Database.Database, data: FIIResponse) {
 
 export function updateFundDetails(db: Database.Database, details: FIIDetails) {
   const now = nowIso();
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const code = details.code.toUpperCase();
 
   orm
@@ -102,7 +113,7 @@ export function updateFundDetails(db: Database.Database, details: FIIDetails) {
 }
 
 export function listFunds(db: Database.Database): FIIResponse {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const rows = orm
     .select({
       code: fundMaster.code,
@@ -134,7 +145,7 @@ export function listFunds(db: Database.Database): FIIResponse {
 }
 
 export function getFundDetails(db: Database.Database, code: string): FIIDetails | null {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const row = orm
     .select({
       id: fundMaster.id,
@@ -185,13 +196,13 @@ export function getFundDetails(db: Database.Database, code: string): FIIDetails 
 }
 
 export function listFundCodes(db: Database.Database): string[] {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const rows = orm.select({ code: fundMaster.code }).from(fundMaster).orderBy(asc(fundMaster.code)).all();
   return rows.map((r) => r.code);
 }
 
 export function listFundCodesWithId(db: Database.Database): string[] {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const rows = orm
     .select({ code: fundMaster.code })
     .from(fundMaster)
@@ -202,7 +213,7 @@ export function listFundCodesWithId(db: Database.Database): string[] {
 }
 
 export function listFundCodesWithCnpj(db: Database.Database): string[] {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const rows = orm
     .select({ code: fundMaster.code })
     .from(fundMaster)
@@ -213,7 +224,7 @@ export function listFundCodesWithCnpj(db: Database.Database): string[] {
 }
 
 export function listFundCodesForIndicatorsBatch(db: Database.Database, limit: number): string[] {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 5000) : 100;
   const rows = orm
     .select({ code: fundMaster.code })
@@ -227,7 +238,7 @@ export function listFundCodesForIndicatorsBatch(db: Database.Database, limit: nu
 }
 
 export function listFundCodesForDetailsSyncBatch(db: Database.Database, limit: number): string[] {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 5000) : 100;
   const rows = orm
     .select({ code: fundMaster.code })
@@ -240,7 +251,7 @@ export function listFundCodesForDetailsSyncBatch(db: Database.Database, limit: n
 }
 
 export function listFundCodesForCotationsTodayBatch(db: Database.Database, limit: number): string[] {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 5000) : 100;
   const rows = orm
     .select({ code: fundMaster.code })
@@ -253,7 +264,7 @@ export function listFundCodesForCotationsTodayBatch(db: Database.Database, limit
 }
 
 export function listFundCodesForDocumentsBatch(db: Database.Database, limit: number): string[] {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 5000) : 100;
   const rows = orm
     .select({ code: fundMaster.code })
@@ -305,7 +316,7 @@ export function getDividendsTotalCount(db: Database.Database): number {
 }
 
 export function listFundCodesMissingDetails(db: Database.Database): string[] {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const rows = orm
     .select({ code: fundMaster.code })
     .from(fundMaster)
@@ -316,7 +327,7 @@ export function listFundCodesMissingDetails(db: Database.Database): string[] {
 }
 
 export function getFundIdAndCnpj(db: Database.Database, code: string): { id: string | null; cnpj: string | null } | null {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const row = orm
     .select({ id: fundMaster.id, cnpj: fundMaster.cnpj })
     .from(fundMaster)
@@ -329,7 +340,7 @@ export function getFundState(
   db: Database.Database,
   code: string
 ): { last_documents_max_id: number | null; last_historical_cotations_at: string | null } | null {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const row = orm
     .select({
       last_documents_max_id: fundState.last_documents_max_id,
@@ -345,7 +356,7 @@ export function getFundIndicatorsState(
   db: Database.Database,
   code: string
 ): { last_indicators_at: string | null } | null {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const row = orm
     .select({
       last_indicators_at: fundState.last_indicators_at,
@@ -360,7 +371,7 @@ export function getFundDetailsSyncState(
   db: Database.Database,
   code: string
 ): { last_details_sync_at: string | null } | null {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const row = orm
     .select({
       last_details_sync_at: fundState.last_details_sync_at,
@@ -375,7 +386,7 @@ export function getFundDocumentsState(
   db: Database.Database,
   code: string
 ): { last_documents_at: string | null } | null {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const row = orm
     .select({
       last_documents_at: fundState.last_documents_at,
@@ -387,7 +398,7 @@ export function getFundDocumentsState(
 }
 
 export function updateFundDocumentsAt(db: Database.Database, fundCode: string, atIso: string) {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const fundCodeUpper = fundCode.toUpperCase();
 
   orm.insert(fundState).values({ fund_code: fundCodeUpper, created_at: atIso, updated_at: atIso }).onConflictDoNothing().run();
@@ -405,7 +416,7 @@ export function getFundCotationsTodayState(
   db: Database.Database,
   code: string
 ): { last_cotations_today_at: string | null } | null {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const row = orm
     .select({
       last_cotations_today_at: fundState.last_cotations_today_at,
@@ -417,7 +428,7 @@ export function getFundCotationsTodayState(
 }
 
 export function upsertIndicatorsSnapshot(db: Database.Database, fundCode: string, fetchedAt: string, dataHash: string, data: NormalizedIndicators) {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const fundCodeUpper = fundCode.toUpperCase();
   const json = JSON.stringify(data);
   const existing = orm
@@ -473,14 +484,13 @@ export function upsertIndicatorsSnapshot(db: Database.Database, fundCode: string
 }
 
 export function getLatestIndicators(db: Database.Database, fundCode: string): NormalizedIndicators | null {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const row = orm
     .select({ data_json: indicatorsSnapshot.data_json })
     .from(indicatorsSnapshot)
     .where(eq(indicatorsSnapshot.fund_code, fundCode.toUpperCase()))
     .orderBy(desc(indicatorsSnapshot.fetched_at))
-    .limit(1)
-    .all()[0];
+    .get();
   if (!row) return null;
   return JSON.parse(row.data_json) as NormalizedIndicators;
 }
@@ -491,7 +501,7 @@ export function getLatestIndicatorsSnapshots(
   limit: number
 ): Array<{ fetched_at: string; data: NormalizedIndicators }> {
   const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 5000) : 365;
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const rows = orm
     .select({ fetched_at: indicatorsSnapshot.fetched_at, data_json: indicatorsSnapshot.data_json })
     .from(indicatorsSnapshot)
@@ -504,7 +514,7 @@ export function getLatestIndicatorsSnapshots(
 }
 
 export function upsertCotationsTodaySnapshot(db: Database.Database, fundCode: string, fetchedAt: string, dataHash: string, data: CotationsTodayData) {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const fundCodeUpper = fundCode.toUpperCase();
   const dateIso = String(fetchedAt || '').slice(0, 10);
   const incoming = canonicalizeCotationsToday(data);
@@ -588,14 +598,13 @@ export function upsertCotationsTodaySnapshot(db: Database.Database, fundCode: st
 }
 
 export function getLatestCotationsToday(db: Database.Database, fundCode: string): CotationsTodayData | null {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const row = orm
     .select({ data_json: cotationsTodaySnapshot.data_json })
     .from(cotationsTodaySnapshot)
     .where(eq(cotationsTodaySnapshot.fund_code, fundCode.toUpperCase()))
     .orderBy(desc(cotationsTodaySnapshot.fetched_at))
-    .limit(1)
-    .all()[0];
+    .get();
   if (!row) return null;
   const parsed: any = JSON.parse(row.data_json);
   if (Array.isArray(parsed)) return canonicalizeCotationsToday(parsed);
@@ -610,7 +619,7 @@ export function upsertCotationBrl(
   dateBr: string,
   price: number
 ): number {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const fundCodeUpper = fundCode.toUpperCase();
   return orm
     .insert(cotation)
@@ -631,7 +640,7 @@ export function upsertCotationsHistoricalBrl(db: Database.Database, fundCode: st
   const now = nowIso();
   const items = data.real || [];
   if (items.length === 0) return 0;
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const fundCodeUpper = fundCode.toUpperCase();
 
   // Batch values com date_iso válido
@@ -672,7 +681,7 @@ export function upsertCotationsHistoricalBrl(db: Database.Database, fundCode: st
 
 export function getCotations(db: Database.Database, fundCode: string, days: number): NormalizedCotations | null {
   const limit = Number.isFinite(days) && days > 0 ? Math.min(days, 5000) : 1825;
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const rows = orm
     .select({ date: cotation.date, price: cotation.price })
     .from(cotation)
@@ -695,7 +704,7 @@ export function getCotations(db: Database.Database, fundCode: string, days: numb
 
 export function upsertDocuments(db: Database.Database, fundCode: string, docs: DocumentData[]): { inserted: number; maxId: number } {
   const now = nowIso();
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const fundCodeUpper = fundCode.toUpperCase();
 
   if (docs.length === 0) return { inserted: 0, maxId: 0 };
@@ -743,7 +752,7 @@ export function upsertDocuments(db: Database.Database, fundCode: string, docs: D
 
 export function updateDocumentsMaxId(db: Database.Database, fundCode: string, maxId: number) {
   const now = nowIso();
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   orm.insert(fundState).values({ fund_code: fundCode.toUpperCase(), created_at: now, updated_at: now }).onConflictDoNothing().run();
   orm
     .update(fundState)
@@ -753,7 +762,7 @@ export function updateDocumentsMaxId(db: Database.Database, fundCode: string, ma
 }
 
 export function getDocuments(db: Database.Database, fundCode: string): DocumentData[] | null {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const rows = orm
     .select({
       id: document.document_id,
@@ -787,7 +796,7 @@ export function getDocuments(db: Database.Database, fundCode: string): DocumentD
 
 export function listDocumentsSinceId(db: Database.Database, fundCode: string, minDocumentId: number, limit?: number): DocumentData[] {
   const safeLimit = Number.isFinite(limit) && (limit as number) > 0 ? Math.min(Math.floor(limit as number), 100) : 20;
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const rows = orm
     .select({
       id: document.document_id,
@@ -819,7 +828,7 @@ export function listDocumentsSinceId(db: Database.Database, fundCode: string, mi
 }
 
 export function upsertDividends(db: Database.Database, fundCode: string, dividends: DividendData[]): number {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const fundCodeUpper = fundCode.toUpperCase();
 
   // Batch values com date_iso válido
@@ -861,7 +870,7 @@ export function upsertDividends(db: Database.Database, fundCode: string, dividen
 }
 
 export function getDividends(db: Database.Database, fundCode: string): DividendData[] | null {
-  const orm = drizzle(db);
+  const orm = getOrm(db);
   const rows = orm
     .select({
       date: dividend.date,
@@ -883,24 +892,4 @@ export function getDividends(db: Database.Database, fundCode: string): DividendD
     payment: r.payment,
     type: r.type,
   }));
-}
-
-/* ======================================================
-   🔥 FNET SESSION (persistida por CNPJ)
-====================================================== */
-
-export function getFnetSession(db: Database.Database, cnpj: string): { jsessionId: string | null; lastValidAt: number | null } {
-  const row = db.prepare('SELECT jsession_id, last_valid_at FROM fnet_session WHERE cnpj = ?').get(cnpj) as { jsession_id: string; last_valid_at: string } | undefined;
-  if (!row) return { jsessionId: null, lastValidAt: null };
-  return { jsessionId: row.jsession_id, lastValidAt: Date.parse(row.last_valid_at) };
-}
-
-export function saveFnetSession(db: Database.Database, cnpj: string, jsessionId: string, lastValidAt: number): void {
-  db.prepare(`
-    INSERT INTO fnet_session (cnpj, jsession_id, last_valid_at)
-    VALUES (?, ?, ?)
-    ON CONFLICT(cnpj) DO UPDATE SET
-      jsession_id = excluded.jsession_id,
-      last_valid_at = excluded.last_valid_at
-  `).run(cnpj, jsessionId, new Date(lastValidAt).toISOString());
 }
