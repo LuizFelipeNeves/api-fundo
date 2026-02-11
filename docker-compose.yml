@@ -1,72 +1,70 @@
 services:
-  minha-api:
+  api-read:
     build: .
+    command: ["bun", "run", "apps/api/src/index.ts"]
     environment:
       PORT: "${PORT:-8080}"
-      DB_PATH: "${DB_PATH:-/data/data.sqlite}"
+      DATABASE_URL: "${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/fii}"
+      RABBITMQ_URL: "${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}"
+      TELEGRAM_QUEUE_NAME: "${TELEGRAM_QUEUE_NAME:-telegram.updates}"
+      TELEGRAM_DLX: "${TELEGRAM_DLX:-telegram.dlx}"
+      TELEGRAM_DLQ: "${TELEGRAM_DLQ:-telegram.dlq}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       LOG_FORMAT: "${LOG_FORMAT:-text}"
       LOG_REQUESTS: "${LOG_REQUESTS:-1}"
     ports:
       - "8080:8080"
-    volumes:
-      - ./data:/data
+    depends_on:
+      - postgres
+      - rabbitmq
 
-  tunnel:
-    image: cloudflare/cloudflared:latest
-    restart: always
-    environment:
-      - TUNNEL_TOKEN=${TUNNEL_TOKEN:-}
-    command: tunnel --url http://minha-api:8080
-
-  jobs:
+  worker:
     build: .
-    command: ["npm", "run", "jobs:cron"]
+    command: ["bun", "run", "apps/worker/src/index.ts"]
     environment:
-      DB_PATH: "${DB_PATH:-/data/data.sqlite}"
-
+      DATABASE_URL: "${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/fii}"
+      RABBITMQ_URL: "${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}"
+      TELEGRAM_QUEUE_NAME: "${TELEGRAM_QUEUE_NAME:-telegram.updates}"
+      COLLECT_REQUESTS_QUEUE: "${COLLECT_REQUESTS_QUEUE:-collector.requests}"
+      COLLECT_RESULTS_QUEUE: "${COLLECT_RESULTS_QUEUE:-collector.results}"
+      PERSIST_QUEUE_NAME: "${PERSIST_QUEUE_NAME:-persistence.write}"
+      TELEGRAM_QUEUE_PREFETCH: "${TELEGRAM_QUEUE_PREFETCH:-4}"
+      PIPELINE_PREFETCH: "${PIPELINE_PREFETCH:-8}"
+      COLLECTOR_PREFETCH: "${COLLECTOR_PREFETCH:-6}"
+      COLLECTOR_RETRY_BASE_MS: "${COLLECTOR_RETRY_BASE_MS:-500}"
+      COLLECTOR_MAX_RETRIES: "${COLLECTOR_MAX_RETRIES:-5}"
+      PERSIST_RETRY_BASE_MS: "${PERSIST_RETRY_BASE_MS:-500}"
+      PERSIST_MAX_RETRIES: "${PERSIST_MAX_RETRIES:-6}"
+      RESULTS_RETRY_BASE_MS: "${RESULTS_RETRY_BASE_MS:-500}"
+      RESULTS_MAX_RETRIES: "${RESULTS_MAX_RETRIES:-6}"
       CRON_INTERVAL_MS: "${CRON_INTERVAL_MS:-60000}"
-
-      CSRF_TOKEN: "${CSRF_TOKEN:-}"
-      COOKIE: "${COOKIE:-}"
-      INVESTIDOR10_HTML_TIMEOUT_MS: "${INVESTIDOR10_HTML_TIMEOUT_MS:-25000}"
-
-      ENABLE_HISTORICAL_BACKFILL: "${ENABLE_HISTORICAL_BACKFILL:-true}"
-      HISTORICAL_COTATIONS_DAYS: "${HISTORICAL_COTATIONS_DAYS:-365}"
-
-      INDICATORS_CONCURRENCY: "${INDICATORS_CONCURRENCY:-5}"
-      INDICATORS_MIN_INTERVAL_MIN: "${INDICATORS_MIN_INTERVAL_MIN:-5}"
-      INDICATORS_BATCH_SIZE: "${INDICATORS_BATCH_SIZE:-100}"
-      INDICATORS_TIME_BUDGET_MS: "${INDICATORS_TIME_BUDGET_MS:-55000}"
-
-      COTATIONS_TODAY_CONCURRENCY: "${COTATIONS_TODAY_CONCURRENCY:-5}"
-      COTATIONS_TODAY_MIN_INTERVAL_MIN: "${COTATIONS_TODAY_MIN_INTERVAL_MIN:-5}"
-      COTATIONS_TODAY_BATCH_SIZE: "${COTATIONS_TODAY_BATCH_SIZE:-100}"
-      COTATIONS_TODAY_TIME_BUDGET_MS: "${COTATIONS_TODAY_TIME_BUDGET_MS:-55000}"
-
-      DOCUMENTS_CONCURRENCY: "${DOCUMENTS_CONCURRENCY:-5}"
-      DOCUMENTS_MIN_INTERVAL_MIN: "${DOCUMENTS_MIN_INTERVAL_MIN:-5}"
-      DOCUMENTS_BATCH_SIZE: "${DOCUMENTS_BATCH_SIZE:-100}"
-      DOCUMENTS_TIME_BUDGET_MS: "${DOCUMENTS_TIME_BUDGET_MS:-55000}"
-      DIVIDENDS_CONCURRENCY: "${DIVIDENDS_CONCURRENCY:-3}"
-
-      FNET_HOST_CONCURRENCY: "${FNET_HOST_CONCURRENCY:-2}"
-      FNET_HOST_MIN_TIME_MS: "${FNET_HOST_MIN_TIME_MS:-120}"
-      TOR_PROXY_ENABLED: "${TOR_PROXY_ENABLED:-0}"
-      TOR_PROXY_OPTIONAL: "${TOR_PROXY_OPTIONAL:-1}"
-      TOR_PROXY_MODE: "${TOR_PROXY_MODE:-fallback}"
-      TOR_PROXY_SERVICE: "${TOR_PROXY_SERVICE:-tor}"
-      TOR_PROXY_PORT: "${TOR_PROXY_PORT:-8118}"
+      SCHED_BATCH_SIZE: "${SCHED_BATCH_SIZE:-200}"
+      SCHED_MIN_INTERVAL_MIN: "${SCHED_MIN_INTERVAL_MIN:-5}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
-    volumes:
-      - ./data:/data
+    depends_on:
+      - postgres
+      - rabbitmq
 
-  tor:
-    image: dperson/torproxy:latest
-    profiles: ["tor"]
+  postgres:
+    image: postgres:16-alpine
     environment:
-      TOR_NewCircuitPeriod: "300"
-      TOR_MaxCircuitDirtiness: "600"
-    expose:
-      - "8118"
+      POSTGRES_DB: "${POSTGRES_DB:-fii}"
+      POSTGRES_USER: "${POSTGRES_USER:-postgres}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbit_data:/var/lib/rabbitmq
+
+volumes:
+  pg_data:
+  rabbit_data:

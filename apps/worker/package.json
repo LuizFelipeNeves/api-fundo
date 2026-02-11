@@ -1,0 +1,16 @@
+{
+  "name": "fii-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.6",
+    "cheerio": "^1.0.0-rc.12",
+    "postgres": "^3.4.5"
+  },
+  "devDependencies": {
+    "undici": "^6.22.0"
+  }
+}

@@ -1,24 +1,23 @@
-FROM node:20-bookworm-slim
+FROM oven/bun:1.1.20
 
 WORKDIR /app
 
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 python3-venv make g++ libxcb1 libx11-6 libxext6 libxrender1 libxkbcommon0 libgl1 libglib2.0-0 \
-  && python3 -m venv /opt/venv \
-  && /opt/venv/bin/pip install --no-cache-dir -U pip \
-  && /opt/venv/bin/pip install --no-cache-dir docling \
-  && rm -rf /var/lib/apt/lists/*
+# Copy package.json and lockfile (Bun uses bun.lockb)
+COPY package.json bun.lockb* ./
 
-COPY package.json package-lock.json ./
-RUN npm ci --include=dev
+# Install dependencies using Bun
+RUN bun install --production
 
+# Copy the rest of your code
 COPY tsconfig.json ./
 COPY src ./src
+COPY apps ./apps
+COPY database ./database
 
 ENV NODE_ENV=production
 ENV PORT=8080
-ENV PATH="/opt/venv/bin:${PATH}"
 
 EXPOSE 8080
 
-CMD ["node", "--import", "tsx", "src/index.ts"]
+# Run your API
+CMD ["bun", "run", "apps/api/src/index.ts"]
