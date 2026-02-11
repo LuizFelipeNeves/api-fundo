@@ -5,7 +5,7 @@ import { listExistingFundCodes, listTelegramUserFunds } from './storage';
 import { downloadDocumentToDataFileCached } from '../telegram-bot/document-pdf';
 import { extract } from '../telegram-bot/html-extract';
 import { errorToMeta, logger } from '../utils/logger';
-import { getWriteDb } from '../pipeline/db';
+import { getRawSql } from '../db';
 
 type TelegramLike = {
   sendText: (chatId: string | number, text: string) => Promise<{ ok: true } | { ok: false }>;
@@ -55,13 +55,14 @@ function cacheKeyForDocument(opts: { fundCode: string; documentId: number; url: 
 }
 
 async function listLatestDocuments(codes: string[]) {
-  const sql = getWriteDb();
-  const rows = await sql<{ fund_code: string; id: number; category: string; type: string; dateUpload: string; url: string }[]>`
-    SELECT fund_code, document_id AS id, category, type, "dateUpload" AS "dateUpload", url
+  const sql = getRawSql();
+  const rows = await sql.unsafe<{ fund_code: string; id: number; category: string; type: string; dateUpload: string; url: string }[]>(
+    `SELECT fund_code, document_id AS id, category, type, "dateUpload" AS "dateUpload", url
     FROM documents_read
-    WHERE fund_code = ANY(${codes})
-    ORDER BY date_upload_iso DESC, document_id DESC
-  `;
+    WHERE fund_code = ANY($1)
+    ORDER BY date_upload_iso DESC, document_id DESC`,
+    [codes]
+  );
 
   const byCode = new Map<string, { id: number; category: string; type: string; dateUpload: string; url: string }>();
   for (const row of rows) {

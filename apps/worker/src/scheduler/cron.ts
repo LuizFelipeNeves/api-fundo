@@ -59,7 +59,9 @@ export async function startCronScheduler(connection: ChannelModel) {
 
     // cotations (historical): backfill only once
     if (!cotationsBackfillDone) {
-      const cotationsCandidates = await listCandidatesByState('last_historical_cotations_at', batchSize, Number.MAX_SAFE_INTEGER, { requireId: true });
+      // Backfill: get all funds with id (100 years = ~3e12 ms)
+      const BACKFILL_INTERVAL_MS = 100 * 365 * 24 * 60 * 60 * 1000;
+      const cotationsCandidates = await listCandidatesByState('last_historical_cotations_at', batchSize, BACKFILL_INTERVAL_MS, { requireId: true });
       for (const code of cotationsCandidates) {
         await publisher.publish({ collector: 'cotations', fund_code: code, range: { days: 365 }, triggered_by: 'cron' });
       }

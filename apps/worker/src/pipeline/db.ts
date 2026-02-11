@@ -1,5 +1,8 @@
 import postgres from 'postgres';
 
+// Re-export from db/index for backwards compatibility
+export { getRawSql } from '../db';
+
 export type Sql = ReturnType<typeof postgres>;
 
 let sqlSingleton: Sql | null = null;

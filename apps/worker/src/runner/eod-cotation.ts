@@ -1,53 +1,47 @@
-import { getWriteDb } from '../db';
-import { cotation, cotationsTodaySnapshot } from '../db/schema';
-import { eq, desc } from 'drizzle-orm';
+import { getRawSql } from '../db';
 import { listAllFundCodes } from '../db/queries';
 
 export async function runEodCotationRoutine() {
-  const db = getWriteDb();
+  const sql = getRawSql();
 
-  // Get all fund codes
   const codes = await listAllFundCodes(Number.MAX_SAFE_INTEGER);
-
   let processedCount = 0;
 
   for (const code of codes) {
-    // Get latest cotation from snapshot
-    const latestSnapshot = await db
-      .select({
-        dateIso: cotationsTodaySnapshot.dateIso,
-        dataJson: cotationsTodaySnapshot.dataJson,
-      })
-      .from(cotationsTodaySnapshot)
-      .where(eq(cotationsTodaySnapshot.fundCode, code))
-      .orderBy(desc(cotationsTodaySnapshot.fetchedAt))
-      .limit(1);
+    const rows = await sql<{
+      date_iso: string | null;
+      data_json: string | null;
+    }[]>`
+      SELECT date_iso, data_json
+      FROM cotations_today_snapshot
+      WHERE fund_code = ${code}
+      ORDER BY fetched_at DESC
+      LIMIT 1
+    `;
 
-    // Skip if no valid snapshot/price
-    if (latestSnapshot.length === 0) {
+    const snapshot = rows[0];
+    if (!snapshot?.date_iso || !snapshot.data_json) continue;
+    let parsed: any = null;
+    try {
+      parsed = JSON.parse(snapshot.data_json);
+    } catch {
       continue;
     }
-    const snapshot = latestSnapshot[0]!;
-    const dataJson = snapshot.dataJson as { price?: number } | null;
-    if (!dataJson || typeof dataJson.price !== 'number' || !snapshot.dateIso) {
-      continue;
-    }
 
-    const price = dataJson.price;
-    const dateIso = snapshot.dateIso;
+    const price = Array.isArray(parsed)
+      ? parsed[parsed.length - 1]?.price
+      : typeof parsed?.price === 'number'
+        ? parsed.price
+        : null;
 
-    // Upsert into cotation table (write side)
-    await db
-      .insert(cotation)
-      .values({
-        fundCode: code,
-        dateIso,
-        price,
-      })
-      .onConflictDoUpdate({
-        target: [cotation.fundCode, cotation.dateIso],
-        set: { price },
-      });
+    if (!Number.isFinite(price)) continue;
+
+    await sql`
+      INSERT INTO cotation (fund_code, date_iso, price)
+      VALUES (${code}, ${snapshot.date_iso}, ${price})
+      ON CONFLICT (fund_code, date_iso) DO UPDATE SET
+        price = EXCLUDED.price
+    `;
 
     processedCount++;
   }

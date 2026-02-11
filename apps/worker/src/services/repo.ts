@@ -1,4 +1,4 @@
-import { getWriteDb } from '../pipeline/db';
+import { getRawSql } from '../db';
 import { toDateIsoFromBr } from '../utils/date';
 
 export type NormalizedIndicators = Record<string, Array<{ year: string; value: number | null }>>;
@@ -16,15 +16,16 @@ function toDateBrFromIso(dateIso: string): string {
 }
 
 export async function getFundDetails(code: string) {
-  const sql = getWriteDb();
-  const rows = await sql<any[]>`
-    SELECT id, code, razao_social, cnpj, publico_alvo, mandato, segmento, tipo_fundo, prazo_duracao, tipo_gestao,
+  const sql = getRawSql();
+  const rows = await sql.unsafe<any[]>(
+    `SELECT id, code, razao_social, cnpj, publicly_alvo, mandato, segmento, tipo_fundo, prazo_duracao, tipo_gestao,
            taxa_adminstracao, daily_liquidity, vacancia, numero_cotistas, cotas_emitidas, valor_patrimonial_cota,
            valor_patrimonial, ultimo_rendimento
     FROM fund_details_read
-    WHERE code = ${code.toUpperCase()}
-    LIMIT 1
-  `;
+    WHERE code = $1
+    LIMIT 1`,
+    [code.toUpperCase()]
+  );
   const row = rows[0];
   if (!row || !row.id || !row.cnpj) return null;
   return {
@@ -51,14 +52,15 @@ export async function getFundDetails(code: string) {
 
 export async function getCotations(code: string, days: number): Promise<NormalizedCotations | null> {
   const limit = Number.isFinite(days) && days > 0 ? Math.min(days, 5000) : 1825;
-  const sql = getWriteDb();
-  const rows = await sql<{ date_iso: string; price: number }[]>`
-    SELECT date_iso, price
+  const sql = getRawSql();
+  const rows = await sql.unsafe<{ date_iso: string; price: number }[]>(
+    `SELECT date_iso, price
     FROM cotations_read
-    WHERE fund_code = ${code.toUpperCase()}
+    WHERE fund_code = $1
     ORDER BY date_iso DESC
-    LIMIT ${limit}
-  `;
+    LIMIT $2`,
+    [code.toUpperCase(), limit]
+  );
   if (rows.length === 0) return null;
   return {
     real: rows.slice().reverse().map((r) => ({ date: toDateBrFromIso(r.date_iso), price: r.price })),
@@ -72,25 +74,27 @@ export async function getLatestIndicatorsSnapshots(
   limit: number
 ): Promise<Array<{ fetched_at: string; data: NormalizedIndicators }>> {
   const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 5000) : 365;
-  const sql = getWriteDb();
-  const rows = await sql<{ fetched_at: string; data_json: string }[]>`
-    SELECT fetched_at, data_json
+  const sql = getRawSql();
+  const rows = await sql.unsafe<{ fetched_at: string; data_json: string }[]>(
+    `SELECT fetched_at, data_json
     FROM indicators_snapshot_read
-    WHERE fund_code = ${code.toUpperCase()}
+    WHERE fund_code = $1
     ORDER BY fetched_at DESC
-    LIMIT ${safeLimit}
-  `;
+    LIMIT $2`,
+    [code.toUpperCase(), safeLimit]
+  );
   return rows.map((r) => ({ fetched_at: r.fetched_at, data: JSON.parse(r.data_json) as NormalizedIndicators }));
 }
 
 export async function getDividends(code: string): Promise<DividendData[] | null> {
-  const sql = getWriteDb();
-  const rows = await sql<{ date_iso: string; payment: string; type: number; value: number; yield: number }[]>`
-    SELECT date_iso, payment, type, value, yield
+  const sql = getRawSql();
+  const rows = await sql.unsafe<{ date_iso: string; payment: string; type: number; value: number; yield: number }[]>(
+    `SELECT date_iso, payment, type, value, yield
     FROM dividends_read
-    WHERE fund_code = ${code.toUpperCase()}
-    ORDER BY date_iso DESC
-  `;
+    WHERE fund_code = $1
+    ORDER BY date_iso DESC`,
+    [code.toUpperCase()]
+  );
   if (rows.length === 0) return null;
   return rows.map((r) => ({
     value: r.value,
@@ -102,14 +106,15 @@ export async function getDividends(code: string): Promise<DividendData[] | null>
 }
 
 export async function getLatestCotationsToday(code: string): Promise<CotationsTodayData | null> {
-  const sql = getWriteDb();
-  const rows = await sql<{ data_json: string }[]>`
-    SELECT data_json
+  const sql = getRawSql();
+  const rows = await sql.unsafe<{ data_json: string }[]>(
+    `SELECT data_json
     FROM cotations_today_read
-    WHERE fund_code = ${code.toUpperCase()}
+    WHERE fund_code = $1
     ORDER BY fetched_at DESC
-    LIMIT 1
-  `;
+    LIMIT 1`,
+    [code.toUpperCase()]
+  );
   const row = rows[0];
   if (!row) return null;
   const parsed: any = JSON.parse(row.data_json);

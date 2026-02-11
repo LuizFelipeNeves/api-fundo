@@ -1,4 +1,5 @@
-import { getWriteDb } from '../../pipeline/db';
+import { getWriteDb } from '../../db';
+import { sql } from 'drizzle-orm';
 import { listExistingFundCodes } from '../storage';
 import { formatCotationMessage, formatPesquisaMessage } from '../../telegram-bot/webhook-messages';
 import type { HandlerDeps } from './types';
@@ -12,33 +13,8 @@ export async function handlePesquisa({ db, telegram, chatIdStr }: HandlerDeps, c
     return;
   }
 
-  const sql = getWriteDb();
-  const rows = await sql<{
-    code: string;
-    sector: string | null;
-    type: string | null;
-    segmento: string | null;
-    tipo_fundo: string | null;
-    p_vp: number | null;
-    dividend_yield: number | null;
-    dividend_yield_last_5_years: number | null;
-    daily_liquidity: number | null;
-    net_worth: number | null;
-    razao_social: string | null;
-    cnpj: string | null;
-    publico_alvo: string | null;
-    mandato: string | null;
-    prazo_duracao: string | null;
-    tipo_gestao: string | null;
-    taxa_adminstracao: string | null;
-    vacancia: number | null;
-    numero_cotistas: number | null;
-    cotas_emitidas: number | null;
-    valor_patrimonial_cota: number | null;
-    valor_patrimonial: number | null;
-    ultimo_rendimento: number | null;
-    updated_at: string | null;
-  }[]>`
+  const dbWrite = getWriteDb();
+  const rows = await dbWrite.execute(sql`
     SELECT d.code,
            l.sector,
            l.type,
@@ -67,7 +43,32 @@ export async function handlePesquisa({ db, telegram, chatIdStr }: HandlerDeps, c
     LEFT JOIN fund_list_read l ON l.code = d.code
     WHERE d.code = ${fundCode}
     LIMIT 1
-  `;
+  `) as Array<{
+    code: string;
+    sector: string | null;
+    type: string | null;
+    segmento: string | null;
+    tipo_fundo: string | null;
+    p_vp: number | null;
+    dividend_yield: number | null;
+    dividend_yield_last_5_years: number | null;
+    daily_liquidity: number | null;
+    net_worth: number | null;
+    razao_social: string | null;
+    cnpj: string | null;
+    publico_alvo: string | null;
+    mandato: string | null;
+    prazo_duracao: string | null;
+    tipo_gestao: string | null;
+    taxa_adminstracao: string | null;
+    vacancia: number | null;
+    numero_cotistas: number | null;
+    cotas_emitidas: string | null;
+    valor_patrimonial_cota: number | null;
+    valor_patrimonial: number | null;
+    ultimo_rendimento: number | null;
+    updated_at: string | null;
+  }>;
 
   const fund = rows[0];
   if (!fund) {
