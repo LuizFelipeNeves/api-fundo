@@ -1,13 +1,13 @@
 import { getWriteDb } from '../db';
-import { cotation, cotationsTodaySnapshot, fundMaster } from '../db/schema';
+import { cotation, cotationsTodaySnapshot } from '../db/schema';
 import { eq, desc } from 'drizzle-orm';
+import { listAllFundCodes } from '../db/queries';
 
 export async function runEodCotationRoutine() {
   const db = getWriteDb();
 
   // Get all fund codes
-  const funds = await db.select({ code: fundMaster.code }).from(fundMaster);
-  const codes = funds.map((f) => f.code);
+  const codes = await listAllFundCodes(Number.MAX_SAFE_INTEGER);
 
   let processedCount = 0;
 
