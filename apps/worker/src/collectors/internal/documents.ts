@@ -1,5 +1,5 @@
 import type { Collector, CollectRequest, CollectResult, CollectorContext } from '../types';
-import { fetchDocuments, fetchFIIDetails } from '../../services/client';
+import { fetchDocuments } from '../../services/client';
 import { toDateIsoFromBr } from '../../utils/date';
 
 export const documentsCollector: Collector = {
@@ -9,8 +9,13 @@ export const documentsCollector: Collector = {
   },
   async collect(request: CollectRequest, _ctx: CollectorContext): Promise<CollectResult> {
     const code = String(request.fund_code || '').toUpperCase();
-    const { details } = await fetchFIIDetails(code);
-    const data = await fetchDocuments(details.cnpj);
+    const cnpj = request.cnpj;
+
+    if (!cnpj) {
+      throw new Error('CNPJ is required for documents collector');
+    }
+
+    const data = await fetchDocuments(cnpj);
 
     const items = data.map((d) => ({
       fund_code: code,

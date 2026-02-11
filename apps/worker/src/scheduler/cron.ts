@@ -6,6 +6,7 @@ import { getWriteDb } from '../pipeline/db';
 const intervalMs = Number.parseInt(process.env.CRON_INTERVAL_MS || String(5 * 60 * 1000), 10);
 
 type FundRow = { code: string };
+type FundWithCnpjRow = { code: string; cnpj: string | null };
 
 function toIsoCutoff(minIntervalMs: number): string {
   return new Date(Date.now() - minIntervalMs).toISOString();
@@ -35,6 +36,25 @@ async function listCandidatesByState(
   `;
 
   return rows.map((r) => r.code.toUpperCase());
+}
+
+async function listDocumentsCandidates(limit: number, minIntervalMs: number): Promise<Array<{ code: string; cnpj: string }>> {
+  const sql = getWriteDb();
+  const cutoff = toIsoCutoff(minIntervalMs);
+
+  const rows = await sql<FundWithCnpjRow[]>`
+    SELECT fm.code, fm.cnpj
+    FROM fund_master fm
+    LEFT JOIN fund_state fs ON fs.fund_code = fm.code
+    WHERE fm.cnpj IS NOT NULL
+      AND (fs.last_documents_at IS NULL OR fs.last_documents_at < ${cutoff})
+    ORDER BY fs.last_documents_at NULLS FIRST, fm.code ASC
+    LIMIT ${limit}
+  `;
+
+  return rows
+    .filter((r) => r.cnpj)
+    .map((r) => ({ code: r.code.toUpperCase(), cnpj: r.cnpj! }));
 }
 
 async function listFundCodes(limit: number): Promise<string[]> {
@@ -91,9 +111,9 @@ export async function startCronScheduler(connection: ChannelModel) {
       await publisher.publish({ collector: 'cotations', fund_code: code, range: { days: 365 }, triggered_by: 'cron' });
     }
 
-    const documentsCandidates = await listCandidatesByState('last_documents_at', batchSize, minIntervalMs, { requireCnpj: true });
-    for (const code of documentsCandidates) {
-      await publisher.publish({ collector: 'documents', fund_code: code, triggered_by: 'cron' });
+    const documentsCandidates = await listDocumentsCandidates(batchSize, minIntervalMs);
+    for (const { code, cnpj } of documentsCandidates) {
+      await publisher.publish({ collector: 'documents', fund_code: code, cnpj, triggered_by: 'cron' });
     }
 
     if (shouldRunEodCotation()) {

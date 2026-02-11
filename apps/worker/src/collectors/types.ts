@@ -1,6 +1,7 @@
 export type CollectRequest = {
   collector: string;
   fund_code?: string;
+  cnpj?: string;
   range?: { from?: string; to?: string; days?: number };
   correlation_id?: string;
   triggered_by?: string;
