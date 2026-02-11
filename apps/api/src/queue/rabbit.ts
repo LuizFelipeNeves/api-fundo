@@ -7,8 +7,10 @@ async function getChannel(): Promise<amqplib.Channel> {
   if (channel) return channel;
   const url = String(process.env.RABBITMQ_URL || '').trim();
   if (!url) throw new Error('RABBITMQ_URL is required for telegram queue publishing');
+  const heartbeat = Number.parseInt(process.env.RABBITMQ_HEARTBEAT || '60', 10);
+  const frameMax = Number.parseInt(process.env.RABBITMQ_FRAME_MAX || '131072', 10);
 
-  connection = await amqplib.connect(url);
+  connection = await amqplib.connect(url, { heartbeat, frameMax });
   channel = await connection.createChannel();
 
   const queueName = getTelegramQueueName();

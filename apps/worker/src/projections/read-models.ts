@@ -153,6 +153,13 @@ export function createReadModelWriter() {
         dateIso,
         fetchedAt,
         dataJson: dataJson as any,
+      })
+      .onConflictDoUpdate({
+        target: [cotationsTodayRead.fundCode, cotationsTodayRead.dateIso],
+        set: {
+          fetchedAt,
+          dataJson: dataJson as any,
+        },
       });
   }
 

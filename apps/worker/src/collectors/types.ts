@@ -21,10 +21,11 @@ export type CollectorContext = {
     getText(url: string, opts?: { headers?: Record<string, string>; timeoutMs?: number }): Promise<string>;
     postForm<T>(url: string, body: string, opts?: { headers?: Record<string, string>; timeoutMs?: number }): Promise<T>;
   };
+  publish?(queue: string, body: Buffer): void;
 };
 
 export type Collector = {
   name: string;
   supports(request: CollectRequest): boolean;
-  collect(request: CollectRequest, ctx: CollectorContext): Promise<CollectResult>;
+  collect(request: CollectRequest, ctx: CollectorContext): Promise<CollectResult | void>;
 };

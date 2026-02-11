@@ -6,6 +6,7 @@ services:
       PORT: "${PORT:-8080}"
       DATABASE_URL: "${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/fii}"
       RABBITMQ_URL: "${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}"
+      RABBITMQ_HEARTBEAT: "${RABBITMQ_HEARTBEAT:-60}"
       TELEGRAM_QUEUE_NAME: "${TELEGRAM_QUEUE_NAME:-telegram.updates}"
       TELEGRAM_DLX: "${TELEGRAM_DLX:-telegram.dlx}"
       TELEGRAM_DLQ: "${TELEGRAM_DLQ:-telegram.dlq}"
@@ -25,6 +26,7 @@ services:
     environment:
       DATABASE_URL: "${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/fii}"
       RABBITMQ_URL: "${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}"
+      RABBITMQ_HEARTBEAT: "${RABBITMQ_HEARTBEAT:-60}"
       TELEGRAM_QUEUE_NAME: "${TELEGRAM_QUEUE_NAME:-telegram.updates}"
       COLLECT_REQUESTS_QUEUE: "${COLLECT_REQUESTS_QUEUE:-collector.requests}"
       COLLECT_RESULTS_QUEUE: "${COLLECT_RESULTS_QUEUE:-collector.results}"

@@ -1,9 +1,13 @@
-import amqplib from 'amqplib';
+import amqplib, { Connection } from "amqplib";
 
-export async function createRabbitConnection(): Promise<amqplib.Connection> {
-  const url = String(process.env.RABBITMQ_URL || '').trim();
-  if (!url) throw new Error('RABBITMQ_URL is required');
-  return amqplib.connect(url);
+export async function createRabbitConnection(): Promise<Connection> {
+  const url = String(process.env.RABBITMQ_URL || "").trim();
+  if (!url) throw new Error("RABBITMQ_URL is required");
+
+  const heartbeat = Number.parseInt(process.env.RABBITMQ_HEARTBEAT || "60", 10);
+  const frameMax = Number.parseInt(process.env.RABBITMQ_FRAME_MAX || "131072", 10);
+
+  return amqplib.connect(url, { heartbeat, frameMax });
 }
 
 export async function setupQueue(

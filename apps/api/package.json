@@ -7,7 +7,7 @@
   },
   "dependencies": {
     "@hono/zod-openapi": "^0.16.0",
-    "amqplib": "^0.10.6",
+    "amqplib": "^0.10.9",
     "hono": "^4.6.0",
     "postgres": "^3.4.8",
     "zod": "^3.22.4"

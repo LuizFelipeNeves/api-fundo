@@ -1,4 +1,4 @@
-import type amqplib from 'amqplib';
+import type { ChannelModel } from 'amqplib';
 import { createCollectorPublisher } from '../queues/collector';
 import { shouldRunCotationsToday, shouldRunEodCotation } from '../utils/time';
 import { getWriteDb } from '../pipeline/db';
@@ -48,7 +48,7 @@ async function listFundCodes(limit: number): Promise<string[]> {
   return rows.map((r) => r.code.toUpperCase());
 }
 
-export async function startCronScheduler(connection: amqplib.Connection) {
+export async function startCronScheduler(connection: ChannelModel) {
   const publisher = await createCollectorPublisher(connection);
 
   const batchSizeRaw = Number.parseInt(process.env.SCHED_BATCH_SIZE || '200', 10);
