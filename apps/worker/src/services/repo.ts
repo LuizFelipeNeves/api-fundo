@@ -8,6 +8,11 @@ export type DividendData = { value: number; yield: number; date: string; payment
 export type CotationTodayItem = { price: number; hour: string };
 export type CotationsTodayData = CotationTodayItem[];
 
+function parseJsonValue<T>(value: unknown): T {
+  if (typeof value === 'string') return JSON.parse(value) as T;
+  return value as T;
+}
+
 function toDateBrFromIso(dateIso: string): string {
   const str = String(dateIso || '').trim();
   const match = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -18,10 +23,10 @@ function toDateBrFromIso(dateIso: string): string {
 export async function getFundDetails(code: string) {
   const sql = getRawSql();
   const rows = await sql.unsafe<any[]>(
-    `SELECT id, code, razao_social, cnpj, publicly_alvo, mandato, segmento, tipo_fundo, prazo_duracao, tipo_gestao,
+    `SELECT id, code, razao_social, cnpj, publico_alvo, mandato, segmento, tipo_fundo, prazo_duracao, tipo_gestao,
            taxa_adminstracao, daily_liquidity, vacancia, numero_cotistas, cotas_emitidas, valor_patrimonial_cota,
            valor_patrimonial, ultimo_rendimento
-    FROM fund_details_read
+    FROM fund_master
     WHERE code = $1
     LIMIT 1`,
     [code.toUpperCase()]
@@ -55,7 +60,7 @@ export async function getCotations(code: string, days: number): Promise<Normaliz
   const sql = getRawSql();
   const rows = await sql.unsafe<{ date_iso: string; price: number }[]>(
     `SELECT date_iso, price
-    FROM cotations_read
+    FROM cotation
     WHERE fund_code = $1
     ORDER BY date_iso DESC
     LIMIT $2`,
@@ -75,22 +80,22 @@ export async function getLatestIndicatorsSnapshots(
 ): Promise<Array<{ fetched_at: string; data: NormalizedIndicators }>> {
   const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 5000) : 365;
   const sql = getRawSql();
-  const rows = await sql.unsafe<{ fetched_at: string; data_json: string }[]>(
+  const rows = await sql.unsafe<{ fetched_at: string; data_json: unknown }[]>(
     `SELECT fetched_at, data_json
-    FROM indicators_snapshot_read
+    FROM indicators_snapshot
     WHERE fund_code = $1
     ORDER BY fetched_at DESC
     LIMIT $2`,
     [code.toUpperCase(), safeLimit]
   );
-  return rows.map((r) => ({ fetched_at: r.fetched_at, data: JSON.parse(r.data_json) as NormalizedIndicators }));
+  return rows.map((r) => ({ fetched_at: r.fetched_at, data: parseJsonValue<NormalizedIndicators>(r.data_json) }));
 }
 
 export async function getDividends(code: string): Promise<DividendData[] | null> {
   const sql = getRawSql();
   const rows = await sql.unsafe<{ date_iso: string; payment: string; type: number; value: number; yield: number }[]>(
     `SELECT date_iso, payment, type, value, yield
-    FROM dividends_read
+    FROM dividend
     WHERE fund_code = $1
     ORDER BY date_iso DESC`,
     [code.toUpperCase()]
@@ -107,9 +112,9 @@ export async function getDividends(code: string): Promise<DividendData[] | null>
 
 export async function getLatestCotationsToday(code: string): Promise<CotationsTodayData | null> {
   const sql = getRawSql();
-  const rows = await sql.unsafe<{ data_json: string }[]>(
+  const rows = await sql.unsafe<{ data_json: unknown }[]>(
     `SELECT data_json
-    FROM cotations_today_read
+    FROM cotations_today_snapshot
     WHERE fund_code = $1
     ORDER BY fetched_at DESC
     LIMIT 1`,
@@ -117,7 +122,7 @@ export async function getLatestCotationsToday(code: string): Promise<CotationsTo
   );
   const row = rows[0];
   if (!row) return null;
-  const parsed: any = JSON.parse(row.data_json);
+  const parsed: any = parseJsonValue<any>(row.data_json);
   if (Array.isArray(parsed)) return parsed;
   if (Array.isArray(parsed?.real)) return parsed.real;
   return [];

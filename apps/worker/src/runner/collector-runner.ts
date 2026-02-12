@@ -154,7 +154,7 @@ export async function startCollectorRunner(connection: ChannelModel, isActive: (
           );
         }
         process.stdout.write(
-          `[collector-runner] persisted=${persistRequests.length} collector=${result.collector} fetched_at=${result.fetched_at}\n`
+          `[collector-runner] persisted=${persistRequests.length} collector=${result.collector} fetched_at=${result.fetched_at} code=${request.fund_code ?? ''}\n`
         );
       }
       await safeAck(msg);

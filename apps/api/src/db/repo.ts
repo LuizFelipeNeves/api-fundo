@@ -48,11 +48,16 @@ function formatHour(dateValue: unknown): string {
   return `${hours < 10 ? '0' : ''}${hours}:${minutes < 10 ? '0' : ''}${minutes}`;
 }
 
+function parseJsonValue<T>(value: unknown): T {
+  if (typeof value === 'string') return JSON.parse(value) as T;
+  return value as T;
+}
+
 export async function listFunds(): Promise<FIIResponse> {
   const sql = getDb();
   const rows = await sql<{ code: string; sector: string | null; p_vp: number | null; dividend_yield: number | null; dividend_yield_last_5_years: number | null; daily_liquidity: number | null; net_worth: number | null; type: string | null }[]>`
     SELECT code, sector, p_vp, dividend_yield, dividend_yield_last_5_years, daily_liquidity, net_worth, type
-    FROM fund_list_read
+    FROM fund_master
     ORDER BY code ASC
   `;
 
@@ -77,7 +82,7 @@ export async function getFundDetails(code: string): Promise<FIIDetails | null> {
     SELECT id, code, razao_social, cnpj, publico_alvo, mandato, segmento, tipo_fundo, prazo_duracao, tipo_gestao,
            taxa_adminstracao, daily_liquidity, vacancia, numero_cotistas, cotas_emitidas, valor_patrimonial_cota,
            valor_patrimonial, ultimo_rendimento
-    FROM fund_details_read
+    FROM fund_master
     WHERE code = ${code.toUpperCase()}
     LIMIT 1
   `;
@@ -109,15 +114,16 @@ export async function getFundDetails(code: string): Promise<FIIDetails | null> {
 
 export async function getLatestIndicators(code: string): Promise<NormalizedIndicators | null> {
   const sql = getDb();
-  const rows = await sql<{ data_json: string }[]>`
+  const rows = await sql<{ data_json: unknown }[]>`
     SELECT data_json
-    FROM indicators_read
+    FROM indicators_snapshot
     WHERE fund_code = ${code.toUpperCase()}
+    ORDER BY fetched_at DESC
     LIMIT 1
   `;
   const row = rows[0];
   if (!row) return null;
-  return JSON.parse(row.data_json) as NormalizedIndicators;
+  return parseJsonValue<NormalizedIndicators>(row.data_json);
 }
 
 export async function getLatestIndicatorsSnapshots(
@@ -126,15 +132,15 @@ export async function getLatestIndicatorsSnapshots(
 ): Promise<Array<{ fetched_at: string; data: NormalizedIndicators }>> {
   const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 5000) : 365;
   const sql = getDb();
-  const rows = await sql<{ fetched_at: string; data_json: string }[]>`
+  const rows = await sql<{ fetched_at: string; data_json: unknown }[]>`
     SELECT fetched_at, data_json
-    FROM indicators_snapshot_read
+    FROM indicators_snapshot
     WHERE fund_code = ${code.toUpperCase()}
     ORDER BY fetched_at DESC
     LIMIT ${safeLimit}
   `;
 
-  return rows.map((r) => ({ fetched_at: r.fetched_at, data: JSON.parse(r.data_json) as NormalizedIndicators }));
+  return rows.map((r) => ({ fetched_at: r.fetched_at, data: parseJsonValue<NormalizedIndicators>(r.data_json) }));
 }
 
 export async function getCotations(code: string, days: number): Promise<NormalizedCotations | null> {
@@ -142,7 +148,7 @@ export async function getCotations(code: string, days: number): Promise<Normaliz
   const sql = getDb();
   const rows = await sql<{ date_iso: string; price: number }[]>`
     SELECT date_iso, price
-    FROM cotations_read
+    FROM cotation
     WHERE fund_code = ${code.toUpperCase()}
     ORDER BY date_iso DESC
     LIMIT ${limit}
@@ -158,7 +164,7 @@ export async function getDividends(code: string): Promise<DividendData[] | null>
   const sql = getDb();
   const rows = await sql<{ date_iso: string; payment: string; type: number; value: number; yield: number }[]>`
     SELECT date_iso, payment, type, value, yield
-    FROM dividends_read
+    FROM dividend
     WHERE fund_code = ${code.toUpperCase()}
     ORDER BY date_iso DESC
   `;
@@ -182,9 +188,9 @@ export async function getDividends(code: string): Promise<DividendData[] | null>
 
 export async function getLatestCotationsToday(code: string): Promise<CotationsTodayData | null> {
   const sql = getDb();
-  const rows = await sql<{ data_json: string }[]>`
+  const rows = await sql<{ data_json: unknown }[]>`
     SELECT data_json
-    FROM cotations_today_read
+    FROM cotations_today_snapshot
     WHERE fund_code = ${code.toUpperCase()}
     ORDER BY fetched_at DESC
     LIMIT 1
@@ -192,7 +198,7 @@ export async function getLatestCotationsToday(code: string): Promise<CotationsTo
 
   const row = rows[0];
   if (!row) return null;
-  const parsed: any = JSON.parse(row.data_json);
+  const parsed: any = parseJsonValue<any>(row.data_json);
   if (Array.isArray(parsed)) return canonicalizeCotationsToday(parsed);
   if (Array.isArray(parsed?.real)) return canonicalizeCotationsToday(parsed.real);
   return [];
@@ -202,7 +208,7 @@ export async function getDocuments(code: string): Promise<DocumentData[] | null>
   const sql = getDb();
   const rows = await sql<{ id: number; title: string; category: string; type: string; date: string; dateupload: string; url: string; status: string; version: number }[]>`
     SELECT document_id AS id, title, category, type, date, "dateUpload" AS dateupload, url, status, version
-    FROM documents_read
+    FROM document
     WHERE fund_code = ${code.toUpperCase()}
     ORDER BY date_upload_iso DESC, document_id DESC
   `;
@@ -226,7 +232,7 @@ export async function getDividendYieldFromCotations(code: string, dateIso: strin
   const sql = getDb();
   const rows = await sql<{ price: number }[]>`
     SELECT price
-    FROM cotations_read
+    FROM cotation
     WHERE fund_code = ${code.toUpperCase()} AND date_iso = ${dateIso}
     LIMIT 1
   `;

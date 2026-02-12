@@ -58,7 +58,7 @@ async function listLatestDocuments(codes: string[]) {
   const sql = getRawSql();
   const rows = await sql.unsafe<{ fund_code: string; id: number; category: string; type: string; dateUpload: string; url: string }[]>(
     `SELECT fund_code, document_id AS id, category, type, "dateUpload" AS "dateUpload", url
-    FROM documents_read
+    FROM document
     WHERE fund_code = ANY($1)
     ORDER BY date_upload_iso DESC, document_id DESC`,
     [codes]

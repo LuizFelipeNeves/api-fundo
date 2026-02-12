@@ -39,33 +39,32 @@ export async function handlePesquisa({ db, telegram, chatIdStr }: HandlerDeps, c
     ultimo_rendimento: number | null;
     updated_at: string | null;
   }[]>`
-    SELECT d.code,
-           l.sector,
-           l.type,
-           d.segmento,
-           d.tipo_fundo,
-           l.p_vp,
-           l.dividend_yield,
-           l.dividend_yield_last_5_years,
-           l.daily_liquidity,
-           l.net_worth,
-           d.razao_social,
-           d.cnpj,
-           d.publico_alvo,
-           d.mandato,
-           d.prazo_duracao,
-           d.tipo_gestao,
-           d.taxa_adminstracao,
-           d.vacancia,
-           d.numero_cotistas,
-           d.cotas_emitidas,
-           d.valor_patrimonial_cota,
-           d.valor_patrimonial,
-           d.ultimo_rendimento,
-           d.updated_at
-    FROM fund_details_read d
-    LEFT JOIN fund_list_read l ON l.code = d.code
-    WHERE d.code = ${fundCode}
+    SELECT code,
+           sector,
+           type,
+           segmento,
+           tipo_fundo,
+           p_vp,
+           dividend_yield,
+           dividend_yield_last_5_years,
+           daily_liquidity,
+           net_worth,
+           razao_social,
+           cnpj,
+           publico_alvo,
+           mandato,
+           prazo_duracao,
+           tipo_gestao,
+           taxa_adminstracao,
+           vacancia,
+           numero_cotistas,
+           cotas_emitidas,
+           valor_patrimonial_cota,
+           valor_patrimonial,
+           ultimo_rendimento,
+           updated_at
+    FROM fund_master
+    WHERE code = ${fundCode}
     LIMIT 1
   `;
 

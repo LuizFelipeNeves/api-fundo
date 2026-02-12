@@ -22,7 +22,7 @@ async function listLatestDocuments(fundCodes: string[], limit: number) {
     url: string;
   }[]>(
     `SELECT fund_code, title, category, type, "dateUpload" AS "dateUpload", url
-    FROM documents_read
+    FROM document
     WHERE fund_code = ANY($1)
     ORDER BY date_upload_iso DESC, document_id DESC
     LIMIT $2`,
