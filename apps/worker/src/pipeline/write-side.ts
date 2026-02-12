@@ -38,32 +38,34 @@ export function createWriteSide() {
   async function upsertFundList(items: PersistFundListItem[]) {
     if (items.length === 0) return;
     const now = new Date();
-    for (const item of items) {
-      await sql`
-        INSERT INTO fund_master (code, sector, p_vp, dividend_yield, dividend_yield_last_5_years, daily_liquidity, net_worth, type, created_at, updated_at)
-        VALUES (
-          ${item.code.toUpperCase()},
-          ${item.sector ?? null},
-          ${item.p_vp ?? null},
-          ${item.dividend_yield ?? null},
-          ${item.dividend_yield_last_5_years ?? null},
-          ${item.daily_liquidity ?? null},
-          ${item.net_worth ?? null},
-          ${item.type ?? null},
-          ${now},
-          ${now}
-        )
-        ON CONFLICT (code) DO UPDATE SET
-          sector = EXCLUDED.sector,
-          p_vp = EXCLUDED.p_vp,
-          dividend_yield = EXCLUDED.dividend_yield,
-          dividend_yield_last_5_years = EXCLUDED.dividend_yield_last_5_years,
-          daily_liquidity = EXCLUDED.daily_liquidity,
-          net_worth = EXCLUDED.net_worth,
-          type = EXCLUDED.type,
-          updated_at = EXCLUDED.updated_at
-      `;
-    }
+    const uniqueByCode = new Map<string, PersistFundListItem>();
+    for (const item of items) uniqueByCode.set(item.code.toUpperCase(), item);
+    const uniqueItems = Array.from(uniqueByCode.entries()).map(([code, item]) => [
+      code,
+      item.sector ?? null,
+      item.p_vp ?? null,
+      item.dividend_yield ?? null,
+      item.dividend_yield_last_5_years ?? null,
+      item.daily_liquidity ?? null,
+      item.net_worth ?? null,
+      item.type ?? null,
+      now,
+      now,
+    ]);
+
+    await sql`
+      INSERT INTO fund_master (code, sector, p_vp, dividend_yield, dividend_yield_last_5_years, daily_liquidity, net_worth, type, created_at, updated_at)
+      VALUES ${sql(uniqueItems as any)}
+      ON CONFLICT (code) DO UPDATE SET
+        sector = EXCLUDED.sector,
+        p_vp = EXCLUDED.p_vp,
+        dividend_yield = EXCLUDED.dividend_yield,
+        dividend_yield_last_5_years = EXCLUDED.dividend_yield_last_5_years,
+        daily_liquidity = EXCLUDED.daily_liquidity,
+        net_worth = EXCLUDED.net_worth,
+        type = EXCLUDED.type,
+        updated_at = EXCLUDED.updated_at
+    `;
   }
 
   async function upsertFundDetails(item: PersistFundDetailsItem) {
@@ -138,20 +140,31 @@ export function createWriteSide() {
 
   async function upsertCotations(items: PersistCotation[]) {
     if (items.length === 0) return;
-    for (const item of items) {
-      await sql`
-        INSERT INTO cotation (fund_code, date_iso, price)
-        VALUES (${item.fund_code.toUpperCase()}, ${item.date_iso}, ${item.price})
-        ON CONFLICT (fund_code, date_iso) DO UPDATE SET
-          price = EXCLUDED.price
-      `;
-    }
-
     const now = new Date();
-    const codes = Array.from(new Set(items.map((i) => i.fund_code.toUpperCase())));
-    for (const code of codes) {
-      await touchFundState(code, { last_historical_cotations_at: now });
+    const uniqueByKey = new Map<string, [fund_code: string, date_iso: string, price: number]>();
+    const codesSet = new Set<string>();
+    for (const item of items) {
+      const fundCode = item.fund_code.toUpperCase();
+      codesSet.add(fundCode);
+      uniqueByKey.set(`${fundCode}|${item.date_iso}`, [fundCode, item.date_iso, item.price]);
     }
+    const uniqueRows = Array.from(uniqueByKey.values());
+
+    await sql`
+      INSERT INTO cotation (fund_code, date_iso, price)
+      VALUES ${sql(uniqueRows as any)}
+      ON CONFLICT (fund_code, date_iso) DO UPDATE SET
+        price = EXCLUDED.price
+    `;
+
+    const codes = Array.from(codesSet);
+    await sql`
+      INSERT INTO fund_state (fund_code, last_historical_cotations_at, created_at, updated_at)
+      VALUES ${sql(codes.map((code) => [code, now, now, now]) as any)}
+      ON CONFLICT (fund_code) DO UPDATE SET
+        last_historical_cotations_at = EXCLUDED.last_historical_cotations_at,
+        updated_at = EXCLUDED.updated_at
+    `;
   }
 
   async function upsertCotationsToday(item: PersistCotationsToday) {
@@ -169,60 +182,98 @@ export function createWriteSide() {
 
   async function upsertDividends(items: PersistDividend[]) {
     if (items.length === 0) return;
+    const uniqueByKey = new Map<string, [fund_code: string, date_iso: string, payment: string, type: number, value: number, yieldValue: number]>();
     for (const item of items) {
-      await sql`
-        INSERT INTO dividend (fund_code, date_iso, payment, type, value, yield)
-        VALUES (${item.fund_code.toUpperCase()}, ${item.date_iso}, ${item.payment}, ${item.type}, ${item.value}, ${item.yield})
-        ON CONFLICT (fund_code, date_iso, type) DO UPDATE SET
-          payment = EXCLUDED.payment,
-          value = EXCLUDED.value,
-          yield = EXCLUDED.yield
-      `;
+      const fundCode = item.fund_code.toUpperCase();
+      uniqueByKey.set(`${fundCode}|${item.date_iso}|${item.type}`, [
+        fundCode,
+        item.date_iso,
+        item.payment,
+        item.type,
+        item.value,
+        item.yield,
+      ]);
     }
+
+    const uniqueRows = Array.from(uniqueByKey.values());
+    await sql`
+      INSERT INTO dividend (fund_code, date_iso, payment, type, value, yield)
+      VALUES ${sql(uniqueRows as any)}
+      ON CONFLICT (fund_code, date_iso, type) DO UPDATE SET
+        payment = EXCLUDED.payment,
+        value = EXCLUDED.value,
+        yield = EXCLUDED.yield
+    `;
   }
 
   async function upsertDocuments(items: PersistDocument[]) {
     if (items.length === 0) return;
-    for (const item of items) {
-      await sql`
-        INSERT INTO document (fund_code, document_id, title, category, type, date, date_upload_iso, "dateUpload", url, status, version, created_at)
-        VALUES (
-          ${item.fund_code.toUpperCase()},
-          ${item.document_id},
-          ${item.title},
-          ${item.category},
-          ${item.type},
-          ${item.date},
-          ${item.date_upload_iso},
-          ${item.dateUpload},
-          ${item.url},
-          ${item.status},
-          ${item.version},
-          ${new Date()}
-        )
-        ON CONFLICT (fund_code, document_id) DO UPDATE SET
-          title = EXCLUDED.title,
-          category = EXCLUDED.category,
-          type = EXCLUDED.type,
-          date = EXCLUDED.date,
-          date_upload_iso = EXCLUDED.date_upload_iso,
-          "dateUpload" = EXCLUDED."dateUpload",
-          url = EXCLUDED.url,
-          status = EXCLUDED.status,
-          version = EXCLUDED.version
-      `;
-    }
-
     const now = new Date();
-    const byFund = new Map<string, number>();
+    const uniqueByKey = new Map<
+      string,
+      [
+        fund_code: string,
+        document_id: number,
+        title: string,
+        category: string,
+        type: string,
+        date: string,
+        date_upload_iso: string,
+        dateUpload: string,
+        url: string,
+        status: string,
+        version: number,
+      ]
+    >();
     for (const item of items) {
-      const key = item.fund_code.toUpperCase();
-      const current = byFund.get(key) ?? 0;
-      if (item.document_id > current) byFund.set(key, item.document_id);
+      const fundCode = item.fund_code.toUpperCase();
+      uniqueByKey.set(`${fundCode}|${item.document_id}`, [
+        fundCode,
+        item.document_id,
+        item.title,
+        item.category,
+        item.type,
+        item.date,
+        item.date_upload_iso,
+        item.dateUpload,
+        item.url,
+        item.status,
+        item.version,
+      ]);
     }
-    for (const [code, maxId] of byFund.entries()) {
-      await touchFundState(code, { last_documents_at: now, last_documents_max_id: maxId });
+    const uniqueRows = Array.from(uniqueByKey.values());
+
+    await sql`
+      INSERT INTO document (fund_code, document_id, title, category, type, date, date_upload_iso, "dateUpload", url, status, version, created_at)
+      VALUES ${sql(uniqueRows.map((r) => [...r, now]) as any)}
+      ON CONFLICT (fund_code, document_id) DO UPDATE SET
+        title = EXCLUDED.title,
+        category = EXCLUDED.category,
+        type = EXCLUDED.type,
+        date = EXCLUDED.date,
+        date_upload_iso = EXCLUDED.date_upload_iso,
+        "dateUpload" = EXCLUDED."dateUpload",
+        url = EXCLUDED.url,
+        status = EXCLUDED.status,
+        version = EXCLUDED.version
+    `;
+
+    const byFund = new Map<string, number>();
+    for (const r of uniqueRows) {
+      const fundCode = r[0];
+      const documentId = r[1];
+      const current = byFund.get(fundCode) ?? 0;
+      if (documentId > current) byFund.set(fundCode, documentId);
     }
+    const stateRows = Array.from(byFund.entries()).map(([code, maxId]) => [code, now, maxId, now, now]);
+    await sql`
+      INSERT INTO fund_state (fund_code, last_documents_at, last_documents_max_id, created_at, updated_at)
+      VALUES ${sql(stateRows as any)}
+      ON CONFLICT (fund_code) DO UPDATE SET
+        last_documents_at = EXCLUDED.last_documents_at,
+        last_documents_max_id = GREATEST(COALESCE(fund_state.last_documents_max_id, 0), COALESCE(EXCLUDED.last_documents_max_id, 0)),
+        updated_at = EXCLUDED.updated_at
+    `;
   }
 
   return {

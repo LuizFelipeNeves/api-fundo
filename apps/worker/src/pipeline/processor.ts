@@ -3,10 +3,10 @@ import { createWriteSide } from './write-side';
 import type { PersistRequest } from './messages';
 import { enrichDividendYields } from '../utils/dividends';
 
-export async function processPersistRequest(request: PersistRequest): Promise<void> {
-  const writeSide = createWriteSide();
-  const readSide = getReadModelWriter();
+const writeSide = createWriteSide();
+const readSide = getReadModelWriter();
 
+export async function processPersistRequest(request: PersistRequest): Promise<void> {
   switch (request.type) {
     case 'fund_list': {
       await writeSide.upsertFundList(request.items);

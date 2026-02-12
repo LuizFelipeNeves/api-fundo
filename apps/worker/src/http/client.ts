@@ -68,6 +68,7 @@ function computeBackoff(attempt: number, status: number | undefined, retryAfter:
 function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
 
 async function throwHttpError(response: Response, method: string, url: string): Promise<never> {
+  try { response.body?.cancel(); } catch { null; }
   throw new Error(
     `${method} ${url} -> HTTP ${response.status}${response.statusText ? ' ' + response.statusText : ''} content_type="${response.headers.get('content-type') || ''}"`
   );
