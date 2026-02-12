@@ -16,6 +16,10 @@ export function getWriteDb(): Sql {
     max,
     idle_timeout: 30,
     connect_timeout: 10,
+    onnotice: (notice) => {
+      // Suppress "relation already exists" notices
+      if (notice.code === '42P07') return;
+    },
   });
 
   return sqlSingleton;

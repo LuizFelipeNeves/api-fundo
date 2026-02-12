@@ -130,6 +130,8 @@ export function createReadModelWriter(sql: Sql) {
     await sql`
       INSERT INTO cotations_today_read (fund_code, date_iso, fetched_at, data_json)
       VALUES (${fundCode.toUpperCase()}, ${dateIso}, ${fetchedAt}, ${sql.json(dataJson)})
+      ON CONFLICT (fund_code, date_iso, fetched_at) DO UPDATE SET
+        data_json = EXCLUDED.data_json
     `;
   }
 

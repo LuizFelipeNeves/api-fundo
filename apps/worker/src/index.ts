@@ -25,6 +25,8 @@ process.on('unhandledRejection', (reason: unknown) => {
 });
 
 let isShuttingDown = false;
+let activeSessionToken = 0;
+let runMainInFlight: Promise<void> | null = null;
 
 async function connectWithRetry(maxRetries = 10, delayMs = 2000): Promise<ChannelModel> {
   let lastError: Error | null = null;
@@ -45,6 +47,10 @@ async function connectWithRetry(maxRetries = 10, delayMs = 2000): Promise<Channe
 }
 
 async function runWithConnection(connection: ChannelModel) {
+  const sessionToken = Date.now() + Math.floor(Math.random() * 1_000_000);
+  activeSessionToken = sessionToken;
+  const isActive = () => !isShuttingDown && activeSessionToken === sessionToken;
+
   connection.on('error', (err: Error) => {
     if (isShuttingDown) return;
     process.stderr.write(`[worker] connection error: ${err.message}\n`);
@@ -52,11 +58,35 @@ async function runWithConnection(connection: ChannelModel) {
   connection.on('close', () => {
     if (isShuttingDown) return;
     process.stderr.write('[worker] connection closed, attempting reconnect...\n');
+    if (activeSessionToken === sessionToken) activeSessionToken = 0;
     runMain(); // Restart instead of exit
   });
 
   await runMigrations();
   const channel = await connection.createChannel();
+  const handledKey = Symbol.for('worker.telegram.handled');
+
+  function safeAck(msg: ConsumeMessage) {
+    try {
+      if (!isActive()) return;
+      if ((msg as any)[handledKey]) return;
+      (msg as any)[handledKey] = 'ack';
+      channel.ack(msg);
+    } catch {
+      // ignore
+    }
+  }
+
+  function safeNack(msg: ConsumeMessage, requeue: boolean) {
+    try {
+      if (!isActive()) return;
+      if ((msg as any)[handledKey]) return;
+      (msg as any)[handledKey] = requeue ? 'nack_requeue' : 'nack';
+      channel.nack(msg, false, requeue);
+    } catch {
+      // ignore
+    }
+  }
 
   channel.on('error', (err: Error) => {
     if (isShuttingDown) return;
@@ -70,9 +100,9 @@ async function runWithConnection(connection: ChannelModel) {
   await channel.assertQueue(telegramQueue, { durable: true });
   await channel.prefetch(telegramPrefetch);
 
-  await startPipelineConsumers(connection);
-  await startCollectorRunner(connection);
-  await startCronScheduler(connection);
+  await startPipelineConsumers(connection, isActive);
+  await startCollectorRunner(connection, isActive);
+  await startCronScheduler(connection, isActive);
 
   const shutdown = async () => {
     if (isShuttingDown) return;
@@ -94,36 +124,37 @@ async function runWithConnection(connection: ChannelModel) {
   process.once('SIGTERM', shutdown);
 
   channel.consume(telegramQueue, async (msg: ConsumeMessage | null) => {
-    if (!msg || isShuttingDown) return;
+    if (!msg || !isActive()) return;
     try {
       const payload = JSON.parse(msg.content.toString());
       const update = payload?.update ?? payload;
       await processTelegramUpdate(update);
-      channel.ack(msg);
+      safeAck(msg);
     } catch (err) {
       const message = err instanceof Error ? err.stack || err.message : String(err);
       process.stderr.write(`[telegram-worker] error ${message.replace(/\n/g, '\\n')}\n`);
-      try {
-        channel.nack(msg, false, true);
-      } catch {
-        // ignore if channel closed
-      }
+      safeNack(msg, true);
     }
   });
 }
 
 async function runMain() {
   if (isShuttingDown) return;
-  try {
-    const connection = await connectWithRetry();
-    await runWithConnection(connection);
-  } catch (err) {
-    if (isShuttingDown) return;
-    const message = err instanceof Error ? err.stack || err.message : String(err);
-    process.stderr.write(`[telegram-worker] fatal ${message.replace(/\n/g, '\\n')}\n`);
-    process.stderr.write('[worker] restarting in 5 seconds...\n');
-    setTimeout(runMain, 5000);
-  }
+  if (runMainInFlight) return;
+  runMainInFlight = (async () => {
+    try {
+      const connection = await connectWithRetry();
+      await runWithConnection(connection);
+    } catch (err) {
+      if (isShuttingDown) return;
+      const message = err instanceof Error ? err.stack || err.message : String(err);
+      process.stderr.write(`[telegram-worker] fatal ${message.replace(/\n/g, '\\n')}\n`);
+      process.stderr.write('[worker] restarting in 5 seconds...\n');
+      setTimeout(runMain, 5000);
+    }
+  })().finally(() => {
+    runMainInFlight = null;
+  });
 }
 
 runMain();

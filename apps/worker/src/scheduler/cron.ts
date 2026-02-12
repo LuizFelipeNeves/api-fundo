@@ -19,7 +19,7 @@ function getIntervalMs(taskType: keyof typeof TASK_INTERVALS): number {
   return TASK_INTERVALS[taskType] * 60 * 1000;
 }
 
-export async function startCronScheduler(connection: ChannelModel) {
+export async function startCronScheduler(connection: ChannelModel, isActive: () => boolean = () => true) {
   const publisher = await createCollectorPublisher(connection);
 
   const batchSizeRaw = Number.parseInt(process.env.SCHED_BATCH_SIZE || '200', 10);
@@ -42,33 +42,50 @@ export async function startCronScheduler(connection: ChannelModel) {
   }
 
   async function tick() {
+    if (!isActive()) return;
     resetDailyFlags();
     const now = Date.now();
 
     // fund_list: 30min
     if (!lastRun['fund_list'] || now - lastRun['fund_list'] >= getIntervalMs('fund_list')) {
-      await publisher.publish({ collector: 'fund_list', triggered_by: 'cron' });
+      try {
+        await publisher.publish({ collector: 'fund_list', triggered_by: 'cron' });
+      } catch {
+        return;
+      }
       lastRun['fund_list'] = now;
     }
 
     // fund_details: 10min
     const detailsCandidates = await listCandidatesByState('last_details_sync_at', batchSize, getIntervalMs('fund_details'));
     for (const code of detailsCandidates) {
-      await publisher.publish({ collector: 'fund_details', fund_code: code, triggered_by: 'cron' });
+      try {
+        await publisher.publish({ collector: 'fund_details', fund_code: code, triggered_by: 'cron' });
+      } catch {
+        return;
+      }
     }
 
     // cotations_today: 5min
     if (shouldRunCotationsToday()) {
       const todayCandidates = await listCandidatesByState('last_cotations_today_at', batchSize, getIntervalMs('cotations_today'));
       for (const code of todayCandidates) {
-        await publisher.publish({ collector: 'cotations_today', fund_code: code, triggered_by: 'cron' });
+        try {
+          await publisher.publish({ collector: 'cotations_today', fund_code: code, triggered_by: 'cron' });
+        } catch {
+          return;
+        }
       }
     }
 
     // indicators: 30min
     const indicatorsCandidates = await listCandidatesByState('last_indicators_at', batchSize, getIntervalMs('indicators'), { requireId: true });
     for (const code of indicatorsCandidates) {
-      await publisher.publish({ collector: 'indicators', fund_code: code, triggered_by: 'cron' });
+      try {
+        await publisher.publish({ collector: 'indicators', fund_code: code, triggered_by: 'cron' });
+      } catch {
+        return;
+      }
     }
 
     // cotations (historical): backfill only once
@@ -77,7 +94,11 @@ export async function startCronScheduler(connection: ChannelModel) {
       const BACKFILL_INTERVAL_MS = 100 * 365 * 24 * 60 * 60 * 1000;
       const cotationsCandidates = await listCandidatesByState('last_historical_cotations_at', batchSize, BACKFILL_INTERVAL_MS, { requireId: true });
       for (const code of cotationsCandidates) {
-        await publisher.publish({ collector: 'cotations', fund_code: code, range: { days: 365 }, triggered_by: 'cron' });
+        try {
+          await publisher.publish({ collector: 'cotations', fund_code: code, range: { days: 365 }, triggered_by: 'cron' });
+        } catch {
+          return;
+        }
       }
       cotationsBackfillDone = true;
     }
@@ -85,7 +106,11 @@ export async function startCronScheduler(connection: ChannelModel) {
     // documents: 10min
     const documentsCandidates = await listDocumentsCandidates(batchSize, getIntervalMs('documents'));
     for (const { code, cnpj } of documentsCandidates) {
-      await publisher.publish({ collector: 'documents', fund_code: code, cnpj, triggered_by: 'cron' });
+      try {
+        await publisher.publish({ collector: 'documents', fund_code: code, cnpj, triggered_by: 'cron' });
+      } catch {
+        return;
+      }
     }
 
     // eod_cotation: once per day after market close
@@ -101,6 +126,15 @@ export async function startCronScheduler(connection: ChannelModel) {
 
   await tick();
   const timer = setInterval(async () => {
+    if (!isActive()) {
+      clearInterval(timer);
+      try {
+        await publisher.channel.close();
+      } catch {
+        // ignore
+      }
+      return;
+    }
     if (running) return;
     running = true;
     try {
