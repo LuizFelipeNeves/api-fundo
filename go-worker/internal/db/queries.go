@@ -3,6 +3,8 @@ package db
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -108,16 +110,6 @@ func (db *DB) queryFundCandidates(ctx context.Context, query string, args ...int
 
 // UpdateFundStateTimestamp updates a specific timestamp in fund_state
 func (db *DB) UpdateFundStateTimestamp(ctx context.Context, fundCode, field string, timestamp time.Time) error {
-	// First ensure fund_state row exists
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO fund_state (fund_code, created_at, updated_at)
-		VALUES ($1, NOW(), NOW())
-		ON CONFLICT (fund_code) DO NOTHING
-	`, fundCode)
-	if err != nil {
-		return err
-	}
-
 	// Update the specific timestamp field
 	var query string
 	switch field {
@@ -133,6 +125,19 @@ func (db *DB) UpdateFundStateTimestamp(ctx context.Context, fundCode, field stri
 		query = "UPDATE fund_state SET last_documents_at = $2, updated_at = NOW() WHERE fund_code = $1"
 	default:
 		return nil // Unknown field, skip silently
+	}
+
+	if strings.TrimSpace(fundCode) == "" {
+		return fmt.Errorf("fundCode is required")
+	}
+
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO fund_state (fund_code, created_at, updated_at)
+		VALUES ($1, NOW(), NOW())
+		ON CONFLICT (fund_code) DO NOTHING
+	`, fundCode)
+	if err != nil {
+		return err
 	}
 
 	_, err = db.ExecContext(ctx, query, fundCode, timestamp)

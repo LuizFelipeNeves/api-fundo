@@ -23,7 +23,7 @@ type CotationItem struct {
 }
 
 // CotationsTodayData represents today's cotation data
-type CotationsTodayData map[string]interface{}
+type CotationsTodayData any
 
 // DocumentData represents a document entry
 type DocumentData struct {
@@ -71,8 +71,8 @@ func NormalizeCotations(raw map[string][]interface{}) *NormalizedCotations {
 }
 
 // NormalizeCotationsToday normalizes today's cotations response
-func NormalizeCotationsToday(raw map[string]interface{}) CotationsTodayData {
-	return CotationsTodayData(raw)
+func NormalizeCotationsToday(raw interface{}) CotationsTodayData {
+	return raw
 }
 
 // NormalizeDocuments normalizes documents JSON response

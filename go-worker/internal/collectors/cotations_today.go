@@ -38,7 +38,7 @@ func (c *CotationsTodayCollector) Collect(ctx context.Context, req CollectReques
 	params.Add("currences[]", "1")
 
 	// POST to statusinvest API
-	var rawData map[string]interface{}
+	var rawData interface{}
 	err := c.client.PostFormStatusInvest(
 		ctx,
 		httpclient.StatusInvestBase+"/fii/tickerprice",

@@ -62,9 +62,7 @@ func (p *Persister) PersistFundList(ctx context.Context, items []collectors.Fund
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit: %w", err)
 	}
-
-	// Update fund_state for fund_list
-	return p.db.UpdateFundStateTimestamp(ctx, "", "last_fund_list_sync_at", time.Now())
+	return nil
 }
 
 // PersistFundDetails persists fund details and dividends

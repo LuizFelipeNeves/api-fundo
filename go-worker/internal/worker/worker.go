@@ -16,10 +16,18 @@ type Worker struct {
 	registry  *collectors.Registry
 	persister *persistence.Persister
 	workChan  <-chan scheduler.WorkItem
+
+	// reuse struct to avoid allocation per job
+	req collectors.CollectRequest
 }
 
 // New creates a new worker
-func New(id int, registry *collectors.Registry, persister *persistence.Persister, workChan <-chan scheduler.WorkItem) *Worker {
+func New(
+	id int,
+	registry *collectors.Registry,
+	persister *persistence.Persister,
+	workChan <-chan scheduler.WorkItem,
+) *Worker {
 	return &Worker{
 		id:        id,
 		registry:  registry,
@@ -30,17 +38,29 @@ func New(id int, registry *collectors.Registry, persister *persistence.Persister
 
 // Start begins processing work items
 func (w *Worker) Start(ctx context.Context) error {
-	log.Printf("[worker-%d] started\n", w.id)
+	log.Println("[worker-", w.id, "] started")
 
 	for {
 		select {
+
 		case <-ctx.Done():
-			log.Printf("[worker-%d] shutting down\n", w.id)
+			log.Println("[worker-", w.id, "] shutting down")
 			return ctx.Err()
-		case item := <-w.workChan:
+
+		// SAFE channel read (avoid infinite loop if closed)
+		case item, ok := <-w.workChan:
+			if !ok {
+				log.Println("[worker-", w.id, "] work channel closed")
+				return nil
+			}
+
 			if err := w.processWorkItem(ctx, item); err != nil {
-				log.Printf("[worker-%d] error processing %s for %s: %v\n",
-					w.id, item.CollectorName, item.FundCode, err)
+				log.Println(
+					"[worker-", w.id,
+					"] error processing ", item.CollectorName,
+					" for ", item.FundCode,
+					": ", err,
+				)
 			}
 		}
 	}
@@ -48,19 +68,19 @@ func (w *Worker) Start(ctx context.Context) error {
 
 // processWorkItem processes a single work item: collect → persist
 func (w *Worker) processWorkItem(ctx context.Context, item scheduler.WorkItem) error {
-	// Get the collector
+
+	// registry lookup (map lookup is cheap)
 	collector, err := w.registry.Get(item.CollectorName)
 	if err != nil {
 		return fmt.Errorf("collector not found: %w", err)
 	}
 
-	// Collect data
-	req := collectors.CollectRequest{
-		FundCode: item.FundCode,
-		CNPJ:     item.CNPJ,
-	}
+	// reuse request struct (avoid allocation)
+	w.req.FundCode = item.FundCode
+	w.req.CNPJ = item.CNPJ
 
-	result, err := collector.Collect(ctx, req)
+	// Collect data
+	result, err := collector.Collect(ctx, w.req)
 	if err != nil {
 		return fmt.Errorf("collection failed: %w", err)
 	}
@@ -70,13 +90,25 @@ func (w *Worker) processWorkItem(ctx context.Context, item scheduler.WorkItem) e
 		return fmt.Errorf("persistence failed: %w", err)
 	}
 
-	log.Printf("[worker-%d] completed %s for %s\n", w.id, item.CollectorName, item.FundCode)
+	log.Println(
+		"[worker-", w.id,
+		"] completed ", item.CollectorName,
+		" for ", item.FundCode,
+	)
+
 	return nil
 }
 
 // persistResult persists the collection result
-func (w *Worker) persistResult(ctx context.Context, collectorName, fundCode string, result *collectors.CollectResult) error {
+func (w *Worker) persistResult(
+	ctx context.Context,
+	collectorName string,
+	fundCode string,
+	result *collectors.CollectResult,
+) error {
+
 	switch collectorName {
+
 	case "fund_list":
 		items, ok := result.Data.([]collectors.FundListItem)
 		if !ok {
