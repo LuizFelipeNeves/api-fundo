@@ -102,6 +102,7 @@ export async function startCronScheduler(connection: ChannelModel, isActive: () 
       // fund_list: 30min
       if (!lastRun['fund_list'] || now - lastRun['fund_list'] >= getIntervalMs('fund_list')) {
         try {
+          console.log('[cron] fund_list');
           await publisher.publish({ collector: 'fund_list', triggered_by: 'cron' });
         } catch {
           return;
@@ -119,6 +120,7 @@ export async function startCronScheduler(connection: ChannelModel, isActive: () 
       );
       for (const code of detailsCandidates) {
         try {
+          console.log(`[cron] fund_details: fund_code=${code}`);
           await publisher.publish({ collector: 'fund_details', fund_code: code, triggered_by: 'cron' });
         } catch {
           return;
@@ -136,6 +138,7 @@ export async function startCronScheduler(connection: ChannelModel, isActive: () 
         );
         for (const code of todayCandidates) {
           try {
+            console.log(`[cron] cotations_today: fund_code=${code}`);
             await publisher.publish({ collector: 'cotations_today', fund_code: code, triggered_by: 'cron' });
           } catch {
             return;
@@ -153,6 +156,7 @@ export async function startCronScheduler(connection: ChannelModel, isActive: () 
       );
       for (const code of indicatorsCandidates) {
         try {
+          console.log(`[cron] indicators: fund_code=${code}`);
           await publisher.publish({ collector: 'indicators', fund_code: code, triggered_by: 'cron' });
         } catch {
           return;
@@ -176,6 +180,7 @@ export async function startCronScheduler(connection: ChannelModel, isActive: () 
           } else {
             for (const code of cotationsCandidates) {
               try {
+                console.log(`[cron] cotations: fund_code=${code}`);
                 await publisher.publish({ collector: 'cotations', fund_code: code, range: { days: 365 }, triggered_by: 'cron' });
               } catch {
                 return;
@@ -194,6 +199,7 @@ export async function startCronScheduler(connection: ChannelModel, isActive: () 
       );
       for (const { code, cnpj } of documentsCandidates) {
         try {
+          console.log(`[cron] documents: fund_code=${code} cnpj=${cnpj}`);
           await publisher.publish({ collector: 'documents', fund_code: code, cnpj, triggered_by: 'cron' });
         } catch {
           return;
