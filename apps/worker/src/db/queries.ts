@@ -22,11 +22,13 @@ export async function listCandidatesByState(
   field: StateField,
   limit: number,
   minIntervalMs: number,
-  opts?: { requireId?: boolean; requireCnpj?: boolean }
+  opts?: { requireId?: boolean; requireCnpj?: boolean; bucket?: number; buckets?: number }
 ): Promise<string[]> {
   const sqlDb = getRawSql();
   const requireId = opts?.requireId === true;
   const requireCnpj = opts?.requireCnpj === true;
+  const bucket = Number.isFinite(opts?.bucket) ? (opts?.bucket as number) : null;
+  const buckets = Number.isFinite(opts?.buckets) ? (opts?.buckets as number) : null;
   const cutoff = toIsoCutoff(minIntervalMs);
   const fieldSql = `"${field}"`;
 
@@ -37,9 +39,10 @@ export async function listCandidatesByState(
      WHERE ($1 IS FALSE OR fm.id IS NOT NULL)
        AND ($2 IS FALSE OR fm.cnpj IS NOT NULL)
        AND (fs.${fieldSql} IS NULL OR fs.${fieldSql} < $3)
+       AND ($5::int IS NULL OR $6::int IS NULL OR mod((hashtext(fm.code)::bigint + 2147483648), $6) = $5)
      ORDER BY fs.${fieldSql} NULLS FIRST, fm.code ASC
      LIMIT $4`,
-    [requireId, requireCnpj, cutoff, limit]
+    [requireId, requireCnpj, cutoff, limit, bucket, buckets]
   );
 
   return rows.map((r) => r.code.toUpperCase());
@@ -47,20 +50,25 @@ export async function listCandidatesByState(
 
 export async function listDocumentsCandidates(
   limit: number,
-  minIntervalMs: number
+  minIntervalMs: number,
+  opts?: { bucket?: number; buckets?: number }
 ): Promise<Array<{ code: string; cnpj: string }>> {
   const sqlDb = getRawSql();
+  const bucket = Number.isFinite(opts?.bucket) ? (opts?.bucket as number) : null;
+  const buckets = Number.isFinite(opts?.buckets) ? (opts?.buckets as number) : null;
   const cutoff = toIsoCutoff(minIntervalMs);
 
-  const rows = await sqlDb<FundWithCnpjRow[]>`
-    SELECT fm.code, fm.cnpj
-    FROM fund_master fm
-    LEFT JOIN fund_state fs ON fs.fund_code = fm.code
-    WHERE fm.cnpj IS NOT NULL
-      AND (fs.last_documents_at IS NULL OR fs.last_documents_at < ${cutoff})
-    ORDER BY fs.last_documents_at NULLS FIRST, fm.code ASC
-    LIMIT ${limit}
-  `;
+  const rows = await sqlDb.unsafe<FundWithCnpjRow[]>(
+    `SELECT fm.code, fm.cnpj
+     FROM fund_master fm
+     LEFT JOIN fund_state fs ON fs.fund_code = fm.code
+     WHERE fm.cnpj IS NOT NULL
+       AND (fs.last_documents_at IS NULL OR fs.last_documents_at < $1)
+       AND ($3::int IS NULL OR $4::int IS NULL OR mod((hashtext(fm.code)::bigint + 2147483648), $4) = $3)
+     ORDER BY fs.last_documents_at NULLS FIRST, fm.code ASC
+     LIMIT $2`,
+    [cutoff, limit, bucket, buckets]
+  );
 
   return rows
     .filter((r) => r.cnpj)
