@@ -1,6 +1,5 @@
 import amqplib, { type ConsumeMessage, type ChannelModel } from 'amqplib';
 import { processTelegramUpdate } from './telegram/processor';
-import { startPipelineConsumers } from './pipeline/consumer';
 import { startCollectorRunner } from './runner/collector-runner';
 import { startCronScheduler } from './scheduler/cron';
 import { runMigrations } from './migrations/runner';
@@ -27,6 +26,16 @@ process.on('unhandledRejection', (reason: unknown) => {
 let isShuttingDown = false;
 let activeSessionToken = 0;
 let runMainInFlight: Promise<void> | null = null;
+let restartTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleRestart(delayMs: number) {
+  if (isShuttingDown) return;
+  if (restartTimer) return;
+  restartTimer = setTimeout(() => {
+    restartTimer = null;
+    runMain();
+  }, Math.max(0, delayMs));
+}
 
 async function connectWithRetry(maxRetries = 10, delayMs = 2000): Promise<ChannelModel> {
   let lastError: Error | null = null;
@@ -59,19 +68,34 @@ async function runWithConnection(connection: ChannelModel) {
     if (isShuttingDown) return;
     process.stderr.write('[worker] connection closed, attempting reconnect...\n');
     if (activeSessionToken === sessionToken) activeSessionToken = 0;
-    runMain(); // Restart instead of exit
   });
 
   try {
     await runMigrations();
     const channel = await connection.createChannel();
     const handledKey = Symbol.for('worker.telegram.handled');
+    const handledDeliveryTags = new Set<number>();
+
+    function isChannelOpen(ch: unknown): boolean {
+      const c: any = ch as any;
+      if (!c) return false;
+      if (c.closed) return false;
+      if (c.connection === null) return false;
+      return typeof c.ack === 'function' && typeof c.nack === 'function';
+    }
 
     function safeAck(msg: ConsumeMessage) {
       try {
+        const tag = msg.fields?.deliveryTag;
+        if (typeof tag === 'number') {
+          if (handledDeliveryTags.has(tag)) return;
+          handledDeliveryTags.add(tag);
+        }
         if ((msg as any)[handledKey]) return;
         (msg as any)[handledKey] = 'ack';
-        channel.ack(msg);
+        if (isChannelOpen(channel)) {
+          channel.ack(msg);
+        }
       } catch {
         // ignore
       }
@@ -79,9 +103,16 @@ async function runWithConnection(connection: ChannelModel) {
 
     function safeNack(msg: ConsumeMessage, requeue: boolean) {
       try {
+        const tag = msg.fields?.deliveryTag;
+        if (typeof tag === 'number') {
+          if (handledDeliveryTags.has(tag)) return;
+          handledDeliveryTags.add(tag);
+        }
         if ((msg as any)[handledKey]) return;
         (msg as any)[handledKey] = requeue ? 'nack_requeue' : 'nack';
-        channel.nack(msg, false, requeue);
+        if (isChannelOpen(channel)) {
+          channel.nack(msg, false, requeue);
+        }
       } catch {
         // ignore
       }
@@ -99,7 +130,6 @@ async function runWithConnection(connection: ChannelModel) {
     await channel.assertQueue(telegramQueue, { durable: true });
     await channel.prefetch(telegramPrefetch);
 
-    await startPipelineConsumers(connection, isActive);
     await startCollectorRunner(connection, isActive);
     await startCronScheduler(connection, isActive);
 
@@ -125,7 +155,6 @@ async function runWithConnection(connection: ChannelModel) {
     channel.consume(telegramQueue, async (msg: ConsumeMessage | null) => {
       if (!msg) return;
       if (!isActive()) {
-        safeNack(msg, true);
         return;
       }
       try {
@@ -138,6 +167,11 @@ async function runWithConnection(connection: ChannelModel) {
         process.stderr.write(`[telegram-worker] error ${message.replace(/\n/g, '\\n')}\n`);
         safeNack(msg, true);
       }
+    }, { noAck: false });
+
+    // Keep the session alive until the AMQP connection closes.
+    await new Promise<void>((resolve) => {
+      connection.once('close', () => resolve());
     });
   } catch (err) {
     if (activeSessionToken === sessionToken) activeSessionToken = 0;
@@ -158,11 +192,25 @@ async function runMain() {
     try {
       connection = await connectWithRetry();
       await runWithConnection(connection);
+      if (!isShuttingDown) {
+        scheduleRestart(1000);
+      }
     } catch (err) {
       if (isShuttingDown) return;
       const message = err instanceof Error ? err.stack || err.message : String(err);
-      process.stderr.write(`[telegram-worker] fatal ${message.replace(/\n/g, '\\n')}\n`);
-      process.stderr.write('[worker] restarting in 5 seconds...\n');
+      const lower = message.toLowerCase();
+      const transient =
+        lower.includes('connection closed') ||
+        lower.includes('channel ended') ||
+        lower.includes('reply is not a function') ||
+        lower.includes('invalid frame') ||
+        lower.includes('frame size exceeds frame max');
+      if (transient) {
+        process.stderr.write('[worker] transient connection failure, restarting in 5 seconds...\n');
+      } else {
+        process.stderr.write(`[telegram-worker] fatal ${message.replace(/\n/g, '\\n')}\n`);
+        process.stderr.write('[worker] restarting in 5 seconds...\n');
+      }
       if (connection) {
         try {
           await connection.close();
@@ -170,7 +218,7 @@ async function runMain() {
           // ignore
         }
       }
-      setTimeout(runMain, 5000);
+      scheduleRestart(5000);
     }
   })().finally(() => {
     runMainInFlight = null;

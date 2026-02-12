@@ -2,11 +2,12 @@ import type { ChannelModel, ConsumeMessage } from 'amqplib';
 import { findCollector } from '../collectors/registry';
 import type { CollectRequest, CollectorContext } from '../collectors/types';
 import { getJson, getText, postForm } from '../http/client';
+import { normalizeCollectResult } from '../pipeline/normalizers';
+import { processPersistRequest } from '../pipeline/processor';
 import { setupQueue } from '../queues/rabbit';
-import { publishWithRetry } from '../queues/retry';
+import { ensureRetryQueues, publishWithRetry } from '../queues/retry';
 
 const requestQueue = String(process.env.COLLECT_REQUESTS_QUEUE || 'collector.requests').trim() || 'collector.requests';
-const resultsQueue = String(process.env.COLLECT_RESULTS_QUEUE || 'collector.results').trim() || 'collector.results';
 
 function isChannelOpen(channel: unknown): boolean {
   const ch: any = channel as any;
@@ -37,9 +38,9 @@ export async function startCollectorRunner(connection: ChannelModel, isActive: (
   const consumeChannel = await connection.createChannel();
   const publishChannel = await connection.createChannel();
   const handledKey = Symbol.for('worker.collector.handled');
+  const handledDeliveryTags = new Set<number>();
 
   await setupQueue(publishChannel, requestQueue, { dlx: 'collector.dlx', dlq: 'collector.dlq' });
-  await setupQueue(publishChannel, resultsQueue, { dlx: 'collector.dlx', dlq: 'collector.dlq' });
 
   const prefetchRaw = Number.parseInt(process.env.COLLECTOR_PREFETCH || '6', 10);
   const prefetch = Number.isFinite(prefetchRaw) && prefetchRaw > 0 ? Math.min(prefetchRaw, 50) : 6;
@@ -47,9 +48,29 @@ export async function startCollectorRunner(connection: ChannelModel, isActive: (
 
   const requestTimeoutRaw = Number.parseInt(process.env.COLLECTOR_MESSAGE_TIMEOUT_MS || '180000', 10);
   const requestTimeoutMs = Number.isFinite(requestTimeoutRaw) && requestTimeoutRaw > 0 ? requestTimeoutRaw : 180000;
+  const persistTimeoutRaw = Number.parseInt(process.env.PERSIST_MESSAGE_TIMEOUT_MS || '120000', 10);
+  const persistTimeoutMs = Number.isFinite(persistTimeoutRaw) && persistTimeoutRaw > 0 ? persistTimeoutRaw : 120000;
+  const collectResultTimeoutRaw = Number.parseInt(process.env.RESULTS_MESSAGE_TIMEOUT_MS || '120000', 10);
+  const collectResultTimeoutMs =
+    Number.isFinite(collectResultTimeoutRaw) && collectResultTimeoutRaw > 0 ? collectResultTimeoutRaw : 120000;
+  const retryBaseMsRaw = Number.parseInt(process.env.COLLECTOR_RETRY_BASE_MS || '500', 10);
+  const retryBaseMs = Number.isFinite(retryBaseMsRaw) ? retryBaseMsRaw : 500;
+  const maxRetriesRaw = Number.parseInt(process.env.COLLECTOR_MAX_RETRIES || '5', 10);
+  const maxRetries = Number.isFinite(maxRetriesRaw) ? maxRetriesRaw : 5;
+
+  await ensureRetryQueues(publishChannel, requestQueue, {
+    maxRetries,
+    retryBaseMs,
+    retryQueuePrefix: 'collector.requests',
+  });
 
   async function safeAck(msg: ConsumeMessage) {
     try {
+      const tag = msg.fields?.deliveryTag;
+      if (typeof tag === 'number') {
+        if (handledDeliveryTags.has(tag)) return;
+        handledDeliveryTags.add(tag);
+      }
       if ((msg as any)[handledKey]) return;
       (msg as any)[handledKey] = 'ack';
       if (isChannelOpen(consumeChannel)) {
@@ -62,6 +83,11 @@ export async function startCollectorRunner(connection: ChannelModel, isActive: (
 
   async function safeNack(msg: ConsumeMessage, requeue = false) {
     try {
+      const tag = msg.fields?.deliveryTag;
+      if (typeof tag === 'number') {
+        if (handledDeliveryTags.has(tag)) return;
+        handledDeliveryTags.add(tag);
+      }
       if ((msg as any)[handledKey]) return;
       (msg as any)[handledKey] = requeue ? 'nack_requeue' : 'nack';
       if (isChannelOpen(consumeChannel)) {
@@ -74,15 +100,6 @@ export async function startCollectorRunner(connection: ChannelModel, isActive: (
 
   const ctx: CollectorContext = {
     http: { getJson, getText, postForm },
-    publish(queue: string, body: Buffer) {
-      try {
-        if (isChannelOpen(publishChannel)) {
-          publishChannel.sendToQueue(queue, body, { contentType: 'application/json', persistent: true });
-        }
-      } catch {
-        // ignore
-      }
-    },
   };
 
   consumeChannel.consume(requestQueue, async (msg: ConsumeMessage | null) => {
@@ -105,16 +122,23 @@ export async function startCollectorRunner(connection: ChannelModel, isActive: (
         requestTimeoutMs,
         `collector.request collector=${request.collector} fund_code=${request.fund_code ?? ''}`
       );
-      // If collector returns a result, publish to results queue
+      // If collector returns a result, persist directly in this worker process.
       if (result) {
-        try {
-          if (isChannelOpen(publishChannel)) {
-            const body = Buffer.from(JSON.stringify(result));
-            publishChannel.sendToQueue(resultsQueue, body, { contentType: 'application/json', persistent: true });
-          }
-        } catch {
-          // ignore
+        const persistRequests = await withTimeout(
+          Promise.resolve(normalizeCollectResult(result)),
+          collectResultTimeoutMs,
+          `collector.normalize collector=${result.collector}`
+        );
+        for (const persistRequest of persistRequests) {
+          await withTimeout(
+            processPersistRequest(persistRequest),
+            persistTimeoutMs,
+            `collector.persist type=${persistRequest.type} collector=${result.collector}`
+          );
         }
+        process.stdout.write(
+          `[collector-runner] persisted=${persistRequests.length} collector=${result.collector} fetched_at=${result.fetched_at}\n`
+        );
       }
       await safeAck(msg);
     } catch (err) {
@@ -124,13 +148,15 @@ export async function startCollectorRunner(connection: ChannelModel, isActive: (
         process.stderr.write('[collector-runner] channel closed, discarding message\n');
         return;
       }
-      const retryBaseMs = Number.parseInt(process.env.COLLECTOR_RETRY_BASE_MS || '500', 10);
-      const maxRetries = Number.parseInt(process.env.COLLECTOR_MAX_RETRIES || '5', 10);
+      if (!isChannelOpen(publishChannel)) {
+        await safeNack(msg, true);
+        return;
+      }
       let outcome: 'acked' | 'retried' | 'dlq' = 'dlq';
       try {
         outcome = await publishWithRetry(publishChannel, requestQueue, msg, {
-          maxRetries: Number.isFinite(maxRetries) ? maxRetries : 5,
-          retryBaseMs: Number.isFinite(retryBaseMs) ? retryBaseMs : 500,
+          maxRetries,
+          retryBaseMs,
           retryQueuePrefix: 'collector.requests',
         });
       } catch (retryErr) {
@@ -145,7 +171,7 @@ export async function startCollectorRunner(connection: ChannelModel, isActive: (
         await safeAck(msg);
       }
     }
-  });
+  }, { noAck: false });
 
   return consumeChannel;
 }

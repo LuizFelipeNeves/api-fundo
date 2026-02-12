@@ -18,8 +18,8 @@ export async function enrichDividendYields(items: Dividend[]): Promise<PersistDi
       SELECT date_iso, type, yield
       FROM dividend
       WHERE fund_code = ${fundCode}
-        AND date_iso = ANY(${sql.array(uniqueDates, 'date')})
-        AND type = ANY(${sql.array(uniqueTypes, 'int4')})
+        AND date_iso IN ${sql(uniqueDates)}
+        AND type IN ${sql(uniqueTypes)}
     `;
     for (const row of existingRows) {
       existingMap.set(`${row.date_iso}|${row.type}`, row.yield ?? null);
@@ -32,7 +32,7 @@ export async function enrichDividendYields(items: Dividend[]): Promise<PersistDi
       SELECT date_iso, price
       FROM cotation
       WHERE fund_code = ${fundCode}
-        AND date_iso = ANY(${sql.array(uniqueDates, 'date')})
+        AND date_iso IN ${sql(uniqueDates)}
     `;
     for (const row of priceRows) {
       if (row.price !== null) priceMap.set(row.date_iso, row.price);

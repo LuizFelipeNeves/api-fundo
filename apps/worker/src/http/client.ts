@@ -1,28 +1,8 @@
 import { getDefaultHeaders } from '../config';
-import { Agent } from 'undici';
-import { getTorProxySelection, maybeSignalNewnym, shouldForceTorForHost, TOR_PROXY_ENABLED_EXPORT as TOR_PROXY_ENABLED, TOR_PROXY_MODE_EXPORT as TOR_PROXY_MODE, TOR_PROXY_REQUIRED_EXPORT as TOR_PROXY_REQUIRED } from './tor';
 
 const DEFAULT_TIMEOUT = 25000; // 25 segundos
 const HTTP_RETRY_MAX_DEFAULT = 4;
 const HTTP_RETRY_BASE_MS_DEFAULT = 600;
-
-/* ======================================================
-   🔥 HTTP AGENTS DEDICADOS POR HOST (keepalive)
-====================================================== */
-
-const AGENTS = {
-  fnet: new Agent({ keepAliveTimeout: 120_000, keepAliveMaxTimeout: 180_000, connections: 50, pipelining: 1 }),
-  investidor10: new Agent({ keepAliveTimeout: 60_000, keepAliveMaxTimeout: 90_000, connections: 20, pipelining: 2 }),
-  statusinvest: new Agent({ keepAliveTimeout: 60_000, keepAliveMaxTimeout: 90_000, connections: 10, pipelining: 1 }),
-  default: new Agent({ keepAliveTimeout: 30_000, keepAliveMaxTimeout: 45_000, connections: 15, pipelining: 2 }),
-};
-
-function getAgent(hostname: string): Agent {
-  if (hostname === 'fnet.bmfbovespa.com.br' || hostname.endsWith('.bmfbovespa.com.br')) return AGENTS.fnet;
-  if (hostname === 'investidor10.com.br' || hostname.endsWith('.investidor10.com.br')) return AGENTS.investidor10;
-  if (hostname === 'statusinvest.com.br' || hostname.endsWith('.statusinvest.com.br')) return AGENTS.statusinvest;
-  return AGENTS.default;
-}
 
 function extractJSessionId(resp: Response): string | null {
   const raw = resp.headers.get('set-cookie') || resp.headers.get('set-cookie2');
@@ -45,6 +25,15 @@ function getFnetInitHeaders(): Record<string, string> {
   return { 'User-Agent': 'Mozilla/5.0', Accept: '*/*', Connection: 'keep-alive' };
 }
 
+function getHtmlHeaders(): Record<string, string> {
+  return {
+    accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'accept-language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+    'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+    connection: 'keep-alive',
+  };
+}
+
 /* ======================================================
    🔥 HELPERS & CONFIG
 ====================================================== */
@@ -60,13 +49,15 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
 
 const HTTP_RETRY_MAX = clampInt(parsePositiveInt(process.env.HTTP_RETRY_MAX, HTTP_RETRY_MAX_DEFAULT), 1, 20);
 const HTTP_RETRY_BASE_MS = clampInt(parsePositiveInt(process.env.HTTP_RETRY_BASE_MS, HTTP_RETRY_BASE_MS_DEFAULT), 50, 60000);
+const HTTP_RETRY_AFTER_MAX_MS = clampInt(parsePositiveInt(process.env.HTTP_RETRY_AFTER_MAX_MS, 5000), 0, 60000);
+const HTTP_MAX_TOTAL_MS = clampInt(parsePositiveInt(process.env.HTTP_MAX_TOTAL_MS, 45000), 1000, 300000);
 
 function isRetryableStatus(status: number): boolean {
-  return status === 403 || status === 429 || status === 520 || status >= 500;
+  return status === 429 || status === 520 || status >= 500;
 }
 
 function computeBackoff(attempt: number, status: number | undefined, retryAfter: number | null, baseMs: number): number {
-  if (retryAfter !== null) return clampInt(retryAfter, 0, 300000);
+  if (retryAfter !== null) return clampInt(retryAfter, 0, HTTP_RETRY_AFTER_MAX_MS);
   const isThrottle = status === 429 || status === 403;
   const isTempError = status === 520 || status === 503;
   // 403/429: 2x, 520/503: 2.5x
@@ -76,13 +67,14 @@ function computeBackoff(attempt: number, status: number | undefined, retryAfter:
 
 function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
 
-async function readSnippet(response: Response, maxChars = 800): Promise<string> {
-  try { const t = (await response.text()).replace(/\s+/g, ' ').trim(); return t.length > maxChars ? t.slice(0, maxChars) + '…' : t; } catch { return ''; }
+function timeoutAfter(ms: number): Promise<never> {
+  return new Promise((_, reject) => setTimeout(() => reject(new Error(`timeout_after_ms=${ms}`)), ms));
 }
 
 async function throwHttpError(response: Response, method: string, url: string): Promise<never> {
-  const body = await readSnippet(response);
-  throw new Error(`${method} ${url} -> HTTP ${response.status}${response.statusText ? ' ' + response.statusText : ''} content_type="${response.headers.get('content-type') || ''}" body="${body}"`);
+  throw new Error(
+    `${method} ${url} -> HTTP ${response.status}${response.statusText ? ' ' + response.statusText : ''} content_type="${response.headers.get('content-type') || ''}"`
+  );
 }
 
 /* ======================================================
@@ -91,30 +83,51 @@ async function throwHttpError(response: Response, method: string, url: string): 
 
 interface ReqOptions { timeout?: number; headers?: Record<string, string>; retryMax?: number; retryBaseMs?: number; }
 
+function remainingBudgetMs(startedAt: number, maxTotalMs: number): number {
+  return maxTotalMs - (Date.now() - startedAt);
+}
+
+function getRetrySleepMs(
+  startedAt: number,
+  maxTotalMs: number,
+  plannedSleepMs: number
+): number {
+  const remaining = remainingBudgetMs(startedAt, maxTotalMs);
+  if (remaining <= 50) return -1;
+  return Math.max(0, Math.min(plannedSleepMs, remaining - 50));
+}
+
 async function fetchWithRetry(method: string, url: string, init: RequestInit, opts: ReqOptions): Promise<Response> {
   const timeout = opts.timeout ?? DEFAULT_TIMEOUT;
   const retryMax = clampInt(opts.retryMax ?? HTTP_RETRY_MAX, 1, 50);
   const retryBase = clampInt(opts.retryBaseMs ?? HTTP_RETRY_BASE_MS, 50, 60000);
-  const hostname = new URL(url).hostname;
-  const agent = getAgent(hostname);
+  const maxTotalMs = Math.max(timeout, HTTP_MAX_TOTAL_MS);
+  const startedAt = Date.now();
 
   for (let attempt = 0; attempt < retryMax; attempt++) {
     try {
-      const useTor = TOR_PROXY_ENABLED && (TOR_PROXY_REQUIRED || TOR_PROXY_MODE === 'always' || attempt > 0 || shouldForceTorForHost(hostname));
-      const tor = useTor ? await getTorProxySelection() : null;
-      if (useTor && TOR_PROXY_REQUIRED && !tor) { await sleep(250); throw new Error('TOR_PROXY_UNAVAILABLE'); }
-      if (tor) maybeSignalNewnym(tor.proxyUrl).catch(() => null);
-
+      const remainingForRequest = remainingBudgetMs(startedAt, maxTotalMs);
+      if (remainingForRequest <= 50) {
+        throw new Error(`timeout_budget_exhausted max_total_ms=${maxTotalMs}`);
+      }
+      const attemptTimeout = Math.min(timeout, remainingForRequest);
       const ctrl = new AbortController();
-      const tid = setTimeout(() => ctrl.abort(), timeout);
+      const tid = setTimeout(() => ctrl.abort(), attemptTimeout);
       try {
-        const res = await fetch(url, { ...init, signal: ctrl.signal, dispatcher: tor?.dispatcher ?? agent });
+        const requestInit: RequestInit = { ...init, signal: ctrl.signal };
+        const res = await Promise.race([
+          fetch(url, requestInit),
+          timeoutAfter(attemptTimeout),
+        ]);
         clearTimeout(tid);
 
         if (!res.ok && isRetryableStatus(res.status) && attempt + 1 < retryMax) {
           const after = parseRetryAfterMs(res.headers.get('retry-after'));
           try { res.body?.cancel(); } catch { null; }
-          await sleep(computeBackoff(attempt, res.status, after, retryBase));
+          const planned = computeBackoff(attempt, res.status, after, retryBase);
+          const sleepMs = getRetrySleepMs(startedAt, maxTotalMs, planned);
+          if (sleepMs < 0) return res;
+          await sleep(sleepMs);
           continue;
         }
         return res;
@@ -124,7 +137,12 @@ async function fetchWithRetry(method: string, url: string, init: RequestInit, op
         const errMsg = e instanceof Error && e.name === 'AbortError' ? `timeout_after_ms=${timeout}` : String(e);
         throw new Error(`${method} ${url} -> retry_failed after ${attempt + 1}/${retryMax}: ${errMsg}`);
       }
-      await sleep(computeBackoff(attempt, undefined, null, retryBase));
+      const planned = computeBackoff(attempt, undefined, null, retryBase);
+      const sleepMs = getRetrySleepMs(startedAt, maxTotalMs, planned);
+      if (sleepMs < 0) {
+        throw new Error(`${method} ${url} -> retry_failed budget_exhausted max_total_ms=${maxTotalMs}`);
+      }
+      await sleep(sleepMs);
     }
   }
   throw new Error(`${method} ${url} -> failed`);
@@ -143,64 +161,32 @@ function parseRetryAfterMs(h: string | null): number | null {
 ====================================================== */
 
 async function request<T>(url: string, opts: ReqOptions = {}, expectJson = true): Promise<T> {
-  const retryMax = clampInt(opts.retryMax ?? HTTP_RETRY_MAX, 1, 50);
-  const retryBase = clampInt(opts.retryBaseMs ?? HTTP_RETRY_BASE_MS, 50, 60000);
+  const res = await fetchWithRetry('GET', url, { headers: opts.headers ?? getDefaultHeaders() }, opts);
+  if (!res.ok) await throwHttpError(res, 'GET', url);
 
-  for (let attempt = 0; attempt < retryMax; attempt++) {
-    try {
-      const res = await fetchWithRetry('GET', url, { headers: opts.headers ?? getDefaultHeaders() }, opts);
-      if (!res.ok) await throwHttpError(res, 'GET', url);
-
-      if (expectJson) {
-        const ct = res.headers.get('content-type') || '';
-        if (!ct.toLowerCase().includes('application/json')) {
-          if (attempt + 1 < retryMax && ct.toLowerCase().includes('text/html')) {
-            try { res.body?.cancel(); } catch { null; }
-            await sleep(computeBackoff(attempt, 503, null, retryBase));
-            continue;
-          }
-          throw new Error(`GET ${url} -> unexpected_content_type="${ct}"`);
-        }
-        try { return await res.json() as T; } catch { throw new Error(`GET ${url} -> invalid_json`); }
-      }
-      return await res.text() as T;
-    } catch (e) {
-      if (attempt + 1 >= retryMax) throw e;
-      await sleep(computeBackoff(attempt, undefined, null, retryBase));
+  if (expectJson) {
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.toLowerCase().includes('application/json')) {
+      throw new Error(`GET ${url} -> unexpected_content_type="${ct}"`);
     }
+    try { return await res.json() as T; } catch { throw new Error(`GET ${url} -> invalid_json`); }
   }
-  throw new Error(`GET ${url} -> failed`);
+  return await res.text() as T;
 }
 
 async function doPost<T>(url: string, body: string, opts: ReqOptions = {}): Promise<T> {
-  const retryMax = clampInt(opts.retryMax ?? HTTP_RETRY_MAX, 1, 50);
-  const retryBase = clampInt(opts.retryBaseMs ?? HTTP_RETRY_BASE_MS, 50, 60000);
+  const res = await fetchWithRetry('POST', url, {
+    method: 'POST',
+    headers: opts.headers ?? getDefaultHeaders(),
+    body,
+  }, opts);
+  if (!res.ok) await throwHttpError(res, 'POST', url);
 
-  for (let attempt = 0; attempt < retryMax; attempt++) {
-    try {
-      const res = await fetchWithRetry('POST', url, {
-        method: 'POST',
-        headers: opts.headers ?? getDefaultHeaders(),
-        body,
-      }, opts);
-      if (!res.ok) await throwHttpError(res, 'POST', url);
-
-      const ct = res.headers.get('content-type') || '';
-      if (!ct.toLowerCase().includes('application/json')) {
-        if (attempt + 1 < retryMax && ct.toLowerCase().includes('text/html')) {
-          try { res.body?.cancel(); } catch { null; }
-          await sleep(computeBackoff(attempt, 503, null, retryBase));
-          continue;
-        }
-        throw new Error(`POST ${url} -> unexpected_content_type="${ct}"`);
-      }
-      try { return await res.json() as T; } catch { throw new Error(`POST ${url} -> invalid_json`); }
-    } catch (e) {
-      if (attempt + 1 >= retryMax) throw e;
-      await sleep(computeBackoff(attempt, undefined, null, retryBase));
-    }
+  const ct = res.headers.get('content-type') || '';
+  if (!ct.toLowerCase().includes('application/json')) {
+    throw new Error(`POST ${url} -> unexpected_content_type="${ct}"`);
   }
-  throw new Error(`POST ${url} -> failed`);
+  try { return await res.json() as T; } catch { throw new Error(`POST ${url} -> invalid_json`); }
 }
 
 /* ======================================================
@@ -223,9 +209,10 @@ export const getJson = get;
 export const getText = (url: string, opts?: ReqOptions) => fetchText(url, opts);
 
 export async function fetchText(url: string, opts?: ReqOptions): Promise<string> {
+  const headers = opts?.headers ?? getHtmlHeaders();
   const res = await fetchWithRetry('GET', url, {
     method: 'GET',
-    headers: { ...getDefaultHeaders(), accept: 'text/html,*/*' },
+    headers,
   }, opts ?? {});
 
   if (res.status === 410) throw new Error('FII_NOT_FOUND');
@@ -244,28 +231,43 @@ export async function fetchFnetWithSession<T>(
 ): Promise<T> {
   const retryMax = clampInt(opts.retryMax ?? HTTP_RETRY_MAX, 1, 50);
   const retryBase = clampInt(opts.retryBaseMs ?? HTTP_RETRY_BASE_MS, 50, 60000);
+  const timeout = opts.timeout ?? DEFAULT_TIMEOUT;
+  const maxTotalMs = Math.max(timeout, HTTP_MAX_TOTAL_MS);
+  const startedAt = Date.now();
 
   for (let attempt = 0; attempt < retryMax; attempt++) {
+    if (remainingBudgetMs(startedAt, maxTotalMs) <= 50) {
+      throw new Error(`FNET retry budget exhausted max_total_ms=${maxTotalMs}`);
+    }
     // STEP 1: INIT para obter JSESSIONID
     let jsessionId: string | null = null;
     try {
-      const initRes = await fetch(initUrl, { method: 'GET', headers: getFnetInitHeaders(), dispatcher: AGENTS.fnet });
+      const initRes = await fetch(initUrl, { method: 'GET', headers: getFnetInitHeaders() });
       if (!initRes.ok) {
         try { initRes.body?.cancel(); } catch { null; }
-        if (attempt + 1 < retryMax) { await sleep(computeBackoff(attempt, initRes.status, null, retryBase)); continue; }
+        if (attempt + 1 < retryMax) {
+          const sleepMs = getRetrySleepMs(startedAt, maxTotalMs, computeBackoff(attempt, initRes.status, null, retryBase));
+          if (sleepMs < 0) throw new Error(`FNET retry budget exhausted max_total_ms=${maxTotalMs}`);
+          await sleep(sleepMs);
+          continue;
+        }
         await throwHttpError(initRes, 'GET', initUrl);
       }
       jsessionId = extractJSessionId(initRes);
       try { initRes.body?.cancel(); } catch { null; }
     } catch (e) {
       if (attempt + 1 >= retryMax) throw e;
-      await sleep(computeBackoff(attempt, undefined, null, retryBase));
+      const sleepMs = getRetrySleepMs(startedAt, maxTotalMs, computeBackoff(attempt, undefined, null, retryBase));
+      if (sleepMs < 0) throw new Error(`FNET retry budget exhausted max_total_ms=${maxTotalMs}`);
+      await sleep(sleepMs);
       continue;
     }
 
     if (!jsessionId) {
       if (attempt + 1 >= retryMax) throw new Error('FNET_INIT_NO_JSESSIONID');
-      await sleep(computeBackoff(attempt, undefined, null, retryBase));
+      const sleepMs = getRetrySleepMs(startedAt, maxTotalMs, computeBackoff(attempt, undefined, null, retryBase));
+      if (sleepMs < 0) throw new Error(`FNET retry budget exhausted max_total_ms=${maxTotalMs}`);
+      await sleep(sleepMs);
       continue;
     }
 
@@ -276,7 +278,12 @@ export async function fetchFnetWithSession<T>(
 
       if (!res.ok) {
         if (res.status === 401 || res.status === 403) {
-          if (attempt + 1 < retryMax) { await sleep(computeBackoff(attempt, res.status, null, retryBase)); continue; }
+          if (attempt + 1 < retryMax) {
+            const sleepMs = getRetrySleepMs(startedAt, maxTotalMs, computeBackoff(attempt, res.status, null, retryBase));
+            if (sleepMs < 0) throw new Error(`FNET retry budget exhausted max_total_ms=${maxTotalMs}`);
+            await sleep(sleepMs);
+            continue;
+          }
         }
         await throwHttpError(res, 'GET', dataUrl);
       }
@@ -285,7 +292,9 @@ export async function fetchFnetWithSession<T>(
       if (!ct.toLowerCase().includes('application/json')) {
         if (attempt + 1 < retryMax && ct.toLowerCase().includes('text/html')) {
           try { res.body?.cancel(); } catch { null; }
-          await sleep(computeBackoff(attempt, 503, null, retryBase));
+          const sleepMs = getRetrySleepMs(startedAt, maxTotalMs, computeBackoff(attempt, 503, null, retryBase));
+          if (sleepMs < 0) throw new Error(`FNET retry budget exhausted max_total_ms=${maxTotalMs}`);
+          await sleep(sleepMs);
           continue;
         }
         throw new Error(`FNET ${dataUrl} -> content_type="${ct}"`);
@@ -294,9 +303,10 @@ export async function fetchFnetWithSession<T>(
       return await res.json() as T;
     } catch (e) {
       if (attempt + 1 >= retryMax) throw e;
-      await sleep(computeBackoff(attempt, undefined, null, retryBase));
+      const sleepMs = getRetrySleepMs(startedAt, maxTotalMs, computeBackoff(attempt, undefined, null, retryBase));
+      if (sleepMs < 0) throw new Error(`FNET retry budget exhausted max_total_ms=${maxTotalMs}`);
+      await sleep(sleepMs);
     }
   }
   throw new Error(`FNET ${dataUrl} -> failed`);
 }
-

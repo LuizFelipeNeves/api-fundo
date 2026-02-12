@@ -77,7 +77,11 @@ export async function fetchFIIList(): Promise<FIIResponse> {
 
 export async function fetchFIIDetails(code: string): Promise<{ details: FIIDetails; dividendsHistory: DividendItem[] }> {
   const safeCode = normalizeFundCode(code);
-  const html = await fetchText(`${BASE_URL}/fiis/${safeCode}/`, { timeout: INVESTIDOR10_HTML_TIMEOUT_MS });
+  const html = await fetchText(`${BASE_URL}/fiis/${safeCode}/`, {
+    timeout: INVESTIDOR10_HTML_TIMEOUT_MS,
+    retryMax: 1,
+    retryBaseMs: 500,
+  });
   const raw = extractFIIDetails(safeCode, html);
   const id = extractFIIId(html);
   const details = normalizeFIIDetails(raw, safeCode, id);

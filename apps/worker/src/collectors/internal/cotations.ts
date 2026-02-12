@@ -1,4 +1,4 @@
-import type { Collector, CollectRequest, CollectorContext } from '../types';
+import type { Collector, CollectRequest, CollectResult, CollectorContext } from '../types';
 import { fetchFIICotations } from '../../services/client';
 import { toDateIsoFromBr } from '../../utils/date';
 import { getFundIdByCode } from '../../pipeline/repo';
@@ -10,7 +10,7 @@ export const cotationsCollector: Collector = {
   supports(request: CollectRequest) {
     return request.collector === 'cotations' && !!request.fund_code;
   },
-  async collect(request: CollectRequest, ctx: CollectorContext): Promise<void> {
+  async collect(request: CollectRequest, _ctx: CollectorContext): Promise<CollectResult> {
     const code = String(request.fund_code || '').toUpperCase();
     const id = await getFundIdByCode(code);
     if (!id) throw new Error('FII_NOT_FOUND');
@@ -25,12 +25,15 @@ export const cotationsCollector: Collector = {
       })
       .filter((v): v is { fund_code: string; date_iso: string; price: number } => v !== null);
 
-    // Publish in smaller batches to avoid frame size limits
-    const persistQueue = process.env.PERSIST_QUEUE_NAME || 'persistence.write';
+    const persistRequests: Array<{ type: 'cotations'; items: typeof items }> = [];
     for (let i = 0; i < items.length; i += BATCH_SIZE) {
       const batch = items.slice(i, i + BATCH_SIZE);
-      const body = Buffer.from(JSON.stringify({ type: 'cotations', items: batch }));
-      ctx.publish?.(persistQueue, body);
+      persistRequests.push({ type: 'cotations', items: batch });
     }
+    return {
+      collector: 'cotations',
+      fetched_at: new Date().toISOString(),
+      payload: { persist_requests: persistRequests },
+    };
   },
 };

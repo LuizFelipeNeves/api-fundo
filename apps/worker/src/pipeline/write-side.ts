@@ -70,7 +70,7 @@ export function createWriteSide() {
     const now = new Date();
     await sql`
       INSERT INTO fund_master (
-        code, id, cnpj, razao_social, public_o_alvo, mandato, segmento, tipo_fundo, prazo_duracao, tipo_gestao,
+        code, id, cnpj, razao_social, publico_alvo, mandato, segmento, tipo_fundo, prazo_duracao, tipo_gestao,
         taxa_adminstracao, daily_liquidity, vacancia, numero_cotistas, cotas_emitidas, valor_patrimonial_cota,
         valor_patrimonial, ultimo_rendimento, updated_at
       ) VALUES (
@@ -98,7 +98,7 @@ export function createWriteSide() {
         id = EXCLUDED.id,
         cnpj = EXCLUDED.cnpj,
         razao_social = EXCLUDED.razao_social,
-        public_o_alvo = EXCLUDED.public_o_alvo,
+        publico_alvo = EXCLUDED.publico_alvo,
         mandato = EXCLUDED.mandato,
         segmento = EXCLUDED.segmento,
         tipo_fundo = EXCLUDED.tipo_fundo,

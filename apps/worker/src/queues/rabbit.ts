@@ -1,14 +1,4 @@
-import amqplib, { Connection } from "amqplib";
-
-export async function createRabbitConnection(): Promise<Connection> {
-  const url = String(process.env.RABBITMQ_URL || "").trim();
-  if (!url) throw new Error("RABBITMQ_URL is required");
-
-  const heartbeat = Number.parseInt(process.env.RABBITMQ_HEARTBEAT || "60", 10);
-  const frameMax = Number.parseInt(process.env.RABBITMQ_FRAME_MAX || "131072", 10);
-
-  return amqplib.connect(url, { heartbeat, frameMax });
-}
+import amqplib from "amqplib";
 
 export async function setupQueue(
   channel: amqplib.Channel,
@@ -31,13 +21,4 @@ export async function setupQueue(
   }
 
   await channel.assertQueue(name, { durable: true, arguments: Object.keys(args).length ? args : undefined });
-}
-
-export function getQueueNames() {
-  return {
-    telegram: String(process.env.TELEGRAM_QUEUE_NAME || 'telegram.updates').trim() || 'telegram.updates',
-    collectRequests: String(process.env.COLLECT_REQUESTS_QUEUE || 'collector.requests').trim() || 'collector.requests',
-    collectResults: String(process.env.COLLECT_RESULTS_QUEUE || 'collector.results').trim() || 'collector.results',
-    persist: String(process.env.PERSIST_QUEUE_NAME || 'persistence.write').trim() || 'persistence.write',
-  };
 }

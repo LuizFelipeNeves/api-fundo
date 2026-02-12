@@ -1,4 +1,4 @@
-import type { Collector, CollectRequest, CollectorContext } from '../types';
+import type { Collector, CollectRequest, CollectResult, CollectorContext } from '../types';
 import { fetchFIIList } from '../../services/client';
 import type { PersistFundListItem } from '../../pipeline/messages';
 
@@ -9,7 +9,7 @@ export const fundListCollector: Collector = {
   supports(request: CollectRequest) {
     return request.collector === 'fund_list';
   },
-  async collect(_request: CollectRequest, ctx: CollectorContext): Promise<void> {
+  async collect(_request: CollectRequest, _ctx: CollectorContext): Promise<CollectResult> {
     const data = await fetchFIIList();
     const items: PersistFundListItem[] = data.data.map((item) => ({
       code: item.code,
@@ -22,12 +22,15 @@ export const fundListCollector: Collector = {
       type: item.type,
     }));
 
-    // Publish in smaller batches to avoid frame size limits
-    const persistQueue = process.env.PERSIST_QUEUE_NAME || 'persistence.write';
+    const persistRequests: Array<{ type: 'fund_list'; items: PersistFundListItem[] }> = [];
     for (let i = 0; i < items.length; i += BATCH_SIZE) {
       const batch = items.slice(i, i + BATCH_SIZE);
-      const body = Buffer.from(JSON.stringify({ type: 'fund_list', items: batch }));
-      ctx.publish?.(persistQueue, body);
+      persistRequests.push({ type: 'fund_list', items: batch });
     }
+    return {
+      collector: 'fund_list',
+      fetched_at: new Date().toISOString(),
+      payload: { persist_requests: persistRequests },
+    };
   },
 };

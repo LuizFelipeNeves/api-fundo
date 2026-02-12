@@ -8,6 +8,10 @@ import { withTryAdvisoryXactLock } from '../utils/pg-lock';
 const intervalMs = Number.parseInt(process.env.CRON_INTERVAL_MS || String(5 * 60 * 1000), 10);
 const eodLockKeyRaw = Number.parseInt(process.env.EOD_COTATION_LOCK_KEY || '4419270101', 10);
 const eodLockKey = Number.isFinite(eodLockKeyRaw) ? eodLockKeyRaw : 4419270101;
+const collectorRequestsQueue = String(process.env.COLLECT_REQUESTS_QUEUE || 'collector.requests').trim() || 'collector.requests';
+const queueBacklogLimitRaw = Number.parseInt(process.env.COLLECTOR_QUEUE_BACKLOG_LIMIT || '1200', 10);
+const queueBacklogLimit =
+  Number.isFinite(queueBacklogLimitRaw) && queueBacklogLimitRaw > 0 ? Math.min(queueBacklogLimitRaw, 200000) : 1200;
 
 // Dynamic intervals per task type (in minutes)
 const TASK_INTERVALS = {
@@ -49,6 +53,14 @@ export async function startCronScheduler(connection: ChannelModel, isActive: () 
     try {
       resetDailyFlags();
       const now = Date.now();
+      const queueState = await publisher.channel.checkQueue(collectorRequestsQueue);
+      const readyCount = queueState?.messageCount ?? 0;
+      if (readyCount >= queueBacklogLimit) {
+        process.stderr.write(
+          `[cron] skip scheduling: queue=${collectorRequestsQueue} ready=${readyCount} limit=${queueBacklogLimit}\n`
+        );
+        return;
+      }
 
       // fund_list: 30min
       if (!lastRun['fund_list'] || now - lastRun['fund_list'] >= getIntervalMs('fund_list')) {
