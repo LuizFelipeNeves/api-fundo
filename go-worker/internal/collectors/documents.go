@@ -2,24 +2,26 @@ package collectors
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
+	"log"
 	"time"
+
+	"github.com/luizfelipeneves/api-fundo/go-worker/internal/db"
+	"github.com/luizfelipeneves/api-fundo/go-worker/internal/httpclient"
+	"github.com/luizfelipeneves/api-fundo/go-worker/internal/parsers"
 )
 
-// DocumentsCollector collects fund documents
+// DocumentsCollector collects fund documents from FNET
 type DocumentsCollector struct {
-	client *http.Client
+	fnetClient *httpclient.FnetClient
+	db         *db.DB
 }
 
 // NewDocumentsCollector creates a new documents collector
-func NewDocumentsCollector() *DocumentsCollector {
+func NewDocumentsCollector(fnetClient *httpclient.FnetClient, database *db.DB) *DocumentsCollector {
 	return &DocumentsCollector{
-		client: &http.Client{
-			Timeout: 45 * time.Second,
-		},
+		fnetClient: fnetClient,
+		db:         database,
 	}
 }
 
@@ -28,54 +30,83 @@ func (c *DocumentsCollector) Name() string {
 	return "documents"
 }
 
-// Document represents a fund document
-type Document struct {
-	DocumentID    int    `json:"document_id"`
-	Title         string `json:"title"`
-	Category      string `json:"category"`
-	Type          string `json:"type"`
-	Date          string `json:"date"`
-	DateUploadISO string `json:"date_upload_iso"`
-	DateUpload    string `json:"dateUpload"`
-	URL           string `json:"url"`
-	Status        string `json:"status"`
-	Version       int    `json:"version"`
-}
-
-// Collect fetches fund documents from the API
+// Collect fetches fund documents from FNET
 func (c *DocumentsCollector) Collect(ctx context.Context, req CollectRequest) (*CollectResult, error) {
-	if req.CNPJ == "" {
-		return nil, fmt.Errorf("cnpj is required")
-	}
+	code := parsers.NormalizeFundCode(req.FundCode)
+	log.Printf("[documents] collecting documents for %s\n", code)
 
-	// Note: The actual API endpoint may differ - this is a placeholder
-	// The Node.js implementation may use a different endpoint or service
-	url := fmt.Sprintf("https://investidor10.com.br/api/fundos-imobiliarios/%s/documents?cnpj=%s", req.FundCode, req.CNPJ)
-
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	// Get CNPJ from database
+	cnpj, err := c.db.GetFundCNPJByCode(ctx, code)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to get fund CNPJ: %w", err)
 	}
 
-	resp, err := c.client.Do(httpReq)
+	if cnpj == "" {
+		return nil, fmt.Errorf("CNPJ not found for fund: %s", code)
+	}
+
+	// Build FNET URLs
+	initURL := fmt.Sprintf("%s/abrirGerenciadorDocumentosCVM?cnpjFundo=%s", httpclient.FnetBase, cnpj)
+	dataURL := fmt.Sprintf("%s/pesquisarGerenciadorDocumentosDados?d=1&s=0&l=100&o%%5B0%%5D%%5BdataReferencia%%5D=desc&idCategoriaDocumento=0&idTipoDocumento=0&idEspecieDocumento=0&isSession=true", httpclient.FnetBase)
+
+	// Fetch documents with session
+	var response FnetDocumentsResponse
+	err = c.fnetClient.FetchWithSession(ctx, initURL, dataURL, &response)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch documents: %w", err)
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body))
-	}
+	// Normalize documents
+	documents := parsers.NormalizeDocuments(response.Data)
 
-	var documents []Document
-	if err := json.NewDecoder(resp.Body).Decode(&documents); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	// Convert to items with fund code
+	var items []DocumentItem
+	for _, doc := range documents {
+		dateUploadISO := parsers.ToDateISO(doc.DateUpload)
+		if dateUploadISO == "" {
+			dateUploadISO = parsers.ToDateISO(doc.Date)
+		}
+		if dateUploadISO == "" {
+			dateUploadISO = time.Now().UTC().Format("2006-01-02")
+		}
+
+		items = append(items, DocumentItem{
+			FundCode:      code,
+			DocumentID:    doc.ID,
+			Title:         doc.Title,
+			Category:      doc.Category,
+			Type:          doc.Type,
+			Date:          doc.Date,
+			DateUploadISO: dateUploadISO,
+			DateUpload:    doc.DateUpload,
+			URL:           doc.URL,
+			Status:        doc.Status,
+			Version:       doc.Version,
+		})
 	}
 
 	return &CollectResult{
-		FundCode:  req.FundCode,
-		Data:      documents,
+		Data:      items,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}, nil
+}
+
+// FnetDocumentsResponse represents FNET API response
+type FnetDocumentsResponse struct {
+	Data []interface{} `json:"data"`
+}
+
+// DocumentItem represents a document entry
+type DocumentItem struct {
+	FundCode      string
+	DocumentID    string
+	Title         string
+	Category      string
+	Type          string
+	Date          string
+	DateUploadISO string
+	DateUpload    string
+	URL           string
+	Status        string
+	Version       string
 }

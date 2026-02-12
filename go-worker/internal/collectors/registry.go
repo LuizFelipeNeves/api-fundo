@@ -5,29 +5,25 @@ import (
 	"fmt"
 )
 
-// CollectRequest represents a request to collect data
-type CollectRequest struct {
-	Collector   string
-	FundCode    string
-	CNPJ        string
-	ID          string
-	TriggeredBy string
-}
-
-// CollectResult represents the result of a collection
-type CollectResult struct {
-	FundCode  string
-	Data      interface{}
-	Timestamp string
-}
-
-// Collector defines the interface for all collectors
+// Collector interface for all collectors
 type Collector interface {
 	Name() string
 	Collect(ctx context.Context, req CollectRequest) (*CollectResult, error)
 }
 
-// Registry holds all registered collectors
+// CollectRequest represents a collection request
+type CollectRequest struct {
+	FundCode string
+	CNPJ     string
+}
+
+// CollectResult represents a collection result
+type CollectResult struct {
+	Data      interface{}
+	Timestamp string
+}
+
+// Registry holds all available collectors
 type Registry struct {
 	collectors map[string]Collector
 }
@@ -53,11 +49,11 @@ func (r *Registry) Get(name string) (Collector, error) {
 	return c, nil
 }
 
-// All returns all registered collectors
-func (r *Registry) All() []Collector {
-	collectors := make([]Collector, 0, len(r.collectors))
-	for _, c := range r.collectors {
-		collectors = append(collectors, c)
+// List returns all collector names
+func (r *Registry) List() []string {
+	names := make([]string, 0, len(r.collectors))
+	for name := range r.collectors {
+		names = append(names, name)
 	}
-	return collectors
+	return names
 }

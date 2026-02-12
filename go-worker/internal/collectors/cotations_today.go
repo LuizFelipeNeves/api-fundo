@@ -2,25 +2,23 @@ package collectors
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
+	"log"
+	"net/url"
 	"time"
+
+	"github.com/luizfelipeneves/api-fundo/go-worker/internal/httpclient"
+	"github.com/luizfelipeneves/api-fundo/go-worker/internal/parsers"
 )
 
-// CotationsTodayCollector collects today's cotations
+// CotationsTodayCollector collects today's cotations from statusinvest
 type CotationsTodayCollector struct {
-	client *http.Client
+	client *httpclient.Client
 }
 
-// NewCotationsTodayCollector creates a new cotations today collector
-func NewCotationsTodayCollector() *CotationsTodayCollector {
-	return &CotationsTodayCollector{
-		client: &http.Client{
-			Timeout: 45 * time.Second,
-		},
-	}
+// NewCotationsTodayCollector creates a new cotations_today collector
+func NewCotationsTodayCollector(client *httpclient.Client) *CotationsTodayCollector {
+	return &CotationsTodayCollector{client: client}
 }
 
 // Name returns the collector name
@@ -28,51 +26,50 @@ func (c *CotationsTodayCollector) Name() string {
 	return "cotations_today"
 }
 
-// CotationEntry represents a single cotation entry
-type CotationEntry struct {
-	Price float64 `json:"price"`
-	Date  string  `json:"date"`
-}
-
-// CotationsResponse represents cotations data
-type CotationsResponse struct {
-	Real  []CotationEntry `json:"real"`
-	Dolar []CotationEntry `json:"dolar"`
-	Euro  []CotationEntry `json:"euro"`
-}
-
-// Collect fetches today's cotations from the API
+// Collect fetches today's cotations from statusinvest.com.br
 func (c *CotationsTodayCollector) Collect(ctx context.Context, req CollectRequest) (*CollectResult, error) {
-	if req.FundCode == "" {
-		return nil, fmt.Errorf("fund_code is required")
-	}
+	code := parsers.NormalizeFundCode(req.FundCode)
+	log.Printf("[cotations_today] collecting today's cotations for %s\n", code)
 
-	url := fmt.Sprintf("https://investidor10.com.br/api/fundos-imobiliarios/%s/cotations", req.FundCode)
+	// Build form data
+	params := url.Values{}
+	params.Set("ticker", code)
+	params.Set("type", "-1")
+	params.Add("currences[]", "1")
 
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	// POST to statusinvest API
+	var rawData map[string]interface{}
+	err := c.client.PostFormStatusInvest(
+		ctx,
+		httpclient.StatusInvestBase+"/fii/tickerprice",
+		params.Encode(),
+		&rawData,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to fetch cotations today: %w", err)
 	}
 
-	resp, err := c.client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch cotations: %w", err)
-	}
-	defer resp.Body.Close()
+	// Normalize data
+	data := parsers.NormalizeCotationsToday(rawData)
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body))
-	}
-
-	var cotations CotationsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&cotations); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	dateISO := timestamp[:10] // YYYY-MM-DD
 
 	return &CollectResult{
-		FundCode:  req.FundCode,
-		Data:      cotations,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Data: CotationsTodayData{
+			FundCode:  code,
+			DateISO:   dateISO,
+			FetchedAt: timestamp,
+			Data:      data,
+		},
+		Timestamp: timestamp,
 	}, nil
+}
+
+// CotationsTodayData represents today's cotation data
+type CotationsTodayData struct {
+	FundCode  string
+	DateISO   string
+	FetchedAt string
+	Data      parsers.CotationsTodayData
 }

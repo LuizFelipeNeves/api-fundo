@@ -59,18 +59,32 @@ func (p *Persister) PersistFundList(ctx context.Context, items []collectors.Fund
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit: %w", err)
+	}
+
+	// Update fund_state for fund_list
+	return p.db.UpdateFundStateTimestamp(ctx, "", "last_fund_list_sync_at", time.Now())
 }
 
-// PersistFundDetails persists fund details
-func (p *Persister) PersistFundDetails(ctx context.Context, details collectors.FundDetails) error {
-	_, err := p.db.ExecContext(ctx, `
+// PersistFundDetails persists fund details and dividends
+func (p *Persister) PersistFundDetails(ctx context.Context, fundCode string, data collectors.FundDetailsData) error {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	details := data.Details
+
+	// Upsert fund details
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO fund_master (
 			code, id, cnpj, razao_social, publico_alvo, mandato, segmento,
 			tipo_fundo, prazo_duracao, tipo_gestao, taxa_adminstracao,
-			vacancia, numero_cotistas, cotas_emitidas, valor_patrimonial_cota,
-			valor_patrimonial, ultimo_rendimento, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW())
+			daily_liquidity, vacancia, numero_cotistas, cotas_emitidas,
+			valor_patrimonial_cota, valor_patrimonial, ultimo_rendimento, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW())
 		ON CONFLICT (code) DO UPDATE SET
 			id = EXCLUDED.id,
 			cnpj = EXCLUDED.cnpj,
@@ -82,6 +96,7 @@ func (p *Persister) PersistFundDetails(ctx context.Context, details collectors.F
 			prazo_duracao = EXCLUDED.prazo_duracao,
 			tipo_gestao = EXCLUDED.tipo_gestao,
 			taxa_adminstracao = EXCLUDED.taxa_adminstracao,
+			daily_liquidity = EXCLUDED.daily_liquidity,
 			vacancia = EXCLUDED.vacancia,
 			numero_cotistas = EXCLUDED.numero_cotistas,
 			cotas_emitidas = EXCLUDED.cotas_emitidas,
@@ -90,30 +105,53 @@ func (p *Persister) PersistFundDetails(ctx context.Context, details collectors.F
 			ultimo_rendimento = EXCLUDED.ultimo_rendimento,
 			updated_at = NOW()
 	`,
-		details.Code, details.ID, details.CNPJ, details.RazaoSocial,
+		fundCode, details.ID, details.CNPJ, details.RazaoSocial,
 		details.PublicoAlvo, details.Mandato, details.Segmento,
 		details.TipoFundo, details.PrazoDuracao, details.TipoGestao,
-		details.TaxaAdministracao, details.Vacancia, details.NumeroCotistas,
-		details.CotasEmitidas, details.ValorPatrimonialCota,
+		details.TaxaAdministracao, details.DailyLiquidity, details.Vacancia,
+		details.NumeroCotistas, details.CotasEmitidas, details.ValorPatrimonialCota,
 		details.ValorPatrimonial, details.UltimoRendimento,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to persist fund details: %w", err)
 	}
 
+	// Persist dividends
+	if len(data.Dividends) > 0 {
+		stmt, err := tx.PrepareContext(ctx, `
+			INSERT INTO dividend (fund_code, date_iso, payment, type, value)
+			VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (fund_code, date_iso, type) DO UPDATE SET
+				payment = EXCLUDED.payment,
+				value = EXCLUDED.value
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to prepare dividend statement: %w", err)
+		}
+		defer stmt.Close()
+
+		for _, div := range data.Dividends {
+			_, err := stmt.ExecContext(ctx, div.FundCode, div.DateISO, div.Payment, div.Type, div.Value)
+			if err != nil {
+				return fmt.Errorf("failed to insert dividend: %w", err)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit: %w", err)
+	}
+
 	// Update fund_state timestamp
-	return p.db.UpdateFundStateTimestamp(ctx, details.Code, "last_details_sync_at", time.Now())
+	return p.db.UpdateFundStateTimestamp(ctx, fundCode, "last_details_sync_at", time.Now())
 }
 
 // PersistIndicators persists fund indicators
-func (p *Persister) PersistIndicators(ctx context.Context, fundCode string, indicators collectors.Indicators) error {
-	dataJSON, err := json.Marshal(indicators)
+func (p *Persister) PersistIndicators(ctx context.Context, data collectors.IndicatorsData) error {
+	dataJSON, err := json.Marshal(data.Data)
 	if err != nil {
 		return fmt.Errorf("failed to marshal indicators: %w", err)
 	}
-
-	// Calculate hash for deduplication
-	dataHash := fmt.Sprintf("%x", dataJSON) // Simple hash, could use crypto/sha256 for better hashing
 
 	_, err = p.db.ExecContext(ctx, `
 		INSERT INTO indicators_snapshot (fund_code, fetched_at, data_hash, data_json)
@@ -122,23 +160,21 @@ func (p *Persister) PersistIndicators(ctx context.Context, fundCode string, indi
 			fetched_at = NOW(),
 			data_hash = EXCLUDED.data_hash,
 			data_json = EXCLUDED.data_json
-	`, fundCode, dataHash, dataJSON)
+	`, data.FundCode, data.DataHash, dataJSON)
 	if err != nil {
 		return fmt.Errorf("failed to persist indicators: %w", err)
 	}
 
 	// Update fund_state timestamp
-	return p.db.UpdateFundStateTimestamp(ctx, fundCode, "last_indicators_at", time.Now())
+	return p.db.UpdateFundStateTimestamp(ctx, data.FundCode, "last_indicators_at", time.Now())
 }
 
 // PersistCotationsToday persists today's cotations snapshot
-func (p *Persister) PersistCotationsToday(ctx context.Context, fundCode string, cotations collectors.CotationsResponse) error {
-	dataJSON, err := json.Marshal(cotations)
+func (p *Persister) PersistCotationsToday(ctx context.Context, data collectors.CotationsTodayData) error {
+	dataJSON, err := json.Marshal(data.Data)
 	if err != nil {
 		return fmt.Errorf("failed to marshal cotations: %w", err)
 	}
-
-	dateISO := time.Now().Format("2006-01-02")
 
 	_, err = p.db.ExecContext(ctx, `
 		INSERT INTO cotations_today_snapshot (fund_code, date_iso, fetched_at, data_json)
@@ -146,43 +182,47 @@ func (p *Persister) PersistCotationsToday(ctx context.Context, fundCode string, 
 		ON CONFLICT (fund_code, date_iso) DO UPDATE SET
 			fetched_at = NOW(),
 			data_json = EXCLUDED.data_json
-	`, fundCode, dateISO, dataJSON)
+	`, data.FundCode, data.DateISO, dataJSON)
 	if err != nil {
 		return fmt.Errorf("failed to persist cotations today: %w", err)
 	}
 
 	// Update fund_state timestamp
-	return p.db.UpdateFundStateTimestamp(ctx, fundCode, "last_cotations_today_at", time.Now())
+	return p.db.UpdateFundStateTimestamp(ctx, data.FundCode, "last_cotations_today_at", time.Now())
 }
 
 // PersistHistoricalCotations persists historical cotations
-func (p *Persister) PersistHistoricalCotations(ctx context.Context, fundCode string, cotations collectors.CotationsResponse) error {
+func (p *Persister) PersistHistoricalCotations(ctx context.Context, fundCode string, items []collectors.CotationItem) error {
+	if len(items) == 0 {
+		return p.db.UpdateFundStateTimestamp(ctx, fundCode, "last_historical_cotations_at", time.Now())
+	}
+
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	// Insert BRL cotations
-	for _, entry := range cotations.Real {
-		dateISO, err := parseDate(entry.Date)
-		if err != nil {
-			continue // Skip invalid dates
-		}
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO cotation (fund_code, date_iso, price)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (fund_code, date_iso) DO UPDATE SET
+			price = EXCLUDED.price
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare statement: %w", err)
+	}
+	defer stmt.Close()
 
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO cotation (fund_code, date_iso, price)
-			VALUES ($1, $2, $3)
-			ON CONFLICT (fund_code, date_iso) DO UPDATE SET
-				price = EXCLUDED.price
-		`, fundCode, dateISO, entry.Price)
+	for _, item := range items {
+		_, err := stmt.ExecContext(ctx, item.FundCode, item.DateISO, item.Price)
 		if err != nil {
 			return fmt.Errorf("failed to insert cotation: %w", err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
+		return fmt.Errorf("failed to commit: %w", err)
 	}
 
 	// Update fund_state timestamp
@@ -190,9 +230,8 @@ func (p *Persister) PersistHistoricalCotations(ctx context.Context, fundCode str
 }
 
 // PersistDocuments persists fund documents
-func (p *Persister) PersistDocuments(ctx context.Context, fundCode string, documents []collectors.Document) error {
-	if len(documents) == 0 {
-		// Still update the timestamp even if no documents
+func (p *Persister) PersistDocuments(ctx context.Context, fundCode string, items []collectors.DocumentItem) error {
+	if len(items) == 0 {
 		return p.db.UpdateFundStateTimestamp(ctx, fundCode, "last_documents_at", time.Now())
 	}
 
@@ -223,30 +262,21 @@ func (p *Persister) PersistDocuments(ctx context.Context, fundCode string, docum
 	}
 	defer stmt.Close()
 
-	for _, doc := range documents {
+	for _, doc := range items {
 		_, err := stmt.ExecContext(ctx,
-			fundCode, doc.DocumentID, doc.Title, doc.Category, doc.Type,
+			doc.FundCode, doc.DocumentID, doc.Title, doc.Category, doc.Type,
 			doc.Date, doc.DateUploadISO, doc.DateUpload, doc.URL,
 			doc.Status, doc.Version,
 		)
 		if err != nil {
-			return fmt.Errorf("failed to insert document %d: %w", doc.DocumentID, err)
+			return fmt.Errorf("failed to insert document: %w", err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
+		return fmt.Errorf("failed to commit: %w", err)
 	}
 
 	// Update fund_state timestamp
 	return p.db.UpdateFundStateTimestamp(ctx, fundCode, "last_documents_at", time.Now())
-}
-
-// parseDate parses a date string in DD/MM/YYYY format
-func parseDate(dateStr string) (string, error) {
-	t, err := time.Parse("02/01/2006", dateStr)
-	if err != nil {
-		return "", err
-	}
-	return t.Format("2006-01-02"), nil
 }

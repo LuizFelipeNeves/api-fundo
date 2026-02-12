@@ -2,24 +2,26 @@ package collectors
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
+	"log"
 	"time"
+
+	"github.com/luizfelipeneves/api-fundo/go-worker/internal/db"
+	"github.com/luizfelipeneves/api-fundo/go-worker/internal/httpclient"
+	"github.com/luizfelipeneves/api-fundo/go-worker/internal/parsers"
 )
 
 // CotationsCollector collects historical cotations
 type CotationsCollector struct {
-	client *http.Client
+	client *httpclient.Client
+	db     *db.DB
 }
 
-// NewCotationsCollector creates a new historical cotations collector
-func NewCotationsCollector() *CotationsCollector {
+// NewCotationsCollector creates a new cotations collector
+func NewCotationsCollector(client *httpclient.Client, database *db.DB) *CotationsCollector {
 	return &CotationsCollector{
-		client: &http.Client{
-			Timeout: 45 * time.Second,
-		},
+		client: client,
+		db:     database,
 	}
 }
 
@@ -28,39 +30,72 @@ func (c *CotationsCollector) Name() string {
 	return "cotations"
 }
 
-// Collect fetches historical cotations from the API
-// Note: This uses the same endpoint as cotations_today but may have different processing
+// Collect fetches historical cotations
 func (c *CotationsCollector) Collect(ctx context.Context, req CollectRequest) (*CollectResult, error) {
-	if req.FundCode == "" {
-		return nil, fmt.Errorf("fund_code is required")
-	}
+	code := parsers.NormalizeFundCode(req.FundCode)
+	days := 1825 // ~5 years
 
-	url := fmt.Sprintf("https://investidor10.com.br/api/fundos-imobiliarios/%s/cotations", req.FundCode)
+	log.Printf("[cotations] collecting cotations for %s (days=%d)\n", code, days)
 
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	// Get fund ID from database
+	fundID, err := c.db.GetFundIDByCode(ctx, code)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to get fund ID: %w", err)
 	}
 
-	resp, err := c.client.Do(httpReq)
+	if fundID == "" {
+		return nil, fmt.Errorf("FII_NOT_FOUND: %s", code)
+	}
+
+	// Fetch cotations from API
+	url := fmt.Sprintf("%s/api/fii/cotacoes/chart/%s/%d/true", httpclient.BaseURL, fundID, days)
+
+	var rawData map[string][]interface{}
+	err = c.client.GetJSON(ctx, url, &rawData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch cotations: %w", err)
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body))
+	// Normalize cotations
+	cotations := parsers.NormalizeCotations(rawData)
+
+	// Convert to items with fund code and ISO dates
+	var items []CotationItem
+	for _, cot := range cotations.Real {
+		dateISO := parsers.ToDateISO(cot.Date)
+		if dateISO == "" {
+			continue
+		}
+
+		items = append(items, CotationItem{
+			FundCode: code,
+			DateISO:  dateISO,
+			Price:    cot.Price,
+		})
 	}
 
-	var cotations CotationsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&cotations); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	// Deduplicate by fund_code|date_iso
+	cotationMap := make(map[string]CotationItem)
+	for _, item := range items {
+		key := fmt.Sprintf("%s|%s", item.FundCode, item.DateISO)
+		cotationMap[key] = item
+	}
+
+	// Convert back to slice
+	var finalItems []CotationItem
+	for _, item := range cotationMap {
+		finalItems = append(finalItems, item)
 	}
 
 	return &CollectResult{
-		FundCode:  req.FundCode,
-		Data:      cotations,
+		Data:      finalItems,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}, nil
+}
+
+// CotationItem represents a single cotation entry
+type CotationItem struct {
+	FundCode string
+	DateISO  string
+	Price    float64
 }

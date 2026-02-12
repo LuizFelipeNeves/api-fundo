@@ -11,6 +11,7 @@ import (
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/collectors"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/config"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/db"
+	"github.com/luizfelipeneves/api-fundo/go-worker/internal/httpclient"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/persistence"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/scheduler"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/worker"
@@ -32,16 +33,24 @@ func main() {
 
 	log.Println("connected to database")
 
+	// Initialize HTTP clients
+	httpClient, err := httpclient.New(cfg)
+	if err != nil {
+		log.Fatalf("failed to create HTTP client: %v", err)
+	}
+
+	fnetClient := httpclient.NewFnetClient(cfg)
+
 	// Initialize collector registry
 	registry := collectors.NewRegistry()
-	registry.Register(collectors.NewFundListCollector())
-	registry.Register(collectors.NewFundDetailsCollector())
-	registry.Register(collectors.NewIndicatorsCollector())
-	registry.Register(collectors.NewCotationsTodayCollector())
-	registry.Register(collectors.NewCotationsCollector())
-	registry.Register(collectors.NewDocumentsCollector())
+	registry.Register(collectors.NewFundListCollector(httpClient))
+	registry.Register(collectors.NewFundDetailsCollector(httpClient))
+	registry.Register(collectors.NewIndicatorsCollector(httpClient, database))
+	registry.Register(collectors.NewCotationsTodayCollector(httpClient))
+	registry.Register(collectors.NewCotationsCollector(httpClient, database))
+	registry.Register(collectors.NewDocumentsCollector(fnetClient, database))
 
-	log.Printf("registered %d collectors\n", len(registry.All()))
+	log.Printf("registered %d collectors\n", len(registry.List()))
 
 	// Initialize persister
 	persister := persistence.New(database)

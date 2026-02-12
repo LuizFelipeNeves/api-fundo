@@ -2,24 +2,26 @@ package collectors
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
+	"log"
 	"time"
+
+	"github.com/luizfelipeneves/api-fundo/go-worker/internal/db"
+	"github.com/luizfelipeneves/api-fundo/go-worker/internal/httpclient"
+	"github.com/luizfelipeneves/api-fundo/go-worker/internal/parsers"
 )
 
 // IndicatorsCollector collects fund indicators
 type IndicatorsCollector struct {
-	client *http.Client
+	client *httpclient.Client
+	db     *db.DB
 }
 
 // NewIndicatorsCollector creates a new indicators collector
-func NewIndicatorsCollector() *IndicatorsCollector {
+func NewIndicatorsCollector(client *httpclient.Client, database *db.DB) *IndicatorsCollector {
 	return &IndicatorsCollector{
-		client: &http.Client{
-			Timeout: 45 * time.Second,
-		},
+		client: client,
+		db:     database,
 	}
 }
 
@@ -28,50 +30,52 @@ func (c *IndicatorsCollector) Name() string {
 	return "indicators"
 }
 
-// IndicatorValue represents a single indicator value
-type IndicatorValue struct {
-	Year  string   `json:"year"`
-	Value *float64 `json:"value"` // Nullable
-}
-
-// Indicators represents fund indicators
-type Indicators struct {
-	PVP           []IndicatorValue `json:"p_vp"`
-	DividendYield []IndicatorValue `json:"dividend_yield"`
-}
-
-// Collect fetches fund indicators from the API
+// Collect fetches fund indicators
 func (c *IndicatorsCollector) Collect(ctx context.Context, req CollectRequest) (*CollectResult, error) {
-	if req.FundCode == "" {
-		return nil, fmt.Errorf("fund_code is required")
-	}
+	code := parsers.NormalizeFundCode(req.FundCode)
+	log.Printf("[indicators] collecting indicators for %s\n", code)
 
-	url := fmt.Sprintf("https://investidor10.com.br/api/fundos-imobiliarios/%s/indicators", req.FundCode)
-
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	// Get fund ID from database
+	fundID, err := c.db.GetFundIDByCode(ctx, code)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to get fund ID: %w", err)
 	}
 
-	resp, err := c.client.Do(httpReq)
+	if fundID == "" {
+		return nil, fmt.Errorf("FII_NOT_FOUND: %s", code)
+	}
+
+	// Fetch indicators from API
+	url := fmt.Sprintf("%s/api/fii/historico-indicadores/%s/5", httpclient.BaseURL, fundID)
+
+	var rawData map[string][]interface{}
+	err = c.client.GetJSON(ctx, url, &rawData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch indicators: %w", err)
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body))
-	}
+	// Normalize indicators
+	indicators := parsers.NormalizeIndicators(rawData)
 
-	var indicators Indicators
-	if err := json.NewDecoder(resp.Body).Decode(&indicators); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	// Calculate hash
+	dataHash, err := parsers.SHA256Hash(indicators)
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate hash: %w", err)
 	}
 
 	return &CollectResult{
-		FundCode:  req.FundCode,
-		Data:      indicators,
+		Data: IndicatorsData{
+			FundCode: code,
+			Data:     indicators,
+			DataHash: dataHash,
+		},
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}, nil
+}
+
+// IndicatorsData represents indicators data
+type IndicatorsData struct {
+	FundCode string
+	Data     parsers.NormalizedIndicators
+	DataHash string
 }

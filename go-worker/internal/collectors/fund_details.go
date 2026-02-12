@@ -2,25 +2,22 @@ package collectors
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
+	"log"
 	"time"
+
+	"github.com/luizfelipeneves/api-fundo/go-worker/internal/httpclient"
+	"github.com/luizfelipeneves/api-fundo/go-worker/internal/parsers"
 )
 
-// FundDetailsCollector collects detailed information about a fund
+// FundDetailsCollector collects fund details via HTML scraping
 type FundDetailsCollector struct {
-	client *http.Client
+	client *httpclient.Client
 }
 
 // NewFundDetailsCollector creates a new fund details collector
-func NewFundDetailsCollector() *FundDetailsCollector {
-	return &FundDetailsCollector{
-		client: &http.Client{
-			Timeout: 45 * time.Second,
-		},
-	}
+func NewFundDetailsCollector(client *httpclient.Client) *FundDetailsCollector {
+	return &FundDetailsCollector{client: client}
 }
 
 // Name returns the collector name
@@ -28,59 +25,93 @@ func (c *FundDetailsCollector) Name() string {
 	return "fund_details"
 }
 
-// FundDetails represents detailed fund information
-type FundDetails struct {
-	ID                   string  `json:"id"`
-	Code                 string  `json:"code"`
-	RazaoSocial          string  `json:"razao_social"`
-	CNPJ                 string  `json:"cnpj"`
-	PublicoAlvo          string  `json:"publico_alvo"`
-	Mandato              string  `json:"mandato"`
-	Segmento             string  `json:"segmento"`
-	TipoFundo            string  `json:"tipo_fundo"`
-	PrazoDuracao         string  `json:"prazo_duracao"`
-	TipoGestao           string  `json:"tipo_gestao"`
-	TaxaAdministracao    string  `json:"taxa_adminstracao"`
-	Vacancia             float64 `json:"vacancia"`
-	NumeroCotistas       int     `json:"numero_cotistas"`
-	CotasEmitidas        int64   `json:"cotas_emitidas"`
-	ValorPatrimonialCota float64 `json:"valor_patrimonial_cota"`
-	ValorPatrimonial     float64 `json:"valor_patrimonial"`
-	UltimoRendimento     float64 `json:"ultimo_rendimento"`
-}
-
-// Collect fetches fund details from the API
+// Collect fetches fund details by scraping HTML
 func (c *FundDetailsCollector) Collect(ctx context.Context, req CollectRequest) (*CollectResult, error) {
-	if req.FundCode == "" {
-		return nil, fmt.Errorf("fund_code is required")
-	}
+	code := parsers.NormalizeFundCode(req.FundCode)
+	log.Printf("[fund_details] collecting details for %s\n", code)
 
-	url := fmt.Sprintf("https://investidor10.com.br/api/fundos-imobiliarios/%s", req.FundCode)
-
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	// Fetch HTML page
+	html, err := c.client.GetHTML(ctx, fmt.Sprintf("%s/fiis/%s/", httpclient.BaseURL, code))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to fetch HTML: %w", err)
 	}
 
-	resp, err := c.client.Do(httpReq)
+	// Parse fund details from HTML
+	details, err := parsers.ExtractFundDetails(html, code)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch fund details: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("failed to parse fund details: %w", err)
 	}
 
-	var details FundDetails
-	if err := json.NewDecoder(resp.Body).Decode(&details); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	// Extract dividends history from HTML
+	dividends, err := parsers.ExtractDividendsHistory(html)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse dividends: %w", err)
+	}
+
+	// Normalize dividends
+	var normalizedDividends []DividendItem
+	for _, d := range dividends {
+		dateISO := parsers.ToDateISO(d.Date)
+		paymentISO := parsers.ToDateISO(d.Payment)
+
+		if dateISO == "" || paymentISO == "" {
+			continue
+		}
+
+		normalizedDividends = append(normalizedDividends, DividendItem{
+			FundCode: code,
+			DateISO:  dateISO,
+			Payment:  paymentISO,
+			Type:     parsers.DividendTypeToCode(d.Type),
+			Value:    d.Value,
+		})
+	}
+
+	// Deduplicate dividends by key (fund_code|date_iso|type)
+	dividendMap := make(map[string]DividendItem)
+	for _, div := range normalizedDividends {
+		key := fmt.Sprintf("%s|%s|%s", div.FundCode, div.DateISO, div.Type)
+		existing, exists := dividendMap[key]
+
+		if !exists {
+			dividendMap[key] = div
+			continue
+		}
+
+		// Keep the one with the latest payment date or different value
+		if div.Payment > existing.Payment {
+			dividendMap[key] = div
+		} else if div.Payment == existing.Payment && div.Value != existing.Value {
+			dividendMap[key] = div
+		}
+	}
+
+	// Convert map back to slice
+	var finalDividends []DividendItem
+	for _, div := range dividendMap {
+		finalDividends = append(finalDividends, div)
 	}
 
 	return &CollectResult{
-		FundCode:  req.FundCode,
-		Data:      details,
+		Data: FundDetailsData{
+			Details:   details,
+			Dividends: finalDividends,
+		},
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}, nil
+}
+
+// FundDetailsData represents fund details with dividends
+type FundDetailsData struct {
+	Details   *parsers.FundDetails
+	Dividends []DividendItem
+}
+
+// DividendItem represents a dividend entry
+type DividendItem struct {
+	FundCode string
+	DateISO  string
+	Payment  string
+	Type     string
+	Value    float64
 }

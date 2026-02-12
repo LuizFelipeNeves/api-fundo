@@ -56,11 +56,8 @@ func (w *Worker) processWorkItem(ctx context.Context, item scheduler.WorkItem) e
 
 	// Collect data
 	req := collectors.CollectRequest{
-		Collector:   item.CollectorName,
-		FundCode:    item.FundCode,
-		CNPJ:        item.CNPJ,
-		ID:          item.ID,
-		TriggeredBy: "scheduler",
+		FundCode: item.FundCode,
+		CNPJ:     item.CNPJ,
 	}
 
 	result, err := collector.Collect(ctx, req)
@@ -69,7 +66,7 @@ func (w *Worker) processWorkItem(ctx context.Context, item scheduler.WorkItem) e
 	}
 
 	// Persist data based on collector type
-	if err := w.persistResult(ctx, item.CollectorName, result); err != nil {
+	if err := w.persistResult(ctx, item.CollectorName, item.FundCode, result); err != nil {
 		return fmt.Errorf("persistence failed: %w", err)
 	}
 
@@ -78,7 +75,7 @@ func (w *Worker) processWorkItem(ctx context.Context, item scheduler.WorkItem) e
 }
 
 // persistResult persists the collection result
-func (w *Worker) persistResult(ctx context.Context, collectorName string, result *collectors.CollectResult) error {
+func (w *Worker) persistResult(ctx context.Context, collectorName, fundCode string, result *collectors.CollectResult) error {
 	switch collectorName {
 	case "fund_list":
 		items, ok := result.Data.([]collectors.FundListItem)
@@ -88,39 +85,39 @@ func (w *Worker) persistResult(ctx context.Context, collectorName string, result
 		return w.persister.PersistFundList(ctx, items)
 
 	case "fund_details":
-		details, ok := result.Data.(collectors.FundDetails)
+		data, ok := result.Data.(collectors.FundDetailsData)
 		if !ok {
 			return fmt.Errorf("invalid data type for fund_details")
 		}
-		return w.persister.PersistFundDetails(ctx, details)
+		return w.persister.PersistFundDetails(ctx, fundCode, data)
 
 	case "indicators":
-		indicators, ok := result.Data.(collectors.Indicators)
+		data, ok := result.Data.(collectors.IndicatorsData)
 		if !ok {
 			return fmt.Errorf("invalid data type for indicators")
 		}
-		return w.persister.PersistIndicators(ctx, result.FundCode, indicators)
+		return w.persister.PersistIndicators(ctx, data)
 
 	case "cotations_today":
-		cotations, ok := result.Data.(collectors.CotationsResponse)
+		data, ok := result.Data.(collectors.CotationsTodayData)
 		if !ok {
 			return fmt.Errorf("invalid data type for cotations_today")
 		}
-		return w.persister.PersistCotationsToday(ctx, result.FundCode, cotations)
+		return w.persister.PersistCotationsToday(ctx, data)
 
 	case "cotations":
-		cotations, ok := result.Data.(collectors.CotationsResponse)
+		items, ok := result.Data.([]collectors.CotationItem)
 		if !ok {
 			return fmt.Errorf("invalid data type for cotations")
 		}
-		return w.persister.PersistHistoricalCotations(ctx, result.FundCode, cotations)
+		return w.persister.PersistHistoricalCotations(ctx, fundCode, items)
 
 	case "documents":
-		documents, ok := result.Data.([]collectors.Document)
+		items, ok := result.Data.([]collectors.DocumentItem)
 		if !ok {
 			return fmt.Errorf("invalid data type for documents")
 		}
-		return w.persister.PersistDocuments(ctx, result.FundCode, documents)
+		return w.persister.PersistDocuments(ctx, fundCode, items)
 
 	default:
 		return fmt.Errorf("unknown collector: %s", collectorName)
