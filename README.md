@@ -114,22 +114,8 @@ API para consultar dados de Fundos de Investimento Imobiliário.
 | `COOKIE` | Cookie da sessão do investidor10.com.br (obter do navegador) |
 | `CSRF_TOKEN` | Token CSRF usado pelo investidor10.com.br (pode expirar) |
 | `DB_PATH` | Caminho do SQLite (padrão: `./data.sqlite`) |
-| `CRON_INTERVAL_MS` | Intervalo do `jobs:cron` (padrão: 5min) |
-| `COTATIONS_TODAY_BATCH_SIZE` | Máximo de fundos por tick no `sync-cotations-today` (padrão: 100, máx: 5000) |
-| `COTATIONS_TODAY_CONCURRENCY` | Concorrência do `sync-cotations-today` (padrão: 5, máx: 20) |
-| `COTATIONS_TODAY_MIN_INTERVAL_MIN` | Intervalo mínimo por fundo no `sync-cotations-today` (padrão: 5, máx: 1440) |
-| `COTATIONS_TODAY_TIME_BUDGET_MS` | Orçamento de tempo por tick no `sync-cotations-today` (padrão: 55000, máx: 600000) |
-| `DETAILS_DIVIDENDS_BATCH_SIZE` | Máximo de fundos por tick no `sync-details-dividends` (padrão: 50, máx: 5000) |
-| `DETAILS_DIVIDENDS_CONCURRENCY` | Concorrência do `sync-details-dividends` (padrão: 5, máx: 20) |
-| `DETAILS_DIVIDENDS_MIN_INTERVAL_MIN` | Intervalo mínimo por fundo no `sync-details-dividends` (padrão: 1, máx: 1440) |
-| `DETAILS_DIVIDENDS_TIME_BUDGET_MS` | Orçamento de tempo por tick no `sync-details-dividends` (padrão: 55000, máx: 600000) |
-| `DOCUMENTS_BATCH_SIZE` | Máximo de fundos por tick no `sync-documents` (padrão: 100, máx: 5000) |
-| `DOCUMENTS_CONCURRENCY` | Concorrência do `sync-documents` (padrão: 3, máx: 10) |
-| `DOCUMENTS_MIN_INTERVAL_MIN` | Intervalo mínimo por fundo no `sync-documents` (padrão: 360, máx: 43200) |
-| `DOCUMENTS_TIME_BUDGET_MS` | Orçamento de tempo por tick no `sync-documents` (padrão: 55000, máx: 600000) |
+| `CRON_INTERVAL_MS` | Intervalo do `jobs:cron` (padrão: 1min) |
 | `TELEGRAM_BOT_TOKEN` | Token do bot (se vazio, não envia documentos via Telegram) |
-| `ENABLE_HISTORICAL_BACKFILL` | Habilita backfill histórico (padrão: `true`) |
-| `HISTORICAL_COTATIONS_DAYS` | Dias de histórico (padrão: 365, máx: 1825) |
 
 ## Rodar o projeto
 

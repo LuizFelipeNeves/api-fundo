@@ -236,12 +236,4 @@ export async function startCronScheduler(connection: ChannelModel, isActive: () 
       running = false;
     }
   }, safeInterval);
-
-  const shutdown = async () => {
-    clearInterval(timer);
-    await publisher.channel.close();
-  };
-
-  process.once('SIGINT', shutdown);
-  process.once('SIGTERM', shutdown);
 }

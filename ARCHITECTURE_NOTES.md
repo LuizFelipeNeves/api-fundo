@@ -24,19 +24,18 @@ Manter a API atual sem mudanças de rota/retorno e migrar o pipeline de coleta p
 3. `apps/worker` consome e executa handlers
 4. Storage do Telegram grava em Postgres (write side)
 
-### 2) Scheduler → Collector → Pipeline
+### 2) Scheduler → Collector → Persist (direto no worker)
 1. Cron (`apps/worker/src/scheduler/cron.ts`) publica em `collector.requests`
 2. Runner (`collector-runner`) executa coletor interno
-3. Coletor retorna `collector.results` com `persist_request`
-4. Pipeline converte para `persistence.write`
-5. Persistência grava no write side e projeta para read models
+3. Coletor retorna `persist_request` (ou `persist_requests`)
+4. O próprio runner persiste no write side e projeta para read models
 
 ### 3) API Read Side
 - Endpoints seguem formato legado
 - `apps/api/src/db/repo.ts` consulta tabelas `*_read`
 
 ## Filas e Retry
-- Queues: `telegram.updates`, `collector.requests`, `collector.results`, `persistence.write`
+- Queues: `telegram.updates`, `collector.requests`
 - DLQ via `*.dlq` e exchange `*.dlx`
 - Retry exponencial com filas `*.retry.<delay>`
 - Variáveis:

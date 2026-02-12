@@ -27,6 +27,25 @@ let isShuttingDown = false;
 let activeSessionToken = 0;
 let runMainInFlight: Promise<void> | null = null;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
+let signalHandlersInstalled = false;
+let currentShutdown: (() => Promise<void>) | null = null;
+
+function installSignalHandlersOnce() {
+  if (signalHandlersInstalled) return;
+  signalHandlersInstalled = true;
+
+  const handler = () => {
+    const shutdown = currentShutdown;
+    if (!shutdown) {
+      process.exit(0);
+      return;
+    }
+    void shutdown();
+  };
+
+  process.on('SIGINT', handler);
+  process.on('SIGTERM', handler);
+}
 
 function scheduleRestart(delayMs: number) {
   if (isShuttingDown) return;
@@ -75,6 +94,29 @@ async function runWithConnection(connection: ChannelModel) {
     const channel = await connection.createChannel();
     const handledKey = Symbol.for('worker.telegram.handled');
     const handledDeliveryTags = new Set<number>();
+    let lastPruneTag = 0;
+
+    function shouldSkipByDeliveryTag(tag: unknown): boolean {
+      if (typeof tag !== 'number') return false;
+      if (handledDeliveryTags.has(tag)) return true;
+      handledDeliveryTags.add(tag);
+
+      const maxTags = 5000;
+      const pruneEveryTags = 1000;
+      const keepWindowTags = 20000;
+      if (handledDeliveryTags.size > maxTags && tag - lastPruneTag >= pruneEveryTags) {
+        lastPruneTag = tag;
+        const cutoff = tag - keepWindowTags;
+        for (const t of handledDeliveryTags) {
+          if (t < cutoff) handledDeliveryTags.delete(t);
+        }
+        if (handledDeliveryTags.size > maxTags * 3) {
+          handledDeliveryTags.clear();
+          handledDeliveryTags.add(tag);
+        }
+      }
+      return false;
+    }
 
     function isChannelOpen(ch: unknown): boolean {
       const c: any = ch as any;
@@ -87,10 +129,7 @@ async function runWithConnection(connection: ChannelModel) {
     function safeAck(msg: ConsumeMessage) {
       try {
         const tag = msg.fields?.deliveryTag;
-        if (typeof tag === 'number') {
-          if (handledDeliveryTags.has(tag)) return;
-          handledDeliveryTags.add(tag);
-        }
+        if (shouldSkipByDeliveryTag(tag)) return;
         if ((msg as any)[handledKey]) return;
         (msg as any)[handledKey] = 'ack';
         if (isChannelOpen(channel)) {
@@ -104,10 +143,7 @@ async function runWithConnection(connection: ChannelModel) {
     function safeNack(msg: ConsumeMessage, requeue: boolean) {
       try {
         const tag = msg.fields?.deliveryTag;
-        if (typeof tag === 'number') {
-          if (handledDeliveryTags.has(tag)) return;
-          handledDeliveryTags.add(tag);
-        }
+        if (shouldSkipByDeliveryTag(tag)) return;
         if ((msg as any)[handledKey]) return;
         (msg as any)[handledKey] = requeue ? 'nack_requeue' : 'nack';
         if (isChannelOpen(channel)) {
@@ -149,8 +185,8 @@ async function runWithConnection(connection: ChannelModel) {
       process.exit(0);
     };
 
-    process.once('SIGINT', shutdown);
-    process.once('SIGTERM', shutdown);
+    currentShutdown = shutdown;
+    installSignalHandlersOnce();
 
     channel.consume(telegramQueue, async (msg: ConsumeMessage | null) => {
       if (!msg) return;
@@ -173,8 +209,10 @@ async function runWithConnection(connection: ChannelModel) {
     await new Promise<void>((resolve) => {
       connection.once('close', () => resolve());
     });
+    if (currentShutdown === shutdown) currentShutdown = null;
   } catch (err) {
     if (activeSessionToken === sessionToken) activeSessionToken = 0;
+    if (currentShutdown) currentShutdown = null;
     try {
       await connection.close();
     } catch {

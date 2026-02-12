@@ -39,6 +39,29 @@ export async function startCollectorRunner(connection: ChannelModel, isActive: (
   const publishChannel = await connection.createChannel();
   const handledKey = Symbol.for('worker.collector.handled');
   const handledDeliveryTags = new Set<number>();
+  let lastPruneTag = 0;
+
+  function shouldSkipByDeliveryTag(tag: unknown): boolean {
+    if (typeof tag !== 'number') return false;
+    if (handledDeliveryTags.has(tag)) return true;
+    handledDeliveryTags.add(tag);
+
+    const maxTags = 5000;
+    const pruneEveryTags = 1000;
+    const keepWindowTags = 20000;
+    if (handledDeliveryTags.size > maxTags && tag - lastPruneTag >= pruneEveryTags) {
+      lastPruneTag = tag;
+      const cutoff = tag - keepWindowTags;
+      for (const t of handledDeliveryTags) {
+        if (t < cutoff) handledDeliveryTags.delete(t);
+      }
+      if (handledDeliveryTags.size > maxTags * 3) {
+        handledDeliveryTags.clear();
+        handledDeliveryTags.add(tag);
+      }
+    }
+    return false;
+  }
 
   await setupQueue(publishChannel, requestQueue, { dlx: 'collector.dlx', dlq: 'collector.dlq' });
 
@@ -67,10 +90,7 @@ export async function startCollectorRunner(connection: ChannelModel, isActive: (
   async function safeAck(msg: ConsumeMessage) {
     try {
       const tag = msg.fields?.deliveryTag;
-      if (typeof tag === 'number') {
-        if (handledDeliveryTags.has(tag)) return;
-        handledDeliveryTags.add(tag);
-      }
+      if (shouldSkipByDeliveryTag(tag)) return;
       if ((msg as any)[handledKey]) return;
       (msg as any)[handledKey] = 'ack';
       if (isChannelOpen(consumeChannel)) {
@@ -84,10 +104,7 @@ export async function startCollectorRunner(connection: ChannelModel, isActive: (
   async function safeNack(msg: ConsumeMessage, requeue = false) {
     try {
       const tag = msg.fields?.deliveryTag;
-      if (typeof tag === 'number') {
-        if (handledDeliveryTags.has(tag)) return;
-        handledDeliveryTags.add(tag);
-      }
+      if (shouldSkipByDeliveryTag(tag)) return;
       if ((msg as any)[handledKey]) return;
       (msg as any)[handledKey] = requeue ? 'nack_requeue' : 'nack';
       if (isChannelOpen(consumeChannel)) {

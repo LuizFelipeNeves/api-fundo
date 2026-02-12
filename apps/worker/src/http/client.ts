@@ -67,10 +67,6 @@ function computeBackoff(attempt: number, status: number | undefined, retryAfter:
 
 function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
 
-function timeoutAfter(ms: number): Promise<never> {
-  return new Promise((_, reject) => setTimeout(() => reject(new Error(`timeout_after_ms=${ms}`)), ms));
-}
-
 async function throwHttpError(response: Response, method: string, url: string): Promise<never> {
   throw new Error(
     `${method} ${url} -> HTTP ${response.status}${response.statusText ? ' ' + response.statusText : ''} content_type="${response.headers.get('content-type') || ''}"`
@@ -115,11 +111,7 @@ async function fetchWithRetry(method: string, url: string, init: RequestInit, op
       const tid = setTimeout(() => ctrl.abort(), attemptTimeout);
       try {
         const requestInit: RequestInit = { ...init, signal: ctrl.signal };
-        const res = await Promise.race([
-          fetch(url, requestInit),
-          timeoutAfter(attemptTimeout),
-        ]);
-        clearTimeout(tid);
+        const res = await fetch(url, requestInit);
 
         if (!res.ok && isRetryableStatus(res.status) && attempt + 1 < retryMax) {
           const after = parseRetryAfterMs(res.headers.get('retry-after'));
