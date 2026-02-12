@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -116,12 +117,15 @@ func (p *Persister) PersistFundDetails(ctx context.Context, fundCode string, dat
 
 	// Persist dividends
 	if len(data.Dividends) > 0 {
+		priceByDate := make(map[string]float64, len(data.Dividends))
+
 		stmt, err := tx.PrepareContext(ctx, `
-			INSERT INTO dividend (fund_code, date_iso, payment, type, value)
-			VALUES ($1, $2, $3, $4, $5)
+			INSERT INTO dividend (fund_code, date_iso, payment, type, value, yield)
+			VALUES ($1, $2, $3, $4, $5, $6)
 			ON CONFLICT (fund_code, date_iso, type) DO UPDATE SET
 				payment = EXCLUDED.payment,
-				value = EXCLUDED.value
+				value = EXCLUDED.value,
+				yield = EXCLUDED.yield
 		`)
 		if err != nil {
 			return fmt.Errorf("failed to prepare dividend statement: %w", err)
@@ -129,7 +133,28 @@ func (p *Persister) PersistFundDetails(ctx context.Context, fundCode string, dat
 		defer stmt.Close()
 
 		for _, div := range data.Dividends {
-			_, err := stmt.ExecContext(ctx, div.FundCode, div.DateISO, div.Payment, div.Type, div.Value)
+			price, ok := priceByDate[div.DateISO]
+			if !ok {
+				var p float64
+				err := tx.QueryRowContext(
+					ctx,
+					`SELECT price FROM cotation WHERE fund_code = $1 AND date_iso = $2`,
+					div.FundCode,
+					div.DateISO,
+				).Scan(&p)
+				if err != nil {
+					if err != sql.ErrNoRows {
+						return fmt.Errorf("failed to fetch cotation price: %w", err)
+					}
+					p = 0
+				}
+				priceByDate[div.DateISO] = p
+				price = p
+			}
+
+			yield := calcYield(div.Value, price)
+
+			_, err := stmt.ExecContext(ctx, div.FundCode, div.DateISO, div.Payment, div.Type, div.Value, yield)
 			if err != nil {
 				return fmt.Errorf("failed to insert dividend: %w", err)
 			}
@@ -142,6 +167,13 @@ func (p *Persister) PersistFundDetails(ctx context.Context, fundCode string, dat
 
 	// Update fund_state timestamp
 	return p.db.UpdateFundStateTimestamp(ctx, fundCode, "last_details_sync_at", time.Now())
+}
+
+func calcYield(value, price float64) float64 {
+	if value <= 0 || price <= 0 {
+		return 0
+	}
+	return (value / price) * 100
 }
 
 // PersistIndicators persists fund indicators

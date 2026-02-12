@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -21,6 +22,8 @@ type CotationItem struct {
 	Date  string  `json:"date"`
 	Price float64 `json:"price"`
 }
+
+const FNET_BASE = "https://fnet.bmfbovespa.com.br/fnet/publico"
 
 // CotationsTodayData represents today's cotation data
 type CotationsTodayData any
@@ -89,37 +92,39 @@ func NormalizeDocuments(raw []interface{}) []DocumentData {
 				doc.ID = strconv.FormatInt(int64(idFloat), 10)
 			}
 
-			if title, ok := docMap["title"].(string); ok {
+			if title, ok := docMap["descricaoFundo"].(string); ok {
 				doc.Title = title
 			}
 
-			if category, ok := docMap["category"].(string); ok {
+			if category, ok := docMap["categoriaDocumento"].(string); ok {
 				doc.Category = category
 			}
 
-			if docType, ok := docMap["type"].(string); ok {
+			if docType, ok := docMap["tipoDocumento"].(string); ok {
 				doc.Type = docType
 			}
 
-			if date, ok := docMap["date"].(string); ok {
+			if date, ok := docMap["dataReferencia"].(string); ok {
 				doc.Date = date
 			}
 
-			if dateUpload, ok := docMap["dateUpload"].(string); ok {
+			if dateUpload, ok := docMap["dataEntrega"].(string); ok {
 				doc.DateUpload = dateUpload
 			}
 
-			if url, ok := docMap["url"].(string); ok {
-				doc.URL = url
-			}
+			doc.URL = fmt.Sprintf(
+				"%s/exibirDocumento?id=%d&cvm=true&",
+				FNET_BASE,
+				doc.ID,
+			)
 
-			if status, ok := docMap["status"].(string); ok {
+			if status, ok := docMap["descricaoStatus"].(string); ok {
 				doc.Status = status
 			}
 
-			if version, ok := docMap["version"].(string); ok {
+			if version, ok := docMap["versao"].(string); ok {
 				doc.Version = strings.TrimSpace(version)
-			} else if versionFloat, ok := docMap["version"].(float64); ok {
+			} else if versionFloat, ok := docMap["versao"].(float64); ok {
 				doc.Version = strconv.FormatInt(int64(versionFloat), 10)
 			}
 			if doc.Version == "" {

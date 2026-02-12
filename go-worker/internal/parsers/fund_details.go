@@ -10,6 +10,11 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
+var (
+	reFirstNumber = regexp.MustCompile(`[-+]?\d+(?:[.,]\d+)?`)
+	reDigits      = regexp.MustCompile(`\d+`)
+)
+
 // FundDetails represents fund details extracted from HTML
 type FundDetails struct {
 	ID                   string
@@ -49,80 +54,119 @@ func ExtractFundDetails(html, code string) (*FundDetails, error) {
 	details := &FundDetails{}
 
 	// Extract fund ID from data attributes or scripts
-	details.ID = extractFundID(doc)
+	details.ID = extractFundID(html, doc)
 
-	// Extract CNPJ
-	doc.Find("._card-body span").Each(func(i int, s *goquery.Selection) {
-		text := strings.TrimSpace(s.Text())
-		if strings.Contains(text, "CNPJ") {
-			cnpj := extractCNPJ(text)
-			if cnpj != "" {
-				details.CNPJ = cnpj
-			}
-		}
-	})
+	if cnpj := extractCNPJ(html); cnpj != "" {
+		details.CNPJ = cnpj
+	}
 
-	// Extract other details from the info cards
-	doc.Find("._card").Each(func(i int, card *goquery.Selection) {
-		label := strings.TrimSpace(card.Find("._card-header span").First().Text())
-		value := strings.TrimSpace(card.Find("._card-body span").First().Text())
-
-		switch {
-		case strings.Contains(label, "Razão Social"):
-			details.RazaoSocial = value
-		case strings.Contains(label, "Público Alvo"):
-			details.PublicoAlvo = value
-		case strings.Contains(label, "Mandato"):
-			details.Mandato = value
-		case strings.Contains(label, "Segmento"):
-			details.Segmento = value
-		case strings.Contains(label, "Tipo de Fundo"):
-			details.TipoFundo = value
-		case strings.Contains(label, "Prazo de Duração"):
-			details.PrazoDuracao = value
-		case strings.Contains(label, "Tipo de Gestão"):
-			details.TipoGestao = value
-		case strings.Contains(label, "Taxa de Administração"):
-			if val := parsePercentage(value); val != nil {
-				details.TaxaAdministracao = *val
-			}
-		case strings.Contains(label, "Liquidez Diária"):
-			details.DailyLiquidity = parseCurrency(value)
-		case strings.Contains(label, "Vacância"):
-			details.Vacancia = parsePercentage(value)
-		case strings.Contains(label, "Número de Cotistas"):
-			details.NumeroCotistas = parseInt(value)
-		case strings.Contains(label, "Cotas Emitidas"):
-			details.CotasEmitidas = parseInt64(value)
-		case strings.Contains(label, "Valor Patrimonial por Cota"):
-			details.ValorPatrimonialCota = parseCurrency(value)
-		case strings.Contains(label, "Valor Patrimonial"):
-			details.ValorPatrimonial = parseCurrency(value)
-		case strings.Contains(label, "Último Rendimento"):
-			details.UltimoRendimento = parseCurrency(value)
-		}
-	})
+	extractFundDetailsFromDescBlocks(doc, details)
 
 	return details, nil
 }
 
 // ExtractFundID extracts fund ID from HTML
-func extractFundID(doc *goquery.Document) string {
-	// Try to find ID in data attributes
-	if id, exists := doc.Find("[data-fii-id]").Attr("data-fii-id"); exists {
-		return id
+func extractFundID(html string, doc *goquery.Document) string {
+	if doc != nil {
+		if id, exists := doc.Find("[data-fii-id]").Attr("data-fii-id"); exists {
+			return strings.TrimSpace(id)
+		}
 	}
 
-	// Try to extract from JavaScript variables
-	doc.Find("script").Each(func(i int, s *goquery.Selection) {
-		script := s.Text()
-		re := regexp.MustCompile(`fiiId\s*=\s*['"](\d+)['"]`)
-		if matches := re.FindStringSubmatch(script); len(matches) > 1 {
-			return
+	type pat struct {
+		re *regexp.Regexp
+	}
+
+	patterns := []pat{
+		{re: regexp.MustCompile(`fiiId\s*=\s*['"](\d+)['"]`)},
+		{re: regexp.MustCompile(`"fii_id"\s*:\s*(\d+)`)},
+		{re: regexp.MustCompile(`api/fii/[^"' ]+/(\d+)`)},
+		{re: regexp.MustCompile(`\bfiis/(\d+)\b`)},
+	}
+
+	for _, p := range patterns {
+		if m := p.re.FindStringSubmatch(html); len(m) > 1 {
+			return strings.TrimSpace(m[1])
 		}
-	})
+	}
 
 	return ""
+}
+
+func extractFundDetailsFromDescBlocks(doc *goquery.Document, details *FundDetails) {
+	if doc == nil || details == nil {
+		return
+	}
+
+	doc.Find(".desc").Each(func(i int, desc *goquery.Selection) {
+		label := strings.TrimSpace(desc.Find(".name").First().Text())
+		value := strings.TrimSpace(desc.Find(".value span").First().Text())
+		if label == "" || value == "" {
+			return
+		}
+
+		labelNorm := normalizeLabel(label)
+
+		switch {
+		case strings.Contains(labelNorm, "razao social"):
+			details.RazaoSocial = value
+		case strings.Contains(labelNorm, "cnpj"):
+			if cnpj := extractCNPJ(value); cnpj != "" {
+				details.CNPJ = cnpj
+			}
+		case strings.Contains(labelNorm, "publico") && strings.Contains(labelNorm, "alvo"):
+			details.PublicoAlvo = value
+		case strings.Contains(labelNorm, "mandato"):
+			details.Mandato = value
+		case strings.Contains(labelNorm, "segmento"):
+			details.Segmento = value
+		case strings.Contains(labelNorm, "tipo de fundo"):
+			details.TipoFundo = value
+		case strings.Contains(labelNorm, "prazo") && strings.Contains(labelNorm, "duracao"):
+			details.PrazoDuracao = value
+		case strings.Contains(labelNorm, "tipo de gestao"):
+			details.TipoGestao = value
+		case strings.Contains(labelNorm, "taxa") && strings.Contains(labelNorm, "administracao"):
+			if val := parsePercentage(value); val != nil {
+				details.TaxaAdministracao = *val
+			}
+		case strings.Contains(labelNorm, "liquidez") && strings.Contains(labelNorm, "diaria"):
+			details.DailyLiquidity = parseCurrency(value)
+		case strings.Contains(labelNorm, "vacancia"):
+			details.Vacancia = parsePercentage(value)
+		case strings.Contains(labelNorm, "numero") && strings.Contains(labelNorm, "cotistas"):
+			details.NumeroCotistas = parseInt(value)
+		case strings.Contains(labelNorm, "cotas") && strings.Contains(labelNorm, "emitidas"):
+			details.CotasEmitidas = parseInt64(value)
+		case strings.Contains(labelNorm, "patrimonial") && strings.Contains(labelNorm, "cota"):
+			details.ValorPatrimonialCota = parseCurrency(value)
+		case strings.Contains(labelNorm, "valor patrimonial"):
+			details.ValorPatrimonial = parseCurrency(value)
+		case strings.Contains(labelNorm, "ultimo") && strings.Contains(labelNorm, "rendimento"):
+			details.UltimoRendimento = parseCurrency(value)
+		}
+	})
+}
+
+func normalizeLabel(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.ToLower(s)
+
+	repl := strings.NewReplacer(
+		"á", "a", "à", "a", "ã", "a", "â", "a", "ä", "a",
+		"é", "e", "è", "e", "ê", "e", "ë", "e",
+		"í", "i", "ì", "i", "î", "i", "ï", "i",
+		"ó", "o", "ò", "o", "õ", "o", "ô", "o", "ö", "o",
+		"ú", "u", "ù", "u", "û", "u", "ü", "u",
+		"ç", "c",
+		"ñ", "n",
+		"-", " ",
+	)
+
+	s = repl.Replace(s)
+	s = strings.ReplaceAll(s, "\u00a0", " ")
+	s = strings.Join(strings.Fields(s), " ")
+	return s
 }
 
 // ExtractDividendsHistory extracts dividends from the history table
@@ -171,9 +215,15 @@ func extractCNPJ(text string) string {
 }
 
 func parsePercentage(s string) *float64 {
+	s = strings.ReplaceAll(s, "\u00a0", " ")
 	s = strings.ReplaceAll(s, "%", "")
-	s = strings.ReplaceAll(s, ",", ".")
 	s = strings.TrimSpace(s)
+
+	if m := reFirstNumber.FindString(s); m != "" {
+		s = m
+	}
+
+	s = strings.ReplaceAll(s, ",", ".")
 
 	if val, err := strconv.ParseFloat(s, 64); err == nil {
 		return &val
@@ -190,7 +240,12 @@ func parseCurrency(s string) *float64 {
 }
 
 func parseCurrencyFloat(s string) float64 {
-	// Remove currency symbols and spaces
+	s = strings.ReplaceAll(s, "\u00a0", " ")
+
+	if m := reFirstNumber.FindString(s); m != "" {
+		s = m
+	}
+
 	s = strings.ReplaceAll(s, "R$", "")
 	s = strings.ReplaceAll(s, ".", "")
 	s = strings.ReplaceAll(s, ",", ".")
@@ -203,8 +258,8 @@ func parseCurrencyFloat(s string) float64 {
 }
 
 func parseInt(s string) *int {
-	s = strings.ReplaceAll(s, ".", "")
-	s = strings.ReplaceAll(s, ",", "")
+	s = strings.ReplaceAll(s, "\u00a0", " ")
+	s = strings.Join(reDigits.FindAllString(s, -1), "")
 	s = strings.TrimSpace(s)
 
 	if val, err := strconv.Atoi(s); err == nil {
@@ -214,8 +269,8 @@ func parseInt(s string) *int {
 }
 
 func parseInt64(s string) *int64 {
-	s = strings.ReplaceAll(s, ".", "")
-	s = strings.ReplaceAll(s, ",", "")
+	s = strings.ReplaceAll(s, "\u00a0", " ")
+	s = strings.Join(reDigits.FindAllString(s, -1), "")
 	s = strings.TrimSpace(s)
 
 	if val, err := strconv.ParseInt(s, 10, 64); err == nil {
