@@ -62,94 +62,114 @@ async function runWithConnection(connection: ChannelModel) {
     runMain(); // Restart instead of exit
   });
 
-  await runMigrations();
-  const channel = await connection.createChannel();
-  const handledKey = Symbol.for('worker.telegram.handled');
+  try {
+    await runMigrations();
+    const channel = await connection.createChannel();
+    const handledKey = Symbol.for('worker.telegram.handled');
 
-  function safeAck(msg: ConsumeMessage) {
-    try {
-      if (!isActive()) return;
-      if ((msg as any)[handledKey]) return;
-      (msg as any)[handledKey] = 'ack';
-      channel.ack(msg);
-    } catch {
-      // ignore
+    function safeAck(msg: ConsumeMessage) {
+      try {
+        if ((msg as any)[handledKey]) return;
+        (msg as any)[handledKey] = 'ack';
+        channel.ack(msg);
+      } catch {
+        // ignore
+      }
     }
-  }
 
-  function safeNack(msg: ConsumeMessage, requeue: boolean) {
-    try {
-      if (!isActive()) return;
-      if ((msg as any)[handledKey]) return;
-      (msg as any)[handledKey] = requeue ? 'nack_requeue' : 'nack';
-      channel.nack(msg, false, requeue);
-    } catch {
-      // ignore
+    function safeNack(msg: ConsumeMessage, requeue: boolean) {
+      try {
+        if ((msg as any)[handledKey]) return;
+        (msg as any)[handledKey] = requeue ? 'nack_requeue' : 'nack';
+        channel.nack(msg, false, requeue);
+      } catch {
+        // ignore
+      }
     }
-  }
 
-  channel.on('error', (err: Error) => {
-    if (isShuttingDown) return;
-    process.stderr.write(`[worker] channel error: ${err.message}\n`);
-  });
-  channel.on('close', () => {
-    if (isShuttingDown) return;
-    process.stderr.write('[worker] channel closed\n');
-  });
+    channel.on('error', (err: Error) => {
+      if (isShuttingDown) return;
+      process.stderr.write(`[worker] channel error: ${err.message}\n`);
+    });
+    channel.on('close', () => {
+      if (isShuttingDown) return;
+      process.stderr.write('[worker] channel closed\n');
+    });
 
-  await channel.assertQueue(telegramQueue, { durable: true });
-  await channel.prefetch(telegramPrefetch);
+    await channel.assertQueue(telegramQueue, { durable: true });
+    await channel.prefetch(telegramPrefetch);
 
-  await startPipelineConsumers(connection, isActive);
-  await startCollectorRunner(connection, isActive);
-  await startCronScheduler(connection, isActive);
+    await startPipelineConsumers(connection, isActive);
+    await startCollectorRunner(connection, isActive);
+    await startCronScheduler(connection, isActive);
 
-  const shutdown = async () => {
-    if (isShuttingDown) return;
-    isShuttingDown = true;
-    try {
-      await channel.close();
-    } catch {
-      // ignore
-    }
+    const shutdown = async () => {
+      if (isShuttingDown) return;
+      isShuttingDown = true;
+      try {
+        await channel.close();
+      } catch {
+        // ignore
+      }
+      try {
+        await connection.close();
+      } catch {
+        // ignore
+      }
+      process.exit(0);
+    };
+
+    process.once('SIGINT', shutdown);
+    process.once('SIGTERM', shutdown);
+
+    channel.consume(telegramQueue, async (msg: ConsumeMessage | null) => {
+      if (!msg) return;
+      if (!isActive()) {
+        safeNack(msg, true);
+        return;
+      }
+      try {
+        const payload = JSON.parse(msg.content.toString());
+        const update = payload?.update ?? payload;
+        await processTelegramUpdate(update);
+        safeAck(msg);
+      } catch (err) {
+        const message = err instanceof Error ? err.stack || err.message : String(err);
+        process.stderr.write(`[telegram-worker] error ${message.replace(/\n/g, '\\n')}\n`);
+        safeNack(msg, true);
+      }
+    });
+  } catch (err) {
+    if (activeSessionToken === sessionToken) activeSessionToken = 0;
     try {
       await connection.close();
     } catch {
       // ignore
     }
-    process.exit(0);
-  };
-
-  process.once('SIGINT', shutdown);
-  process.once('SIGTERM', shutdown);
-
-  channel.consume(telegramQueue, async (msg: ConsumeMessage | null) => {
-    if (!msg || !isActive()) return;
-    try {
-      const payload = JSON.parse(msg.content.toString());
-      const update = payload?.update ?? payload;
-      await processTelegramUpdate(update);
-      safeAck(msg);
-    } catch (err) {
-      const message = err instanceof Error ? err.stack || err.message : String(err);
-      process.stderr.write(`[telegram-worker] error ${message.replace(/\n/g, '\\n')}\n`);
-      safeNack(msg, true);
-    }
-  });
+    throw err;
+  }
 }
 
 async function runMain() {
   if (isShuttingDown) return;
   if (runMainInFlight) return;
   runMainInFlight = (async () => {
+    let connection: ChannelModel | null = null;
     try {
-      const connection = await connectWithRetry();
+      connection = await connectWithRetry();
       await runWithConnection(connection);
     } catch (err) {
       if (isShuttingDown) return;
       const message = err instanceof Error ? err.stack || err.message : String(err);
       process.stderr.write(`[telegram-worker] fatal ${message.replace(/\n/g, '\\n')}\n`);
       process.stderr.write('[worker] restarting in 5 seconds...\n');
+      if (connection) {
+        try {
+          await connection.close();
+        } catch {
+          // ignore
+        }
+      }
       setTimeout(runMain, 5000);
     }
   })().finally(() => {

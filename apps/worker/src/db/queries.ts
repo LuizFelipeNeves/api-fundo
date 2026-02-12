@@ -67,13 +67,12 @@ export async function listDocumentsCandidates(
     .map((r) => ({ code: r.code.toUpperCase(), cnpj: r.cnpj! }));
 }
 
-export async function listAllFundCodes(limit: number): Promise<string[]> {
-  const sqlDb = getRawSql();
-  const rows = await sqlDb<FundRow[]>`
+export async function listAllFundCodes(limit: number, sqlDb: any = getRawSql()): Promise<string[]> {
+  const rows = (await sqlDb<FundRow[]>`
     SELECT code
     FROM fund_master
     ORDER BY code ASC
     LIMIT ${limit}
-  `;
-  return rows.map((r) => r.code.toUpperCase());
+  `) as FundRow[];
+  return rows.map((r: FundRow) => r.code.toUpperCase());
 }

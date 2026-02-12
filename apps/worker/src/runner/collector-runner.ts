@@ -50,7 +50,6 @@ export async function startCollectorRunner(connection: ChannelModel, isActive: (
 
   async function safeAck(msg: ConsumeMessage) {
     try {
-      if (!isActive()) return;
       if ((msg as any)[handledKey]) return;
       (msg as any)[handledKey] = 'ack';
       if (isChannelOpen(consumeChannel)) {
@@ -63,7 +62,6 @@ export async function startCollectorRunner(connection: ChannelModel, isActive: (
 
   async function safeNack(msg: ConsumeMessage, requeue = false) {
     try {
-      if (!isActive()) return;
       if ((msg as any)[handledKey]) return;
       (msg as any)[handledKey] = requeue ? 'nack_requeue' : 'nack';
       if (isChannelOpen(consumeChannel)) {
@@ -88,7 +86,11 @@ export async function startCollectorRunner(connection: ChannelModel, isActive: (
   };
 
   consumeChannel.consume(requestQueue, async (msg: ConsumeMessage | null) => {
-    if (!msg || !isActive()) return;
+    if (!msg) return;
+    if (!isActive()) {
+      await safeNack(msg, true);
+      return;
+    }
     let request: CollectRequest | null = null;
     try {
       request = JSON.parse(msg.content.toString()) as CollectRequest;

@@ -53,7 +53,6 @@ export async function startPipelineConsumers(connection: ChannelModel, isActive:
 
   async function safeAck(msg: ConsumeMessage) {
     try {
-      if (!isActive()) return;
       if ((msg as any)[handledKey]) return;
       (msg as any)[handledKey] = 'ack';
       if (isChannelOpen(consumeChannel)) {
@@ -66,7 +65,6 @@ export async function startPipelineConsumers(connection: ChannelModel, isActive:
 
   async function safeNack(msg: ConsumeMessage, requeue = false) {
     try {
-      if (!isActive()) return;
       if ((msg as any)[handledKey]) return;
       (msg as any)[handledKey] = requeue ? 'nack_requeue' : 'nack';
       if (isChannelOpen(consumeChannel)) {
@@ -78,7 +76,11 @@ export async function startPipelineConsumers(connection: ChannelModel, isActive:
   }
 
   consumeChannel.consume(persistQueue, async (msg: ConsumeMessage | null) => {
-    if (!msg || !isActive()) return;
+    if (!msg) return;
+    if (!isActive()) {
+      await safeNack(msg, true);
+      return;
+    }
     try {
       const payload = JSON.parse(msg.content.toString()) as PersistRequest;
       await withTimeout(processPersistRequest(payload), persistTimeoutMs, `pipeline.persist type=${payload.type}`);
@@ -114,7 +116,11 @@ export async function startPipelineConsumers(connection: ChannelModel, isActive:
   });
 
   consumeChannel.consume(collectResultsQueue, async (msg: ConsumeMessage | null) => {
-    if (!msg || !isActive()) return;
+    if (!msg) return;
+    if (!isActive()) {
+      await safeNack(msg, true);
+      return;
+    }
     try {
       const payload = JSON.parse(msg.content.toString()) as CollectResult;
       const hasEnvelope =

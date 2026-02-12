@@ -1,10 +1,13 @@
 import type { ChannelModel } from 'amqplib';
 import { createCollectorPublisher } from '../queues/collector';
 import { shouldRunCotationsToday, shouldRunEodCotation } from '../utils/time';
-import { runEodCotationRoutine } from '../runner/eod-cotation';
+import { runEodCotationRoutineWithSql } from '../runner/eod-cotation';
 import { listCandidatesByState, listDocumentsCandidates } from '../db/queries';
+import { withTryAdvisoryXactLock } from '../utils/pg-lock';
 
 const intervalMs = Number.parseInt(process.env.CRON_INTERVAL_MS || String(5 * 60 * 1000), 10);
+const eodLockKeyRaw = Number.parseInt(process.env.EOD_COTATION_LOCK_KEY || '4419270101', 10);
+const eodLockKey = Number.isFinite(eodLockKeyRaw) ? eodLockKeyRaw : 4419270101;
 
 // Dynamic intervals per task type (in minutes)
 const TASK_INTERVALS = {
@@ -43,81 +46,88 @@ export async function startCronScheduler(connection: ChannelModel, isActive: () 
 
   async function tick() {
     if (!isActive()) return;
-    resetDailyFlags();
-    const now = Date.now();
+    try {
+      resetDailyFlags();
+      const now = Date.now();
 
-    // fund_list: 30min
-    if (!lastRun['fund_list'] || now - lastRun['fund_list'] >= getIntervalMs('fund_list')) {
-      try {
-        await publisher.publish({ collector: 'fund_list', triggered_by: 'cron' });
-      } catch {
-        return;
-      }
-      lastRun['fund_list'] = now;
-    }
-
-    // fund_details: 10min
-    const detailsCandidates = await listCandidatesByState('last_details_sync_at', batchSize, getIntervalMs('fund_details'));
-    for (const code of detailsCandidates) {
-      try {
-        await publisher.publish({ collector: 'fund_details', fund_code: code, triggered_by: 'cron' });
-      } catch {
-        return;
-      }
-    }
-
-    // cotations_today: 5min
-    if (shouldRunCotationsToday()) {
-      const todayCandidates = await listCandidatesByState('last_cotations_today_at', batchSize, getIntervalMs('cotations_today'));
-      for (const code of todayCandidates) {
+      // fund_list: 30min
+      if (!lastRun['fund_list'] || now - lastRun['fund_list'] >= getIntervalMs('fund_list')) {
         try {
-          await publisher.publish({ collector: 'cotations_today', fund_code: code, triggered_by: 'cron' });
+          await publisher.publish({ collector: 'fund_list', triggered_by: 'cron' });
+        } catch {
+          return;
+        }
+        lastRun['fund_list'] = now;
+      }
+
+      // fund_details: 10min
+      const detailsCandidates = await listCandidatesByState('last_details_sync_at', batchSize, getIntervalMs('fund_details'));
+      for (const code of detailsCandidates) {
+        try {
+          await publisher.publish({ collector: 'fund_details', fund_code: code, triggered_by: 'cron' });
         } catch {
           return;
         }
       }
-    }
 
-    // indicators: 30min
-    const indicatorsCandidates = await listCandidatesByState('last_indicators_at', batchSize, getIntervalMs('indicators'), { requireId: true });
-    for (const code of indicatorsCandidates) {
-      try {
-        await publisher.publish({ collector: 'indicators', fund_code: code, triggered_by: 'cron' });
-      } catch {
-        return;
+      // cotations_today: 5min
+      if (shouldRunCotationsToday()) {
+        const todayCandidates = await listCandidatesByState('last_cotations_today_at', batchSize, getIntervalMs('cotations_today'));
+        for (const code of todayCandidates) {
+          try {
+            await publisher.publish({ collector: 'cotations_today', fund_code: code, triggered_by: 'cron' });
+          } catch {
+            return;
+          }
+        }
       }
-    }
 
-    // cotations (historical): backfill only once
-    if (!cotationsBackfillDone) {
-      // Backfill: get all funds with id (100 years = ~3e12 ms)
-      const BACKFILL_INTERVAL_MS = 100 * 365 * 24 * 60 * 60 * 1000;
-      const cotationsCandidates = await listCandidatesByState('last_historical_cotations_at', batchSize, BACKFILL_INTERVAL_MS, { requireId: true });
-      for (const code of cotationsCandidates) {
+      // indicators: 30min
+      const indicatorsCandidates = await listCandidatesByState('last_indicators_at', batchSize, getIntervalMs('indicators'), { requireId: true });
+      for (const code of indicatorsCandidates) {
         try {
-          await publisher.publish({ collector: 'cotations', fund_code: code, range: { days: 365 }, triggered_by: 'cron' });
+          await publisher.publish({ collector: 'indicators', fund_code: code, triggered_by: 'cron' });
         } catch {
           return;
         }
       }
-      cotationsBackfillDone = true;
-    }
 
-    // documents: 10min
-    const documentsCandidates = await listDocumentsCandidates(batchSize, getIntervalMs('documents'));
-    for (const { code, cnpj } of documentsCandidates) {
-      try {
-        await publisher.publish({ collector: 'documents', fund_code: code, cnpj, triggered_by: 'cron' });
-      } catch {
-        return;
+      // cotations (historical): backfill only once
+      if (!cotationsBackfillDone) {
+        // Backfill: get all funds with id (100 years = ~3e12 ms)
+        const BACKFILL_INTERVAL_MS = 100 * 365 * 24 * 60 * 60 * 1000;
+        const cotationsCandidates = await listCandidatesByState('last_historical_cotations_at', batchSize, BACKFILL_INTERVAL_MS, { requireId: true });
+        for (const code of cotationsCandidates) {
+          try {
+            await publisher.publish({ collector: 'cotations', fund_code: code, range: { days: 365 }, triggered_by: 'cron' });
+          } catch {
+            return;
+          }
+        }
+        cotationsBackfillDone = true;
       }
-    }
 
-    // eod_cotation: once per day after market close
-    if (shouldRunEodCotation() && !eodCotationDone) {
-      const processedCount = await runEodCotationRoutine();
-      process.stderr.write(`[cron] eod_cotation: processed=${processedCount}\n`);
-      eodCotationDone = true;
+      // documents: 10min
+      const documentsCandidates = await listDocumentsCandidates(batchSize, getIntervalMs('documents'));
+      for (const { code, cnpj } of documentsCandidates) {
+        try {
+          await publisher.publish({ collector: 'documents', fund_code: code, cnpj, triggered_by: 'cron' });
+        } catch {
+          return;
+        }
+      }
+
+      // eod_cotation: once per day after market close
+      if (shouldRunEodCotation() && !eodCotationDone) {
+        const processedCount = await withTryAdvisoryXactLock(eodLockKey, async (tx) => runEodCotationRoutineWithSql(tx));
+        if (processedCount !== null) {
+          process.stderr.write(`[cron] eod_cotation: processed=${processedCount}\n`);
+          eodCotationDone = true;
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.stack || err.message : String(err);
+      process.stderr.write(`[cron] tick error ${message.replace(/\n/g, '\\n')}\n`);
     }
   }
 
