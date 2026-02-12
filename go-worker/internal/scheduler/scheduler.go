@@ -450,12 +450,12 @@ func (s *Scheduler) isBusinessHours(now time.Time) bool {
 }
 
 func (s *Scheduler) shouldRunEOD(now time.Time) bool {
-
 	if now.Weekday() == time.Saturday || now.Weekday() == time.Sunday {
 		return false
 	}
 
 	total := now.Hour()*60 + now.Minute()
 
-	return total > 1110
+	// 1140 = 19:00 - 1150 = 19:10
+	return total >= 1140 && total <= 1150
 }
