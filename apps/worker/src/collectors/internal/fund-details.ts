@@ -12,7 +12,7 @@ export const fundDetailsCollector: Collector = {
     const code = String(request.fund_code || '').toUpperCase();
     const { details, dividendsHistory } = await fetchFIIDetails(code);
 
-    const dividends = dividendsHistory
+    const rawDividends = dividendsHistory
       .map((d) => {
         const dateIso = toDateIsoFromBr(d.date);
         const paymentIso = toDateIsoFromBr(d.payment);
@@ -26,6 +26,24 @@ export const fundDetailsCollector: Collector = {
         };
       })
       .filter((d): d is NonNullable<typeof d> => d !== null);
+
+    const byKey = new Map<string, (typeof rawDividends)[number]>();
+    for (const item of rawDividends) {
+      const key = `${item.fund_code}|${item.date_iso}|${item.type}`;
+      const existing = byKey.get(key);
+      if (!existing) {
+        byKey.set(key, item);
+        continue;
+      }
+      if (item.payment > existing.payment) {
+        byKey.set(key, item);
+        continue;
+      }
+      if (item.payment === existing.payment && item.value !== existing.value) {
+        byKey.set(key, item);
+      }
+    }
+    const dividends = Array.from(byKey.values());
 
     return {
       collector: 'fund_details',

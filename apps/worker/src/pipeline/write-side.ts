@@ -12,7 +12,7 @@ import type {
 export function createWriteSide() {
   const sql = getRawSql();
 
-  async function touchFundState(fundCode: string, fields: Record<string, unknown>) {
+  async function touchFundState(fundCode: string, fields: Record<string, string | number | boolean | Date | null>) {
     const now = new Date();
     const code = fundCode.toUpperCase();
 
@@ -28,10 +28,10 @@ export function createWriteSide() {
 
     const fieldValues = keys.map((k) => fields[k]);
     const paramPlaceholders = keys.map((_, i) => `"${keys[i]}" = $${i + 1}`).join(', ');
-    const params = [...fieldValues, now, code] as [unknown, ...unknown[]];
+    const params = [...fieldValues, now, code] as Array<string | number | boolean | Date | null>;
     await sql.unsafe(
       `UPDATE fund_state SET ${paramPlaceholders}, updated_at = $${keys.length + 1} WHERE fund_code = $${keys.length + 2}`,
-      params
+      params as any
     );
   }
 

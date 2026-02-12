@@ -44,24 +44,19 @@ export async function setTelegramUserFunds(_db: unknown, chatId: string, fundCod
   const codes = Array.from(new Set(fundCodes.map((c) => c.toUpperCase()))).filter(Boolean);
 
   await sql.begin(async (tx) => {
-    await tx`
-      INSERT INTO telegram_user (chat_id)
-      VALUES (${chatId})
-      ON CONFLICT (chat_id) DO NOTHING
-    `;
+    await tx.unsafe(
+      'INSERT INTO telegram_user (chat_id) VALUES ($1) ON CONFLICT (chat_id) DO NOTHING',
+      [chatId]
+    );
 
-    await tx`
-      DELETE FROM telegram_user_fund
-      WHERE chat_id = ${chatId}
-    `;
+    await tx.unsafe('DELETE FROM telegram_user_fund WHERE chat_id = $1', [chatId]);
 
     if (codes.length) {
       for (const code of codes) {
-        await tx`
-          INSERT INTO telegram_user_fund (chat_id, fund_code)
-          VALUES (${chatId}, ${code})
-          ON CONFLICT DO NOTHING
-        `;
+        await tx.unsafe(
+          'INSERT INTO telegram_user_fund (chat_id, fund_code) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+          [chatId, code]
+        );
       }
     }
   });
@@ -111,7 +106,7 @@ export async function listExistingFundCodes(_db: unknown, fundCodes: string[]): 
   const rows = await sql<{ code: string }[]>`
     SELECT code
     FROM fund_master
-    WHERE code = ANY(${sql.array(codes, 'text')})
+    WHERE code = ANY(${sql.array(codes, 25)})
     ORDER BY code ASC
   `;
   return rows.map((r) => r.code ?? '');
@@ -138,7 +133,7 @@ export async function listFundCategoryInfoByCodes(_db: unknown, fundCodes: strin
       tipo_fundo,
       type
     FROM fund_master
-    WHERE code = ANY(${sql.array(codes, 'text')})
+    WHERE code = ANY(${sql.array(codes, 25)})
     ORDER BY code ASC
   `;
   return rows.map((r) => ({

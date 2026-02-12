@@ -33,7 +33,7 @@ export async function handlePesquisa({ db, telegram, chatIdStr }: HandlerDeps, c
     taxa_adminstracao: string | null;
     vacancia: number | null;
     numero_cotistas: number | null;
-    cotas_emitidas: string | null;
+    cotas_emitidas: string | number | null;
     valor_patrimonial_cota: number | null;
     valor_patrimonial: number | null;
     ultimo_rendimento: number | null;
@@ -69,7 +69,15 @@ export async function handlePesquisa({ db, telegram, chatIdStr }: HandlerDeps, c
     LIMIT 1
   `;
 
-  const fund = rows[0];
+  const fundRaw = rows[0];
+  const cotasEmitidasRaw = fundRaw?.cotas_emitidas === null || fundRaw?.cotas_emitidas === undefined ? null : Number(fundRaw.cotas_emitidas);
+  const cotasEmitidas = cotasEmitidasRaw !== null && Number.isFinite(cotasEmitidasRaw) ? cotasEmitidasRaw : null;
+  const fund = fundRaw
+    ? {
+        ...fundRaw,
+        cotas_emitidas: cotasEmitidas,
+      }
+    : null;
   if (!fund) {
     await telegram.sendText(chatIdStr, `Fundo não encontrado: ${fundCode}`);
     return;

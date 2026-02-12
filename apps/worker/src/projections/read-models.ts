@@ -17,7 +17,7 @@ export function createReadModelWriter(sql: Sql) {
         i.net_worth ?? null,
         i.type ?? null,
         new Date(),
-      ]))}
+      ]) as any)}
       ON CONFLICT (code) DO UPDATE SET
         sector = EXCLUDED.sector,
         p_vp = EXCLUDED.p_vp,
@@ -101,7 +101,7 @@ export function createReadModelWriter(sql: Sql) {
   async function upsertIndicatorsLatest(fundCode: string, fetchedAt: Date, dataJson: unknown) {
     await sql`
       INSERT INTO indicators_read (fund_code, fetched_at, data_json)
-      VALUES (${fundCode.toUpperCase()}, ${fetchedAt}, ${sql.json(dataJson)})
+      VALUES (${fundCode.toUpperCase()}, ${fetchedAt}, ${sql.json(dataJson as any)})
       ON CONFLICT (fund_code) DO UPDATE SET
         fetched_at = EXCLUDED.fetched_at,
         data_json = EXCLUDED.data_json
@@ -111,16 +111,23 @@ export function createReadModelWriter(sql: Sql) {
   async function insertIndicatorsSnapshot(fundCode: string, fetchedAt: Date, dataJson: unknown) {
     await sql`
       INSERT INTO indicators_snapshot_read (fund_code, fetched_at, data_json)
-      VALUES (${fundCode.toUpperCase()}, ${fetchedAt}, ${sql.json(dataJson)})
+      VALUES (${fundCode.toUpperCase()}, ${fetchedAt}, ${sql.json(dataJson as any)})
       ON CONFLICT (fund_code, fetched_at) DO NOTHING
     `;
   }
 
   async function upsertCotations(items: Array<{ fund_code: string; date_iso: string; price: number }>) {
     if (items.length === 0) return;
+    const uniqueByKey = new Map<string, { fund_code: string; date_iso: string; price: number }>();
+    for (const item of items) {
+      const fundCode = item.fund_code.toUpperCase();
+      const key = `${fundCode}|${item.date_iso}`;
+      uniqueByKey.set(key, { ...item, fund_code: fundCode });
+    }
+    const uniqueItems = Array.from(uniqueByKey.values());
     await sql`
       INSERT INTO cotations_read (fund_code, date_iso, price)
-      VALUES ${sql(items.map((i) => [i.fund_code.toUpperCase(), i.date_iso, i.price]))}
+      VALUES ${sql(uniqueItems.map((i) => [i.fund_code, i.date_iso, i.price]) as any)}
       ON CONFLICT (fund_code, date_iso) DO UPDATE SET
         price = EXCLUDED.price
     `;
@@ -129,7 +136,7 @@ export function createReadModelWriter(sql: Sql) {
   async function insertCotationsToday(fundCode: string, dateIso: string, fetchedAt: Date, dataJson: unknown) {
     await sql`
       INSERT INTO cotations_today_read (fund_code, date_iso, fetched_at, data_json)
-      VALUES (${fundCode.toUpperCase()}, ${dateIso}, ${fetchedAt}, ${sql.json(dataJson)})
+      VALUES (${fundCode.toUpperCase()}, ${dateIso}, ${fetchedAt}, ${sql.json(dataJson as any)})
       ON CONFLICT (fund_code, date_iso, fetched_at) DO UPDATE SET
         data_json = EXCLUDED.data_json
     `;
@@ -137,16 +144,23 @@ export function createReadModelWriter(sql: Sql) {
 
   async function upsertDividends(items: Array<{ fund_code: string; date_iso: string; payment: string; type: number; value: number; yield: number }>) {
     if (items.length === 0) return;
+    const uniqueByKey = new Map<string, { fund_code: string; date_iso: string; payment: string; type: number; value: number; yield: number }>();
+    for (const item of items) {
+      const fundCode = item.fund_code.toUpperCase();
+      const key = `${fundCode}|${item.date_iso}|${item.type}`;
+      uniqueByKey.set(key, { ...item, fund_code: fundCode });
+    }
+    const uniqueItems = Array.from(uniqueByKey.values());
     await sql`
       INSERT INTO dividends_read (fund_code, date_iso, payment, type, value, yield)
-      VALUES ${sql(items.map((i) => [
-        i.fund_code.toUpperCase(),
+      VALUES ${sql(uniqueItems.map((i) => [
+        i.fund_code,
         i.date_iso,
         i.payment,
         i.type,
         i.value,
         i.yield,
-      ]))}
+      ]) as any)}
       ON CONFLICT (fund_code, date_iso, type) DO UPDATE SET
         payment = EXCLUDED.payment,
         value = EXCLUDED.value,
@@ -170,7 +184,7 @@ export function createReadModelWriter(sql: Sql) {
         i.url,
         i.status,
         i.version,
-      ]))}
+      ]) as any)}
       ON CONFLICT (fund_code, document_id) DO UPDATE SET
         title = EXCLUDED.title,
         category = EXCLUDED.category,

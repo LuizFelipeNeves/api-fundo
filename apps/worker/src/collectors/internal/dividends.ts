@@ -13,7 +13,7 @@ export const dividendsCollector: Collector = {
     const { details, dividendsHistory } = await fetchFIIDetails(code);
     const data = await fetchDividends(code, { id: details.id, dividendsHistory });
 
-    const items = data
+    const rawItems = data
       .map((d) => {
         const dateIso = toDateIsoFromBr(d.date);
         const paymentIso = toDateIsoFromBr(d.payment);
@@ -28,6 +28,24 @@ export const dividendsCollector: Collector = {
         };
       })
       .filter((v): v is { fund_code: string; date_iso: string; payment: string; type: number; value: number; yield: number } => v !== null);
+
+    const byKey = new Map<string, (typeof rawItems)[number]>();
+    for (const item of rawItems) {
+      const key = `${item.fund_code}|${item.date_iso}|${item.type}`;
+      const existing = byKey.get(key);
+      if (!existing) {
+        byKey.set(key, item);
+        continue;
+      }
+      if (item.payment > existing.payment) {
+        byKey.set(key, item);
+        continue;
+      }
+      if (item.payment === existing.payment && (item.value !== existing.value || item.yield !== existing.yield)) {
+        byKey.set(key, item);
+      }
+    }
+    const items = Array.from(byKey.values());
 
     return {
       collector: 'dividends',

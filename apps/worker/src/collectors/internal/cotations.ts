@@ -17,13 +17,20 @@ export const cotationsCollector: Collector = {
 
     const days = request.range?.days ?? 365;
     const data = await fetchFIICotations(id, days);
-    const items = (data.real || [])
+    const rawItems = (data.real || [])
       .map((item) => {
         const dateIso = toDateIsoFromBr(item.date);
         if (!dateIso) return null;
         return { fund_code: code, date_iso: dateIso, price: item.price };
       })
       .filter((v): v is { fund_code: string; date_iso: string; price: number } => v !== null);
+
+    const byKey = new Map<string, (typeof rawItems)[number]>();
+    for (const item of rawItems) {
+      const key = `${item.fund_code}|${item.date_iso}`;
+      byKey.set(key, item);
+    }
+    const items = Array.from(byKey.values());
 
     const persistRequests: Array<{ type: 'cotations'; items: typeof items }> = [];
     for (let i = 0; i < items.length; i += BATCH_SIZE) {

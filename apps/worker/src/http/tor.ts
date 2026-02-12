@@ -1,6 +1,6 @@
 import dns from 'node:dns/promises';
 import net from 'node:net';
-type ProxyAgent = import('undici').ProxyAgent;
+import { ProxyAgent } from 'undici';
 
 /* ======================================================
    🔥 TOR PROXY CONFIG & MANAGEMENT
