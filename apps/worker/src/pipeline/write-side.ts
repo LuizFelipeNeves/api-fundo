@@ -149,9 +149,24 @@ export function createWriteSide() {
     });
   }
 
-  async function upsertCotations(items: PersistCotation[]) {
-    if (items.length === 0) return;
-    const now = new Date();
+  async function upsertCotations(
+    items: PersistCotation[],
+    opts?: { fund_code?: string; fetched_at?: string; is_last_chunk?: boolean }
+  ) {
+    const now = opts?.fetched_at ? new Date(opts.fetched_at) : new Date();
+    if (items.length === 0) {
+      const rawCode = String(opts?.fund_code || '').trim();
+      if (!rawCode) return;
+      const fundCode = rawCode.toUpperCase();
+      await sql`
+        INSERT INTO fund_state (fund_code, last_historical_cotations_at, created_at, updated_at)
+        VALUES (${fundCode}, ${now}, ${now}, ${now})
+        ON CONFLICT (fund_code) DO UPDATE SET
+          last_historical_cotations_at = EXCLUDED.last_historical_cotations_at,
+          updated_at = EXCLUDED.updated_at
+      `;
+      return;
+    }
     const uniqueByKey = new Map<string, [fund_code: string, date_iso: string, price: number]>();
     const codesSet = new Set<string>();
     for (const item of items) {
@@ -169,6 +184,8 @@ export function createWriteSide() {
       WHERE
         cotation.price IS DISTINCT FROM EXCLUDED.price
     `;
+
+    if (opts?.is_last_chunk === false) return;
 
     const codes = Array.from(codesSet);
     await sql`
@@ -226,9 +243,22 @@ export function createWriteSide() {
     `;
   }
 
-  async function upsertDocuments(items: PersistDocument[]) {
-    if (items.length === 0) return;
-    const now = new Date();
+  async function upsertDocuments(items: PersistDocument[], opts?: { fund_code?: string; fetched_at?: string }) {
+    const now = opts?.fetched_at ? new Date(opts.fetched_at) : new Date();
+    if (items.length === 0) {
+      const rawCode = String(opts?.fund_code || '').trim();
+      if (!rawCode) return;
+      const fundCode = rawCode.toUpperCase();
+      await sql`
+        INSERT INTO fund_state (fund_code, last_documents_at, last_documents_max_id, created_at, updated_at)
+        VALUES (${fundCode}, ${now}, ${null}, ${now}, ${now})
+        ON CONFLICT (fund_code) DO UPDATE SET
+          last_documents_at = EXCLUDED.last_documents_at,
+          last_documents_max_id = GREATEST(COALESCE(fund_state.last_documents_max_id, 0), COALESCE(EXCLUDED.last_documents_max_id, 0)),
+          updated_at = EXCLUDED.updated_at
+      `;
+      return;
+    }
     const uniqueByKey = new Map<
       string,
       [

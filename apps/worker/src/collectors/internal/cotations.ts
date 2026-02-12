@@ -32,14 +32,30 @@ export const cotationsCollector: Collector = {
     }
     const items = Array.from(byKey.values());
 
-    const persistRequests: Array<{ type: 'cotations'; items: typeof items }> = [];
+    const fetchedAt = new Date().toISOString();
+    const persistRequests: Array<{
+      type: 'cotations';
+      items: typeof items;
+      fund_code: string;
+      fetched_at: string;
+      is_last_chunk: boolean;
+    }> = [];
     for (let i = 0; i < items.length; i += BATCH_SIZE) {
       const batch = items.slice(i, i + BATCH_SIZE);
-      persistRequests.push({ type: 'cotations', items: batch });
+      persistRequests.push({
+        type: 'cotations',
+        items: batch,
+        fund_code: code,
+        fetched_at: fetchedAt,
+        is_last_chunk: i + BATCH_SIZE >= items.length,
+      });
+    }
+    if (persistRequests.length === 0) {
+      persistRequests.push({ type: 'cotations', items: [], fund_code: code, fetched_at: fetchedAt, is_last_chunk: true });
     }
     return {
       collector: 'cotations',
-      fetched_at: new Date().toISOString(),
+      fetched_at: fetchedAt,
       payload: { persist_requests: persistRequests },
     };
   },

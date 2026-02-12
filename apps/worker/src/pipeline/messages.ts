@@ -82,9 +82,9 @@ export type PersistRequest =
   | { type: 'fund_list'; items: PersistFundListItem[] }
   | { type: 'fund_details'; item: PersistFundDetailsItem; dividends?: Dividend[] }
   | { type: 'indicators'; item: PersistIndicators }
-  | { type: 'cotations'; items: PersistCotation[] }
+  | { type: 'cotations'; items: PersistCotation[]; fund_code?: string; fetched_at?: string; is_last_chunk?: boolean }
   | { type: 'cotations_today'; item: PersistCotationsToday }
-  | { type: 'documents'; items: PersistDocument[] };
+  | { type: 'documents'; items: PersistDocument[]; fund_code?: string; fetched_at?: string };
 
 export type CollectResult = {
   collector: string;

@@ -32,7 +32,11 @@ export async function processPersistRequest(request: PersistRequest): Promise<vo
       break;
     }
     case 'cotations': {
-      await writeSide.upsertCotations(request.items);
+      await writeSide.upsertCotations(request.items, {
+        fund_code: request.fund_code,
+        fetched_at: request.fetched_at,
+        is_last_chunk: request.is_last_chunk,
+      });
       await readSide.upsertCotations(request.items);
       break;
     }
@@ -47,7 +51,7 @@ export async function processPersistRequest(request: PersistRequest): Promise<vo
       break;
     }
     case 'documents': {
-      await writeSide.upsertDocuments(request.items);
+      await writeSide.upsertDocuments(request.items, { fund_code: request.fund_code, fetched_at: request.fetched_at });
       await readSide.upsertDocuments(request.items);
       break;
     }

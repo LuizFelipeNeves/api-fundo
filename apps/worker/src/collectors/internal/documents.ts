@@ -31,11 +31,12 @@ export const documentsCollector: Collector = {
       version: d.version,
     }));
 
+    const fetchedAt = new Date().toISOString();
     return {
       collector: 'documents',
-      fetched_at: new Date().toISOString(),
+      fetched_at: fetchedAt,
       payload: {
-        persist_request: { type: 'documents', items },
+        persist_request: { type: 'documents', items, fund_code: code, fetched_at: fetchedAt },
       },
     };
   },
