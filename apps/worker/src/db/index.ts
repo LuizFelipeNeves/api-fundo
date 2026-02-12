@@ -1,22 +1,27 @@
 import postgres from 'postgres';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import * as schema from './schema';
 
-let sqlSingleton: postgres.Sql | null = null;
-let dbSingleton: ReturnType<typeof drizzle> | null = null;
+export type Sql = ReturnType<typeof postgres>;
 
-export function getWriteDb(): ReturnType<typeof drizzle> {
-  if (dbSingleton) return dbSingleton;
+let sqlSingleton: Sql | null = null;
+
+export function getWriteDb(): Sql {
+  if (sqlSingleton) return sqlSingleton;
   const url = String(process.env.DATABASE_URL || '').trim();
   if (!url) throw new Error('DATABASE_URL is required');
-  sqlSingleton = postgres(url, { max: 10, idle_timeout: 30, connect_timeout: 10 });
-  dbSingleton = drizzle(sqlSingleton, { schema });
-  return dbSingleton;
+
+  const maxRaw = Number.parseInt(process.env.PG_POOL_MAX || '10', 10);
+  const max = Number.isFinite(maxRaw) && maxRaw > 0 ? Math.min(maxRaw, 50) : 10;
+
+  sqlSingleton = postgres(url, {
+    max,
+    idle_timeout: 30,
+    connect_timeout: 10,
+  });
+
+  return sqlSingleton;
 }
 
-export function getRawSql(): postgres.Sql {
-  if (!sqlSingleton) getWriteDb(); // ensure singleton is created
+export function getRawSql(): Sql {
+  if (!sqlSingleton) getWriteDb();
   return sqlSingleton!;
 }
-
-export type WriteDb = ReturnType<typeof getWriteDb>;

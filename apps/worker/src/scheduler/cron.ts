@@ -27,8 +27,22 @@ export async function startCronScheduler(connection: ChannelModel) {
 
   let lastRun: Record<string, number> = {};
   let cotationsBackfillDone = false;
+  let eodCotationDone = false;
+
+  function resetDailyFlags() {
+    const now = new Date();
+    const hour = now.getHours();
+    const minute = now.getMinutes();
+    const totalMinutes = hour * 60 + minute;
+
+    // Reset EOD flag before market opens (before 10:00)
+    if (totalMinutes < 10 * 60) {
+      eodCotationDone = false;
+    }
+  }
 
   async function tick() {
+    resetDailyFlags();
     const now = Date.now();
 
     // fund_list: 30min
@@ -74,9 +88,11 @@ export async function startCronScheduler(connection: ChannelModel) {
       await publisher.publish({ collector: 'documents', fund_code: code, cnpj, triggered_by: 'cron' });
     }
 
-    if (shouldRunEodCotation()) {
+    // eod_cotation: once per day after market close
+    if (shouldRunEodCotation() && !eodCotationDone) {
       const processedCount = await runEodCotationRoutine();
       process.stderr.write(`[cron] eod_cotation: processed=${processedCount}\n`);
+      eodCotationDone = true;
     }
   }
 

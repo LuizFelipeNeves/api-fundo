@@ -1,38 +1,56 @@
 import { getWriteDb } from '../db';
-import { cotation } from '../db/schema';
-import { Dividend, PersistDividend } from '../pipeline/messages';
-import { eq, and, inArray } from 'drizzle-orm';
+import type { Dividend, PersistDividend } from '../pipeline/messages';
+
+type ExistingYield = { date_iso: string; type: number; yield: number | null };
 
 export async function enrichDividendYields(items: Dividend[]): Promise<PersistDividend[]> {
   if (items.length === 0) return [];
 
   const fundCode = items[0]!.fund_code.toUpperCase();
+  const uniqueDates = Array.from(new Set(items.map((i) => i.date_iso)));
+  const uniqueTypes = Array.from(new Set(items.map((i) => i.type)));
 
-  // Get unique dates for price lookup
-  const uniqueDates = [...new Set(items.map((i) => i.date_iso))];
+  const sql = getWriteDb();
 
-  // Fetch prices
-  const priceMap = new Map<string, number>();
-  if (uniqueDates.length > 0) {
-    const priceRows = await getWriteDb()
-      .select({ dateIso: cotation.dateIso, price: cotation.price })
-      .from(cotation)
-      .where(and(eq(cotation.fundCode, fundCode), inArray(cotation.dateIso, uniqueDates)));
-    for (const r of priceRows) {
-      if (r.price !== null) {
-        priceMap.set(r.dateIso, r.price);
-      }
+  const existingMap = new Map<string, number | null>();
+  if (uniqueDates.length && uniqueTypes.length) {
+    const existingRows = await sql<ExistingYield[]>`
+      SELECT date_iso, type, yield
+      FROM dividend
+      WHERE fund_code = ${fundCode}
+        AND date_iso = ANY(${sql.array(uniqueDates, 'date')})
+        AND type = ANY(${sql.array(uniqueTypes, 'int4')})
+    `;
+    for (const row of existingRows) {
+      existingMap.set(`${row.date_iso}|${row.type}`, row.yield ?? null);
     }
   }
 
-  // Enrich items - always calculate yield from price
+  const priceMap = new Map<string, number>();
+  if (uniqueDates.length > 0) {
+    const priceRows = await sql<{ date_iso: string; price: number | null }[]>`
+      SELECT date_iso, price
+      FROM cotation
+      WHERE fund_code = ${fundCode}
+        AND date_iso = ANY(${sql.array(uniqueDates, 'date')})
+    `;
+    for (const row of priceRows) {
+      if (row.price !== null) priceMap.set(row.date_iso, row.price);
+    }
+  }
+
   return items.map((item) => {
+    const key = `${item.date_iso}|${item.type}`;
+    if (existingMap.has(key)) {
+      const existingYield = existingMap.get(key);
+      return { ...item, yield: Number.isFinite(existingYield) ? Number(existingYield) : 0 };
+    }
+
     const price = priceMap.get(item.date_iso);
     if (price && price > 0) {
       return { ...item, yield: (item.value / price) * 100 };
     }
 
-    // Return with 0 yield if no price available
     return { ...item, yield: 0 };
   });
 }

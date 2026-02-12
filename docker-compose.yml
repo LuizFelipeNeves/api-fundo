@@ -24,6 +24,7 @@ services:
     build: .
     command: ["bun", "run", "apps/worker/src/index.ts"]
     environment:
+      FORCE_RUN_JOBS: ${FORCE_RUN_JOBS:-}
       DATABASE_URL: "${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/fii}"
       RABBITMQ_URL: "${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}"
       RABBITMQ_HEARTBEAT: "${RABBITMQ_HEARTBEAT:-60}"
