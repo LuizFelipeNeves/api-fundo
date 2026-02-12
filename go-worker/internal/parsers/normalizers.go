@@ -46,6 +46,29 @@ func NormalizeIndicators(raw map[string][]interface{}) NormalizedIndicators {
 	return NormalizedIndicators(raw)
 }
 
+func NormalizeIndicatorsAny(raw interface{}) NormalizedIndicators {
+	switch v := raw.(type) {
+	case map[string][]interface{}:
+		return NormalizeIndicators(v)
+	case map[string]interface{}:
+		converted := make(map[string][]interface{}, len(v))
+		for k, value := range v {
+			if value == nil {
+				converted[k] = []interface{}{}
+				continue
+			}
+			if arr, ok := value.([]interface{}); ok {
+				converted[k] = arr
+			}
+		}
+		return NormalizeIndicators(converted)
+	case []interface{}:
+		return NormalizedIndicators{}
+	default:
+		return NormalizedIndicators{}
+	}
+}
+
 // NormalizeCotations normalizes cotations JSON response
 func NormalizeCotations(raw map[string][]interface{}) *NormalizedCotations {
 	result := &NormalizedCotations{
@@ -113,7 +136,7 @@ func NormalizeDocuments(raw []interface{}) []DocumentData {
 			}
 
 			doc.URL = fmt.Sprintf(
-				"%s/exibirDocumento?id=%d&cvm=true&",
+				"%s/exibirDocumento?id=%s&cvm=true&",
 				FNET_BASE,
 				doc.ID,
 			)

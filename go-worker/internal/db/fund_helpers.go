@@ -37,3 +37,22 @@ func (db *DB) GetFundCNPJByCode(ctx context.Context, code string) (string, error
 
 	return cnpj, nil
 }
+
+func (db *DB) GetLastDocumentsMaxIDByCode(ctx context.Context, code string) (int, error) {
+	query := `SELECT last_documents_max_id FROM fund_state WHERE fund_code = $1 LIMIT 1`
+
+	var maxID sql.NullInt64
+	err := db.QueryRowContext(ctx, query, code).Scan(&maxID)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to get last documents max id: %w", err)
+	}
+
+	if !maxID.Valid || maxID.Int64 <= 0 {
+		return 0, nil
+	}
+
+	return int(maxID.Int64), nil
+}

@@ -48,14 +48,14 @@ func (c *IndicatorsCollector) Collect(ctx context.Context, req CollectRequest) (
 	// Fetch indicators from API
 	url := fmt.Sprintf("%s/api/fii/historico-indicadores/%s/5", httpclient.BaseURL, fundID)
 
-	var rawData map[string][]interface{}
+	var rawData interface{}
 	err = c.client.GetJSON(ctx, url, &rawData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch indicators: %w", err)
 	}
 
 	// Normalize indicators
-	indicators := parsers.NormalizeIndicators(rawData)
+	indicators := parsers.NormalizeIndicatorsAny(rawData)
 
 	// Calculate hash
 	dataHash, err := parsers.SHA256Hash(indicators)

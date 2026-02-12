@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/collectors"
@@ -265,6 +266,20 @@ func (p *Persister) PersistDocuments(ctx context.Context, fundCode string, items
 		return p.db.UpdateFundStateTimestamp(ctx, fundCode, "last_documents_at", time.Now())
 	}
 
+	now := time.Now()
+	maxDocumentID := 0
+	hasMaxDocumentID := false
+	for _, doc := range items {
+		id, err := strconv.Atoi(doc.DocumentID)
+		if err != nil || id <= 0 {
+			continue
+		}
+		if !hasMaxDocumentID || id > maxDocumentID {
+			maxDocumentID = id
+			hasMaxDocumentID = true
+		}
+	}
+
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -303,10 +318,41 @@ func (p *Persister) PersistDocuments(ctx context.Context, fundCode string, items
 		}
 	}
 
+	if hasMaxDocumentID {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO fund_state (fund_code, last_documents_at, last_documents_max_id, created_at, updated_at)
+			VALUES ($1, $2, $3, NOW(), NOW())
+			ON CONFLICT (fund_code) DO UPDATE SET
+				last_documents_at = EXCLUDED.last_documents_at,
+				last_documents_max_id = GREATEST(COALESCE(fund_state.last_documents_max_id, 0), EXCLUDED.last_documents_max_id),
+				updated_at = NOW()
+		`, fundCode, now, maxDocumentID)
+		if err != nil {
+			return fmt.Errorf("failed to update fund_state documents max id: %w", err)
+		}
+	} else {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO fund_state (fund_code, created_at, updated_at)
+			VALUES ($1, NOW(), NOW())
+			ON CONFLICT (fund_code) DO NOTHING
+		`, fundCode)
+		if err != nil {
+			return fmt.Errorf("failed to ensure fund_state row: %w", err)
+		}
+
+		_, err = tx.ExecContext(ctx, `
+			UPDATE fund_state
+			SET last_documents_at = $2, updated_at = NOW()
+			WHERE fund_code = $1
+		`, fundCode, now)
+		if err != nil {
+			return fmt.Errorf("failed to update fund_state timestamp: %w", err)
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit: %w", err)
 	}
 
-	// Update fund_state timestamp
-	return p.db.UpdateFundStateTimestamp(ctx, fundCode, "last_documents_at", time.Now())
+	return nil
 }
