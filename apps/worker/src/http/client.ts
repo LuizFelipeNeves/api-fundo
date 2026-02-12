@@ -160,6 +160,7 @@ async function request<T>(url: string, opts: ReqOptions = {}, expectJson = true)
   if (expectJson) {
     const ct = res.headers.get('content-type') || '';
     if (!ct.toLowerCase().includes('application/json')) {
+      try { res.body?.cancel(); } catch { null; }
       throw new Error(`GET ${url} -> unexpected_content_type="${ct}"`);
     }
     try { return await res.json() as T; } catch { throw new Error(`GET ${url} -> invalid_json`); }
@@ -177,6 +178,7 @@ async function doPost<T>(url: string, body: string, opts: ReqOptions = {}): Prom
 
   const ct = res.headers.get('content-type') || '';
   if (!ct.toLowerCase().includes('application/json')) {
+    try { res.body?.cancel(); } catch { null; }
     throw new Error(`POST ${url} -> unexpected_content_type="${ct}"`);
   }
   try { return await res.json() as T; } catch { throw new Error(`POST ${url} -> invalid_json`); }
@@ -208,7 +210,10 @@ export async function fetchText(url: string, opts?: ReqOptions): Promise<string>
     headers,
   }, opts ?? {});
 
-  if (res.status === 410) throw new Error('FII_NOT_FOUND');
+  if (res.status === 410) {
+    try { res.body?.cancel(); } catch { null; }
+    throw new Error('FII_NOT_FOUND');
+  }
   if (!res.ok) await throwHttpError(res, 'GET', url);
   return res.text();
 }
@@ -290,6 +295,7 @@ export async function fetchFnetWithSession<T>(
           await sleep(sleepMs);
           continue;
         }
+        try { res.body?.cancel(); } catch { null; }
         throw new Error(`FNET ${dataUrl} -> content_type="${ct}"`);
       }
 

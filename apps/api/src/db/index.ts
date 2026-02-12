@@ -12,7 +12,7 @@ export function getDb(): Sql {
     throw new Error('DATABASE_URL is required for the read API');
   }
 
-  const maxRaw = Number.parseInt(process.env.PG_POOL_MAX || '10', 10);
+  const maxRaw = Number.parseInt(process.env.PG_POOL_MAX || '2', 10);
   const max = Number.isFinite(maxRaw) && maxRaw > 0 ? Math.min(maxRaw, 50) : 10;
 
   sqlSingleton = postgres(url, {

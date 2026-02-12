@@ -27,6 +27,14 @@ export function createReadModelWriter(sql: Sql) {
         net_worth = EXCLUDED.net_worth,
         type = EXCLUDED.type,
         updated_at = EXCLUDED.updated_at
+      WHERE
+        fund_list_read.sector IS DISTINCT FROM EXCLUDED.sector OR
+        fund_list_read.p_vp IS DISTINCT FROM EXCLUDED.p_vp OR
+        fund_list_read.dividend_yield IS DISTINCT FROM EXCLUDED.dividend_yield OR
+        fund_list_read.dividend_yield_last_5_years IS DISTINCT FROM EXCLUDED.dividend_yield_last_5_years OR
+        fund_list_read.daily_liquidity IS DISTINCT FROM EXCLUDED.daily_liquidity OR
+        fund_list_read.net_worth IS DISTINCT FROM EXCLUDED.net_worth OR
+        fund_list_read.type IS DISTINCT FROM EXCLUDED.type
     `;
   }
 
@@ -95,6 +103,24 @@ export function createReadModelWriter(sql: Sql) {
         valor_patrimonial = EXCLUDED.valor_patrimonial,
         ultimo_rendimento = EXCLUDED.ultimo_rendimento,
         updated_at = EXCLUDED.updated_at
+      WHERE
+        fund_details_read.id IS DISTINCT FROM EXCLUDED.id OR
+        fund_details_read.razao_social IS DISTINCT FROM EXCLUDED.razao_social OR
+        fund_details_read.cnpj IS DISTINCT FROM EXCLUDED.cnpj OR
+        fund_details_read.publico_alvo IS DISTINCT FROM EXCLUDED.publico_alvo OR
+        fund_details_read.mandato IS DISTINCT FROM EXCLUDED.mandato OR
+        fund_details_read.segmento IS DISTINCT FROM EXCLUDED.segmento OR
+        fund_details_read.tipo_fundo IS DISTINCT FROM EXCLUDED.tipo_fundo OR
+        fund_details_read.prazo_duracao IS DISTINCT FROM EXCLUDED.prazo_duracao OR
+        fund_details_read.tipo_gestao IS DISTINCT FROM EXCLUDED.tipo_gestao OR
+        fund_details_read.taxa_adminstracao IS DISTINCT FROM EXCLUDED.taxa_adminstracao OR
+        fund_details_read.daily_liquidity IS DISTINCT FROM EXCLUDED.daily_liquidity OR
+        fund_details_read.vacancia IS DISTINCT FROM EXCLUDED.vacancia OR
+        fund_details_read.numero_cotistas IS DISTINCT FROM EXCLUDED.numero_cotistas OR
+        fund_details_read.cotas_emitidas IS DISTINCT FROM EXCLUDED.cotas_emitidas OR
+        fund_details_read.valor_patrimonial_cota IS DISTINCT FROM EXCLUDED.valor_patrimonial_cota OR
+        fund_details_read.valor_patrimonial IS DISTINCT FROM EXCLUDED.valor_patrimonial OR
+        fund_details_read.ultimo_rendimento IS DISTINCT FROM EXCLUDED.ultimo_rendimento
     `;
   }
 
@@ -105,6 +131,9 @@ export function createReadModelWriter(sql: Sql) {
       ON CONFLICT (fund_code) DO UPDATE SET
         fetched_at = EXCLUDED.fetched_at,
         data_json = EXCLUDED.data_json
+      WHERE
+        indicators_read.fetched_at IS DISTINCT FROM EXCLUDED.fetched_at OR
+        indicators_read.data_json IS DISTINCT FROM EXCLUDED.data_json
     `;
   }
 
@@ -130,6 +159,8 @@ export function createReadModelWriter(sql: Sql) {
       VALUES ${sql(uniqueItems.map((i) => [i.fund_code, i.date_iso, i.price]) as any)}
       ON CONFLICT (fund_code, date_iso) DO UPDATE SET
         price = EXCLUDED.price
+      WHERE
+        cotations_read.price IS DISTINCT FROM EXCLUDED.price
     `;
   }
 
@@ -139,6 +170,8 @@ export function createReadModelWriter(sql: Sql) {
       VALUES (${fundCode.toUpperCase()}, ${dateIso}, ${fetchedAt}, ${sql.json(dataJson as any)})
       ON CONFLICT (fund_code, date_iso, fetched_at) DO UPDATE SET
         data_json = EXCLUDED.data_json
+      WHERE
+        cotations_today_read.data_json IS DISTINCT FROM EXCLUDED.data_json
     `;
   }
 
@@ -165,6 +198,10 @@ export function createReadModelWriter(sql: Sql) {
         payment = EXCLUDED.payment,
         value = EXCLUDED.value,
         yield = EXCLUDED.yield
+      WHERE
+        dividends_read.payment IS DISTINCT FROM EXCLUDED.payment OR
+        dividends_read.value IS DISTINCT FROM EXCLUDED.value OR
+        dividends_read.yield IS DISTINCT FROM EXCLUDED.yield
     `;
   }
 
@@ -195,6 +232,16 @@ export function createReadModelWriter(sql: Sql) {
         url = EXCLUDED.url,
         status = EXCLUDED.status,
         version = EXCLUDED.version
+      WHERE
+        documents_read.title IS DISTINCT FROM EXCLUDED.title OR
+        documents_read.category IS DISTINCT FROM EXCLUDED.category OR
+        documents_read.type IS DISTINCT FROM EXCLUDED.type OR
+        documents_read.date IS DISTINCT FROM EXCLUDED.date OR
+        documents_read.date_upload_iso IS DISTINCT FROM EXCLUDED.date_upload_iso OR
+        documents_read."dateUpload" IS DISTINCT FROM EXCLUDED."dateUpload" OR
+        documents_read.url IS DISTINCT FROM EXCLUDED.url OR
+        documents_read.status IS DISTINCT FROM EXCLUDED.status OR
+        documents_read.version IS DISTINCT FROM EXCLUDED.version
     `;
   }
 

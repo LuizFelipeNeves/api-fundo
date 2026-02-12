@@ -9,7 +9,7 @@ export function getWriteDb(): Sql {
   const url = String(process.env.DATABASE_URL || '').trim();
   if (!url) throw new Error('DATABASE_URL is required');
 
-  const maxRaw = Number.parseInt(process.env.PG_POOL_MAX || '10', 10);
+  const maxRaw = Number.parseInt(process.env.PG_POOL_MAX || '2', 10);
   const max = Number.isFinite(maxRaw) && maxRaw > 0 ? Math.min(maxRaw, 50) : 10;
 
   sqlSingleton = postgres(url, {

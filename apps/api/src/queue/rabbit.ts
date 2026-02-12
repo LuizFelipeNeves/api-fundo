@@ -1,9 +1,28 @@
 import amqplib from 'amqplib';
 
-let connection: amqplib.ChannelModel | null = null;
-let channel: amqplib.Channel | null = null;
+let connection: any | null = null;
+let channel: any | null = null;
+let signalHandlersInstalled = false;
+let currentShutdown: (() => Promise<void>) | null = null;
 
-async function getChannel(): Promise<amqplib.Channel> {
+function installSignalHandlersOnce() {
+  if (signalHandlersInstalled) return;
+  signalHandlersInstalled = true;
+
+  const handler = () => {
+    const shutdown = currentShutdown;
+    if (!shutdown) {
+      process.exit(0);
+      return;
+    }
+    void shutdown();
+  };
+
+  process.on('SIGINT', handler);
+  process.on('SIGTERM', handler);
+}
+
+async function getChannel(): Promise<any> {
   if (channel) return channel;
   const url = String(process.env.RABBITMQ_URL || '').trim();
   if (!url) throw new Error('RABBITMQ_URL is required for telegram queue publishing');
@@ -11,6 +30,14 @@ async function getChannel(): Promise<amqplib.Channel> {
   const frameMax = Number.parseInt(process.env.RABBITMQ_FRAME_MAX || '131072', 10);
 
   connection = await amqplib.connect(url, { heartbeat, frameMax });
+  connection.on('close', () => {
+    channel = null;
+    connection = null;
+  });
+  connection.on('error', () => {
+    // ignore: close handler will reset
+  });
+
   channel = await connection.createChannel();
 
   const queueName = getTelegramQueueName();
@@ -42,8 +69,8 @@ async function getChannel(): Promise<amqplib.Channel> {
     connection = null;
   };
 
-  process.once('SIGINT', shutdown);
-  process.once('SIGTERM', shutdown);
+  currentShutdown = shutdown;
+  installSignalHandlersOnce();
 
   return channel;
 }

@@ -65,6 +65,14 @@ export function createWriteSide() {
         net_worth = EXCLUDED.net_worth,
         type = EXCLUDED.type,
         updated_at = EXCLUDED.updated_at
+      WHERE
+        fund_master.sector IS DISTINCT FROM EXCLUDED.sector OR
+        fund_master.p_vp IS DISTINCT FROM EXCLUDED.p_vp OR
+        fund_master.dividend_yield IS DISTINCT FROM EXCLUDED.dividend_yield OR
+        fund_master.dividend_yield_last_5_years IS DISTINCT FROM EXCLUDED.dividend_yield_last_5_years OR
+        fund_master.daily_liquidity IS DISTINCT FROM EXCLUDED.daily_liquidity OR
+        fund_master.net_worth IS DISTINCT FROM EXCLUDED.net_worth OR
+        fund_master.type IS DISTINCT FROM EXCLUDED.type
     `;
   }
 
@@ -130,6 +138,9 @@ export function createWriteSide() {
         fetched_at = EXCLUDED.fetched_at,
         data_hash = EXCLUDED.data_hash,
         data_json = EXCLUDED.data_json
+      WHERE
+        indicators_snapshot.data_hash IS DISTINCT FROM EXCLUDED.data_hash OR
+        indicators_snapshot.fetched_at IS DISTINCT FROM EXCLUDED.fetched_at
     `;
 
     await touchFundState(item.fund_code, {
@@ -155,6 +166,8 @@ export function createWriteSide() {
       VALUES ${sql(uniqueRows as any)}
       ON CONFLICT (fund_code, date_iso) DO UPDATE SET
         price = EXCLUDED.price
+      WHERE
+        cotation.price IS DISTINCT FROM EXCLUDED.price
     `;
 
     const codes = Array.from(codesSet);
@@ -175,6 +188,9 @@ export function createWriteSide() {
       ON CONFLICT (fund_code, date_iso) DO UPDATE SET
         fetched_at = EXCLUDED.fetched_at,
         data_json = EXCLUDED.data_json
+      WHERE
+        cotations_today_snapshot.fetched_at IS DISTINCT FROM EXCLUDED.fetched_at OR
+        cotations_today_snapshot.data_json IS DISTINCT FROM EXCLUDED.data_json
     `;
 
     await touchFundState(item.fund_code, { last_cotations_today_at: new Date(item.fetched_at) });
@@ -203,6 +219,10 @@ export function createWriteSide() {
         payment = EXCLUDED.payment,
         value = EXCLUDED.value,
         yield = EXCLUDED.yield
+      WHERE
+        dividend.payment IS DISTINCT FROM EXCLUDED.payment OR
+        dividend.value IS DISTINCT FROM EXCLUDED.value OR
+        dividend.yield IS DISTINCT FROM EXCLUDED.yield
     `;
   }
 
@@ -256,6 +276,16 @@ export function createWriteSide() {
         url = EXCLUDED.url,
         status = EXCLUDED.status,
         version = EXCLUDED.version
+      WHERE
+        document.title IS DISTINCT FROM EXCLUDED.title OR
+        document.category IS DISTINCT FROM EXCLUDED.category OR
+        document.type IS DISTINCT FROM EXCLUDED.type OR
+        document.date IS DISTINCT FROM EXCLUDED.date OR
+        document.date_upload_iso IS DISTINCT FROM EXCLUDED.date_upload_iso OR
+        document."dateUpload" IS DISTINCT FROM EXCLUDED."dateUpload" OR
+        document.url IS DISTINCT FROM EXCLUDED.url OR
+        document.status IS DISTINCT FROM EXCLUDED.status OR
+        document.version IS DISTINCT FROM EXCLUDED.version
     `;
 
     const byFund = new Map<string, number>();
