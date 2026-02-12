@@ -16,21 +16,25 @@ const queueBacklogLimit =
 // Dynamic intervals per task type (in minutes)
 const TASK_INTERVALS = {
   fund_list: Number.parseInt(process.env.INTERVAL_FUND_LIST_MIN || '30', 10),
-  fund_details: Number.parseInt(process.env.INTERVAL_FUND_DETAILS_MIN || '10', 10),
+  fund_details: Number.parseInt(process.env.INTERVAL_FUND_DETAILS_MIN || '15', 10),
+  cotations: Number.parseInt(process.env.INTERVAL_COTATIONS_MIN || '5', 10),
   cotations_today: Number.parseInt(process.env.INTERVAL_COTATIONS_TODAY_MIN || '5', 10),
   indicators: Number.parseInt(process.env.INTERVAL_INDICATORS_MIN || '30', 10),
-  documents: Number.parseInt(process.env.INTERVAL_DOCUMENTS_MIN || '10', 10),
+  documents: Number.parseInt(process.env.INTERVAL_DOCUMENTS_MIN || '25', 25),
 };
+
+const TOTAL_CODES = 500;
 
 function getIntervalMs(taskType: keyof typeof TASK_INTERVALS): number {
   return TASK_INTERVALS[taskType] * 60 * 1000;
 }
 
+function getBatchSize(taskType: keyof typeof TASK_INTERVALS): number {
+  return Math.floor((TOTAL_CODES / TASK_INTERVALS[taskType]));
+}
+
 export async function startCronScheduler(connection: ChannelModel, isActive: () => boolean = () => true) {
   const publisher = await createCollectorPublisher(connection);
-
-  const batchSizeRaw = Number.parseInt(process.env.SCHED_BATCH_SIZE || '200', 10);
-  const batchSize = Number.isFinite(batchSizeRaw) && batchSizeRaw > 0 ? Math.min(batchSizeRaw, 2000) : 200;
 
   let lastRun: Record<string, number> = {};
   let cotationsBackfillDone = false;
@@ -73,7 +77,7 @@ export async function startCronScheduler(connection: ChannelModel, isActive: () 
       }
 
       // fund_details: 10min
-      const detailsCandidates = await listCandidatesByState('last_details_sync_at', batchSize, getIntervalMs('fund_details'));
+      const detailsCandidates = await listCandidatesByState('last_details_sync_at', getBatchSize('fund_details'), getIntervalMs('fund_details'));
       for (const code of detailsCandidates) {
         try {
           await publisher.publish({ collector: 'fund_details', fund_code: code, triggered_by: 'cron' });
@@ -84,7 +88,7 @@ export async function startCronScheduler(connection: ChannelModel, isActive: () 
 
       // cotations_today: 5min
       if (shouldRunCotationsToday()) {
-        const todayCandidates = await listCandidatesByState('last_cotations_today_at', batchSize, getIntervalMs('cotations_today'));
+        const todayCandidates = await listCandidatesByState('last_cotations_today_at', getBatchSize('cotations_today'), getIntervalMs('cotations_today'));
         for (const code of todayCandidates) {
           try {
             await publisher.publish({ collector: 'cotations_today', fund_code: code, triggered_by: 'cron' });
@@ -95,7 +99,7 @@ export async function startCronScheduler(connection: ChannelModel, isActive: () 
       }
 
       // indicators: 30min
-      const indicatorsCandidates = await listCandidatesByState('last_indicators_at', batchSize, getIntervalMs('indicators'), { requireId: true });
+      const indicatorsCandidates = await listCandidatesByState('last_indicators_at', getBatchSize('indicators'), getIntervalMs('indicators'), { requireId: true });
       for (const code of indicatorsCandidates) {
         try {
           await publisher.publish({ collector: 'indicators', fund_code: code, triggered_by: 'cron' });
@@ -108,7 +112,11 @@ export async function startCronScheduler(connection: ChannelModel, isActive: () 
       if (!cotationsBackfillDone) {
         // Backfill: get all funds with id (100 years = ~3e12 ms)
         const BACKFILL_INTERVAL_MS = 100 * 365 * 24 * 60 * 60 * 1000;
-        const cotationsCandidates = await listCandidatesByState('last_historical_cotations_at', batchSize, BACKFILL_INTERVAL_MS, { requireId: true });
+        const cotationsCandidates = await listCandidatesByState('last_historical_cotations_at', getBatchSize('cotations'), BACKFILL_INTERVAL_MS, { requireId: true });
+        if (cotationsCandidates.length === 0) {
+          cotationsBackfillDone = true;
+          return;
+        }
         for (const code of cotationsCandidates) {
           try {
             await publisher.publish({ collector: 'cotations', fund_code: code, range: { days: 365 }, triggered_by: 'cron' });
@@ -116,11 +124,10 @@ export async function startCronScheduler(connection: ChannelModel, isActive: () 
             return;
           }
         }
-        cotationsBackfillDone = true;
       }
 
       // documents: 10min
-      const documentsCandidates = await listDocumentsCandidates(batchSize, getIntervalMs('documents'));
+      const documentsCandidates = await listDocumentsCandidates(getBatchSize('documents'), getIntervalMs('documents'));
       for (const { code, cnpj } of documentsCandidates) {
         try {
           await publisher.publish({ collector: 'documents', fund_code: code, cnpj, triggered_by: 'cron' });
