@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/httpclient"
@@ -62,7 +63,7 @@ func (c *FundDetailsCollector) Collect(ctx context.Context, req CollectRequest) 
 			FundCode: code,
 			DateISO:  dateISO,
 			Payment:  paymentISO,
-			Type:     parsers.DividendTypeToCode(d.Type),
+			Type:     strconv.Itoa(parsers.DividendTypeToCode(d.Type)),
 			Value:    d.Value,
 		})
 	}

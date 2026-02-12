@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"strconv"
+	"strings"
 )
 
 // NormalizedIndicators represents normalized indicators data
@@ -82,9 +84,9 @@ func NormalizeDocuments(raw []interface{}) []DocumentData {
 			doc := DocumentData{}
 
 			if id, ok := docMap["id"].(string); ok {
-				doc.ID = id
+				doc.ID = strings.TrimSpace(id)
 			} else if idFloat, ok := docMap["id"].(float64); ok {
-				doc.ID = string(rune(int(idFloat)))
+				doc.ID = strconv.FormatInt(int64(idFloat), 10)
 			}
 
 			if title, ok := docMap["title"].(string); ok {
@@ -116,7 +118,16 @@ func NormalizeDocuments(raw []interface{}) []DocumentData {
 			}
 
 			if version, ok := docMap["version"].(string); ok {
-				doc.Version = version
+				doc.Version = strings.TrimSpace(version)
+			} else if versionFloat, ok := docMap["version"].(float64); ok {
+				doc.Version = strconv.FormatInt(int64(versionFloat), 10)
+			}
+			if doc.Version == "" {
+				doc.Version = "0"
+			}
+
+			if doc.ID == "" {
+				continue
 			}
 
 			documents = append(documents, doc)
@@ -138,13 +149,13 @@ func SHA256Hash(data interface{}) (string, error) {
 }
 
 // DividendTypeToCode converts dividend type string to code
-func DividendTypeToCode(typeStr string) string {
+func DividendTypeToCode(typeStr string) int {
 	switch typeStr {
-	case "Rendimento":
-		return "R"
+	case "Dividendos":
+		return 1
 	case "Amortização":
-		return "A"
+		return 2
 	default:
-		return "O"
+		return 0
 	}
 }

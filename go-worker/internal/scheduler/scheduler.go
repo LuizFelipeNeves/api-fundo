@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log"
+	"os"
 	"time"
 
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/collectors"
@@ -258,6 +259,12 @@ func (s *Scheduler) scheduleEODCotation(ctx context.Context) {
 // isBusinessHours checks if current time is within business hours (10:00-18:30)
 func (s *Scheduler) isBusinessHours(now time.Time) bool {
 	// Check if it's a weekday (Monday-Friday)
+	forceRun := os.Getenv("FORCE_RUN_JOBS") == "true"
+
+	if forceRun {
+		return true
+	}
+
 	if now.Weekday() == time.Saturday || now.Weekday() == time.Sunday {
 		return false
 	}

@@ -1,7 +1,9 @@
 package collectors
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/url"
@@ -65,6 +67,33 @@ func (c *FundListCollector) Collect(ctx context.Context, req CollectRequest) (*C
 type FundListResponse struct {
 	Total int               `json:"total"`
 	Data  []FundListAPIItem `json:"data"`
+}
+
+func (r *FundListResponse) UnmarshalJSON(data []byte) error {
+	b := bytes.TrimSpace(data)
+	if len(b) == 0 {
+		r.Total = 0
+		r.Data = nil
+		return nil
+	}
+
+	if b[0] == '[' {
+		var items []FundListAPIItem
+		if err := json.Unmarshal(b, &items); err != nil {
+			return err
+		}
+		r.Total = len(items)
+		r.Data = items
+		return nil
+	}
+
+	type alias FundListResponse
+	var tmp alias
+	if err := json.Unmarshal(b, &tmp); err != nil {
+		return err
+	}
+	*r = FundListResponse(tmp)
+	return nil
 }
 
 // FundListAPIItem represents a fund item from the API

@@ -82,7 +82,6 @@ func (c *FnetClient) initSession(ctx context.Context, initURL string) (string, e
 	if err != nil {
 		return "", fmt.Errorf("failed to execute init request: %w", err)
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("init request failed with status: %d", resp.StatusCode)
@@ -90,6 +89,8 @@ func (c *FnetClient) initSession(ctx context.Context, initURL string) (string, e
 
 	// Extract JSESSIONID from Set-Cookie header
 	jsessionID := extractJSessionID(resp)
+
+	defer resp.Body.Close()
 	return jsessionID, nil
 }
 
@@ -152,19 +153,12 @@ func (c *FnetClient) setFnetDataHeaders(req *http.Request, jsessionID string) {
 
 // extractJSessionID extracts JSESSIONID from response headers
 func extractJSessionID(resp *http.Response) string {
-	setCookie := resp.Header.Get("Set-Cookie")
-	if setCookie == "" {
-		setCookie = resp.Header.Get("Set-Cookie2")
+	for _, cookie := range resp.Cookies() {
+		if cookie.Name == "JSESSIONID" {
+			return cookie.Value
+		}
 	}
-
-	if setCookie == "" {
-		return ""
-	}
-
-	// Extract JSESSIONID=... from cookie string
-	re := regexp.MustCompile(`JSESSIONID=[^;]+`)
-	match := re.FindString(setCookie)
-	return match
+	return ""
 }
 
 // authError represents an authentication error
