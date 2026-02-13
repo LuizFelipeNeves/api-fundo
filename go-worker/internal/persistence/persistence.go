@@ -312,8 +312,8 @@ func (p *Persister) PersistDocuments(ctx context.Context, fundCode string, items
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO document (
 			fund_code, document_id, title, category, type, date,
-			date_upload_iso, "dateUpload", url, status, version
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			date_upload_iso, "dateUpload", url, status, version, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
 		ON CONFLICT (fund_code, document_id) DO UPDATE SET
 			title = EXCLUDED.title,
 			category = EXCLUDED.category,
