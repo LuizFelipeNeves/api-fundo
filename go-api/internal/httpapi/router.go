@@ -19,6 +19,7 @@ type Router struct {
 	FII                   *fii.Service
 	Telegram              *telegram.Processor
 	TelegramWebhookSecret string
+	TelegramWebhookToken  string
 	LogRequests           bool
 }
 
@@ -30,8 +31,7 @@ func (rt *Router) Handler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("content-type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte("ok"))
+		http.Redirect(w, r, "/docs/", http.StatusTemporaryRedirect)
 	})
 
 	mux.HandleFunc("/openapi.json", func(w http.ResponseWriter, r *http.Request) {
@@ -67,6 +67,11 @@ func (rt *Router) Handler() http.Handler {
 			return
 		}
 
+		if strings.TrimSpace(rt.TelegramWebhookToken) != "" {
+			writeJSON(w, 200, map[string]any{"ok": true})
+			return
+		}
+
 		secret := strings.TrimSpace(rt.TelegramWebhookSecret)
 		if secret != "" {
 			header := strings.TrimSpace(r.Header.Get("x-telegram-bot-api-secret-token"))
@@ -76,30 +81,34 @@ func (rt *Router) Handler() http.Handler {
 			}
 		}
 
-		if rt.Telegram == nil || rt.Telegram.Client == nil || strings.TrimSpace(rt.Telegram.Client.Token) == "" {
-			writeJSON(w, 200, map[string]any{"ok": true})
+		rt.processTelegramWebhook(w, r)
+	})
+
+	mux.HandleFunc("/api/telegram/webhook/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.NotFound(w, r)
 			return
 		}
 
-		lim := http.MaxBytesReader(w, r.Body, 2<<20)
-		defer lim.Close()
-
-		var update model.TelegramUpdate
-		dec := json.NewDecoder(lim)
-		if err := dec.Decode(&update); err != nil {
-			writeJSON(w, 200, map[string]any{"ok": true})
-			return
-		}
-
-		go func(u model.TelegramUpdate) {
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			defer cancel()
-			if err := rt.Telegram.ProcessUpdate(ctx, &u); err != nil {
-				log.Printf("[telegram_webhook] process error: %v\n", err)
+		requiredToken := strings.TrimSpace(rt.TelegramWebhookToken)
+		if requiredToken != "" {
+			raw := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/telegram/webhook/"), "/")
+			if raw == "" || strings.Contains(raw, "/") || raw != requiredToken {
+				writeJSON(w, 200, map[string]any{"ok": true})
+				return
 			}
-		}(update)
+		}
 
-		writeJSON(w, 200, map[string]any{"ok": true})
+		secret := strings.TrimSpace(rt.TelegramWebhookSecret)
+		if secret != "" {
+			header := strings.TrimSpace(r.Header.Get("x-telegram-bot-api-secret-token"))
+			if header != secret {
+				writeJSON(w, 200, map[string]any{"ok": true})
+				return
+			}
+		}
+
+		rt.processTelegramWebhook(w, r)
 	})
 
 	mux.HandleFunc("/api/fii/", func(w http.ResponseWriter, r *http.Request) {
@@ -245,6 +254,33 @@ func (rt *Router) Handler() http.Handler {
 	}
 
 	return withRequestLogging(mux)
+}
+
+func (rt *Router) processTelegramWebhook(w http.ResponseWriter, r *http.Request) {
+	if rt.Telegram == nil || rt.Telegram.Client == nil || strings.TrimSpace(rt.Telegram.Client.Token) == "" {
+		writeJSON(w, 200, map[string]any{"ok": true})
+		return
+	}
+
+	lim := http.MaxBytesReader(w, r.Body, 2<<20)
+	defer lim.Close()
+
+	var update model.TelegramUpdate
+	dec := json.NewDecoder(lim)
+	if err := dec.Decode(&update); err != nil {
+		writeJSON(w, 200, map[string]any{"ok": true})
+		return
+	}
+
+	go func(u model.TelegramUpdate) {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := rt.Telegram.ProcessUpdate(ctx, &u); err != nil {
+			log.Printf("[telegram_webhook] process error: %v\n", err)
+		}
+	}(update)
+
+	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

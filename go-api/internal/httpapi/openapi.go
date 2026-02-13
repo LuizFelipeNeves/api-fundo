@@ -18,9 +18,12 @@ func openapiSpec() map[string]any {
 					},
 				},
 			},
-			"/api/telegram/webhook": map[string]any{
+			"/api/telegram/webhook/{token}": map[string]any{
 				"post": map[string]any{
 					"summary": "Telegram webhook receiver",
+					"parameters": []any{
+						pathParamWebhookToken(),
+					},
 					"responses": map[string]any{
 						"200": map[string]any{"description": "OK"},
 					},
@@ -145,6 +148,15 @@ func pathParamFundCode() map[string]any {
 		"in":       "path",
 		"required": true,
 		"schema":   map[string]any{"type": "string", "example": "binc11"},
+	}
+}
+
+func pathParamWebhookToken() map[string]any {
+	return map[string]any{
+		"name":     "token",
+		"in":       "path",
+		"required": true,
+		"schema":   map[string]any{"type": "string", "example": "your_webhook_token"},
 	}
 }
 

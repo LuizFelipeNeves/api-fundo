@@ -67,7 +67,7 @@ func (s *Service) ListFunds(ctx context.Context) (model.FundListResponse, error)
 			return model.FundListResponse{}, err
 		}
 		out.Data = append(out.Data, model.FundListItem{
-			Code:                  code,
+			Code:                  strings.ToUpper(strings.TrimSpace(code)),
 			Sector:                nullString(sector),
 			PVP:                   nullFloat(pvp),
 			DividendYield:         nullFloat(dy),
@@ -133,7 +133,7 @@ func (s *Service) GetFundDetails(ctx context.Context, code string) (*model.FundD
 
 	return &model.FundDetails{
 		ID:                   id.String,
-		Code:                 rowCode,
+		Code:                 strings.ToUpper(strings.TrimSpace(rowCode)),
 		RazaoSocial:          nullString(razao),
 		CNPJ:                 nullString(cnpj),
 		PublicoAlvo:          nullString(publico),

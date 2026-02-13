@@ -13,6 +13,8 @@ type Config struct {
 	LogRequests            bool
 	TelegramBotToken       string
 	TelegramWebhookSecret  string
+	TelegramWebhookToken   string
+	APIEndpoint            string
 	DocumentNotifyInterval time.Duration
 	HTTPClientTimeout      time.Duration
 }
@@ -25,8 +27,14 @@ func Load(getenv func(string) string) Config {
 		LogRequests:            strings.TrimSpace(getenv("LOG_REQUESTS")) != "0",
 		TelegramBotToken:       strings.TrimSpace(getenv("TELEGRAM_BOT_TOKEN")),
 		TelegramWebhookSecret:  strings.TrimSpace(getenv("TELEGRAM_WEBHOOK_SECRET")),
+		TelegramWebhookToken:   strings.TrimSpace(getenv("TELEGRAM_WEBHOOK_TOKEN")),
+		APIEndpoint:            strings.TrimSpace(getenv("API_ENDPOINT")),
 		DocumentNotifyInterval: parseInterval(getenv("DOCUMENT_NOTIFY_INTERVAL"), time.Minute),
 		HTTPClientTimeout:      15 * time.Second,
+	}
+
+	if cfg.APIEndpoint == "" {
+		cfg.APIEndpoint = "http://localhost:8080"
 	}
 
 	if raw := strings.TrimSpace(getenv("PORT")); raw != "" {

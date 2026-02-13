@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/luizfelipeneves/api-fundo/go-api/internal/config"
@@ -49,6 +50,7 @@ func main() {
 		FII:                   fiiSvc,
 		Telegram:              tgProcessor,
 		TelegramWebhookSecret: cfg.TelegramWebhookSecret,
+		TelegramWebhookToken:  cfg.TelegramWebhookToken,
 		LogRequests:           cfg.LogRequests,
 	}
 
@@ -63,6 +65,10 @@ func main() {
 	}
 
 	log.Printf("server_start port=%d\n", cfg.Port)
+	if t := strings.TrimSpace(cfg.TelegramWebhookToken); t != "" {
+		base := strings.TrimRight(strings.TrimSpace(cfg.APIEndpoint), "/")
+		log.Printf("telegram_webhook_example_url=%s/api/telegram/webhook/%s\n", base, t)
+	}
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("http error: %v", err)
 	}
