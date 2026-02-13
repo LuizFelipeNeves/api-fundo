@@ -62,6 +62,9 @@ func downloadToTemp(ctx context.Context, tg *Client, rawURL string, fundCode str
 	if err != nil {
 		return "", "", "", err
 	}
+
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,application/pdf;q=0.9,*/*;q=0.8")
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", "", "", err
@@ -77,15 +80,16 @@ func downloadToTemp(ctx context.Context, tg *Client, rawURL string, fundCode str
 			ct = strings.TrimSpace(ct[:i])
 		}
 	}
+	ctLower := strings.ToLower(ct)
 
 	base := path.Base(u.Path)
 	if base == "" || base == "." || base == "/" {
 		base = fmt.Sprintf("%s-%d", strings.ToUpper(strings.TrimSpace(fundCode)), documentID)
 	}
 	if filepath.Ext(base) == "" {
-		if strings.Contains(ct, "pdf") {
+		if strings.Contains(ctLower, "pdf") {
 			base += ".pdf"
-		} else if strings.Contains(ct, "html") {
+		} else if strings.Contains(ctLower, "html") {
 			base += ".html"
 		}
 	}
