@@ -44,6 +44,19 @@ func (db *DB) SelectFundsForIndicators(ctx context.Context, intervalMinutes, lim
 	return db.queryFundCandidates(ctx, query, intervalMinutes, limit)
 }
 
+func (db *DB) SelectFundsForIndicatorsWindow(ctx context.Context, cutoff time.Time, limit int) ([]FundCandidate, error) {
+	query := `
+		SELECT fm.code, COALESCE(fm.cnpj, '') as cnpj, COALESCE(fm.id, '') as id
+		FROM fund_master fm
+		LEFT JOIN fund_state fs ON fm.code = fs.fund_code
+		WHERE fm.id IS NOT NULL AND fm.id != ''
+			AND COALESCE(fs.last_indicators_at, '1970-01-01'::timestamptz) < $1
+		ORDER BY COALESCE(fs.last_indicators_at, '1970-01-01'::timestamptz) ASC
+		LIMIT $2
+	`
+	return db.queryFundCandidates(ctx, query, cutoff, limit)
+}
+
 // SelectFundsForCotationsToday selects funds for today's cotations
 func (db *DB) SelectFundsForCotationsToday(ctx context.Context, intervalMinutes, limit int) ([]FundCandidate, error) {
 	query := `
@@ -56,6 +69,30 @@ func (db *DB) SelectFundsForCotationsToday(ctx context.Context, intervalMinutes,
 		LIMIT $2
 	`
 	return db.queryFundCandidates(ctx, query, intervalMinutes, limit)
+}
+
+func (db *DB) SelectFundsMissingDetails(ctx context.Context, limit int) ([]FundCandidate, error) {
+	query := `
+		SELECT fm.code, COALESCE(fm.cnpj, '') as cnpj, COALESCE(fm.id, '') as id
+		FROM fund_master fm
+		LEFT JOIN fund_state fs ON fm.code = fs.fund_code
+		WHERE fs.last_details_sync_at IS NULL
+		ORDER BY fm.code ASC
+		LIMIT $1
+	`
+	return db.queryFundCandidates(ctx, query, limit)
+}
+
+func (db *DB) SelectFundsMissingCotationsToday(ctx context.Context, limit int) ([]FundCandidate, error) {
+	query := `
+		SELECT fm.code, COALESCE(fm.cnpj, '') as cnpj, COALESCE(fm.id, '') as id
+		FROM fund_master fm
+		LEFT JOIN fund_state fs ON fm.code = fs.fund_code
+		WHERE fs.last_cotations_today_at IS NULL
+		ORDER BY fm.code ASC
+		LIMIT $1
+	`
+	return db.queryFundCandidates(ctx, query, limit)
 }
 
 // SelectFundsForHistoricalCotations selects funds for historical cotations backfill
@@ -73,6 +110,19 @@ func (db *DB) SelectFundsForHistoricalCotations(ctx context.Context, intervalMin
 	return db.queryFundCandidates(ctx, query, intervalMinutes, limit)
 }
 
+func (db *DB) SelectFundsMissingHistoricalCotations(ctx context.Context, limit int) ([]FundCandidate, error) {
+	query := `
+		SELECT fm.code, COALESCE(fm.cnpj, '') as cnpj, COALESCE(fm.id, '') as id
+		FROM fund_master fm
+		LEFT JOIN fund_state fs ON fm.code = fs.fund_code
+		WHERE fm.id IS NOT NULL AND fm.id != ''
+			AND fs.last_historical_cotations_at IS NULL
+		ORDER BY fm.code ASC
+		LIMIT $1
+	`
+	return db.queryFundCandidates(ctx, query, limit)
+}
+
 // SelectFundsForDocuments selects funds for documents sync
 func (db *DB) SelectFundsForDocuments(ctx context.Context, intervalMinutes, limit int) ([]FundCandidate, error) {
 	query := `
@@ -86,6 +136,89 @@ func (db *DB) SelectFundsForDocuments(ctx context.Context, intervalMinutes, limi
 		LIMIT $2
 	`
 	return db.queryFundCandidates(ctx, query, intervalMinutes, limit)
+}
+
+func (db *DB) SelectFundsMissingDocuments(ctx context.Context, limit int) ([]FundCandidate, error) {
+	query := `
+		SELECT fm.code, COALESCE(fm.cnpj, '') as cnpj, COALESCE(fm.id, '') as id
+		FROM fund_master fm
+		LEFT JOIN fund_state fs ON fm.code = fs.fund_code
+		WHERE fm.cnpj IS NOT NULL AND fm.cnpj != ''
+			AND fs.last_documents_at IS NULL
+		ORDER BY fm.code ASC
+		LIMIT $1
+	`
+	return db.queryFundCandidates(ctx, query, limit)
+}
+
+func (db *DB) SelectFundsMissingIndicators(ctx context.Context, limit int) ([]FundCandidate, error) {
+	query := `
+		SELECT fm.code, COALESCE(fm.cnpj, '') as cnpj, COALESCE(fm.id, '') as id
+		FROM fund_master fm
+		LEFT JOIN fund_state fs ON fm.code = fs.fund_code
+		WHERE fm.id IS NOT NULL AND fm.id != ''
+			AND fs.last_indicators_at IS NULL
+		ORDER BY fm.code ASC
+		LIMIT $1
+	`
+	return db.queryFundCandidates(ctx, query, limit)
+}
+
+func (db *DB) CountFundsMissingDetails(ctx context.Context) (int, error) {
+	return db.queryCount(ctx, `
+		SELECT COUNT(*)
+		FROM fund_master fm
+		LEFT JOIN fund_state fs ON fm.code = fs.fund_code
+		WHERE fs.last_details_sync_at IS NULL
+	`)
+}
+
+func (db *DB) CountFundsMissingCotationsToday(ctx context.Context) (int, error) {
+	return db.queryCount(ctx, `
+		SELECT COUNT(*)
+		FROM fund_master fm
+		LEFT JOIN fund_state fs ON fm.code = fs.fund_code
+		WHERE fs.last_cotations_today_at IS NULL
+	`)
+}
+
+func (db *DB) CountFundsMissingDocuments(ctx context.Context) (int, error) {
+	return db.queryCount(ctx, `
+		SELECT COUNT(*)
+		FROM fund_master fm
+		LEFT JOIN fund_state fs ON fm.code = fs.fund_code
+		WHERE fm.cnpj IS NOT NULL AND fm.cnpj != ''
+			AND fs.last_documents_at IS NULL
+	`)
+}
+
+func (db *DB) CountFundsMissingHistoricalCotations(ctx context.Context) (int, error) {
+	return db.queryCount(ctx, `
+		SELECT COUNT(*)
+		FROM fund_master fm
+		LEFT JOIN fund_state fs ON fm.code = fs.fund_code
+		WHERE fm.id IS NOT NULL AND fm.id != ''
+			AND fs.last_historical_cotations_at IS NULL
+	`)
+}
+
+func (db *DB) CountFundsMissingIndicators(ctx context.Context) (int, error) {
+	return db.queryCount(ctx, `
+		SELECT COUNT(*)
+		FROM fund_master fm
+		LEFT JOIN fund_state fs ON fm.code = fs.fund_code
+		WHERE fm.id IS NOT NULL AND fm.id != ''
+			AND fs.last_indicators_at IS NULL
+	`)
+}
+
+func (db *DB) queryCount(ctx context.Context, query string, args ...interface{}) (int, error) {
+	var n int
+	err := db.QueryRowContext(ctx, query, args...).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // queryFundCandidates executes a query and returns fund candidates

@@ -22,6 +22,7 @@ services:
     environment:
       FORCE_RUN_JOBS: ${FORCE_RUN_JOBS:-}
       DATABASE_URL: "${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/fii?sslmode=disable}"
+      WORKER_MODE: "${WORKER_MODE:-normal}"
       WORKER_POOL_SIZE: "${WORKER_POOL_SIZE:-25}"
       SCHEDULER_INTERVAL_MS: "${SCHEDULER_INTERVAL_MS:-30000}"
       BATCH_SIZE: "${BATCH_SIZE:-50}"

@@ -11,6 +11,7 @@ type Config struct {
 	DatabaseURL       string
 	WorkerPoolSize    int
 	SchedulerInterval time.Duration
+	Mode              string
 
 	// PostgreSQL connection pool settings
 	MaxOpenConns int
@@ -38,6 +39,11 @@ type Config struct {
 	HTTPRetryDelayMS int
 }
 
+const (
+	ModeNormal   = "normal"
+	ModeBackfill = "backfill"
+)
+
 // Load reads configuration from environment variables
 func Load() (*Config, error) {
 	loc, err := time.LoadLocation("America/Sao_Paulo")
@@ -49,6 +55,7 @@ func Load() (*Config, error) {
 		DatabaseURL:       getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/fii?sslmode=disable"),
 		WorkerPoolSize:    getEnvInt("WORKER_POOL_SIZE", 3),
 		SchedulerInterval: time.Duration(getEnvInt("SCHEDULER_INTERVAL_MS", 30000)) * time.Millisecond,
+		Mode:              normalizeMode(getEnv("WORKER_MODE", ModeNormal)),
 
 		MaxOpenConns: 5,
 		MaxIdleConns: 2,
@@ -70,6 +77,15 @@ func Load() (*Config, error) {
 		HTTPRetryMax:     getEnvInt("HTTP_RETRY_MAX", 5),
 		HTTPRetryDelayMS: getEnvInt("HTTP_RETRY_DELAY_MS", 2000),
 	}, nil
+}
+
+func normalizeMode(v string) string {
+	switch v {
+	case ModeBackfill:
+		return ModeBackfill
+	default:
+		return ModeNormal
+	}
 }
 
 func getEnv(key, defaultValue string) string {

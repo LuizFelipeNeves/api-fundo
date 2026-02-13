@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/collectors"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/persistence"
@@ -64,9 +65,12 @@ type Worker struct {
 	registry  *collectors.Registry
 	persister *persistence.Persister
 	workChan  <-chan scheduler.WorkItem
+	mode      string
 
 	// reuse struct to avoid allocation per job
 	req collectors.CollectRequest
+
+	consecutiveErrors int
 }
 
 // New creates a new worker
@@ -75,12 +79,14 @@ func New(
 	registry *collectors.Registry,
 	persister *persistence.Persister,
 	workChan <-chan scheduler.WorkItem,
+	mode string,
 ) *Worker {
 	return &Worker{
 		id:        id,
 		registry:  registry,
 		persister: persister,
 		workChan:  workChan,
+		mode:      mode,
 	}
 }
 
@@ -112,7 +118,14 @@ func (w *Worker) Start(ctx context.Context) error {
 					" for ", item.FundCode,
 					": ", err,
 				)
+				w.consecutiveErrors++
+				if err := sleepCtx(ctx, w.errorBackoff()); err != nil {
+					return err
+				}
+				continue
 			}
+
+			w.consecutiveErrors = 0
 		}
 	}
 }
@@ -155,6 +168,42 @@ func (w *Worker) processWorkItem(ctx context.Context, item scheduler.WorkItem) e
 	}
 
 	return nil
+}
+
+func (w *Worker) errorBackoff() time.Duration {
+	base := 500 * time.Millisecond
+	if w.mode == "backfill" {
+		base = 2 * time.Second
+	}
+
+	n := w.consecutiveErrors
+	if n < 1 {
+		return 0
+	}
+	if n > 6 {
+		n = 6
+	}
+
+	d := base * time.Duration(1<<(n-1))
+	if d > 30*time.Second {
+		d = 30 * time.Second
+	}
+	return d
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // persistResult persists the collection result

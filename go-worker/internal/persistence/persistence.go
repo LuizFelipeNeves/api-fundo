@@ -14,12 +14,16 @@ import (
 
 // Persister handles data persistence to PostgreSQL
 type Persister struct {
-	db *db.DB
+	db                *db.DB
+	skipDividendYield bool
 }
 
 // New creates a new persister
-func New(database *db.DB) *Persister {
-	return &Persister{db: database}
+func New(database *db.DB, mode string) *Persister {
+	return &Persister{
+		db:                database,
+		skipDividendYield: mode == "backfill",
+	}
 }
 
 // PersistFundList persists fund list data
@@ -118,8 +122,6 @@ func (p *Persister) PersistFundDetails(ctx context.Context, fundCode string, dat
 
 	// Persist dividends
 	if len(data.Dividends) > 0 {
-		priceByDate := make(map[string]float64, len(data.Dividends))
-
 		stmt, err := tx.PrepareContext(ctx, `
 			INSERT INTO dividend (fund_code, date_iso, payment, type, value, yield)
 			VALUES ($1, $2, $3, $4, $5, $6)
@@ -133,27 +135,32 @@ func (p *Persister) PersistFundDetails(ctx context.Context, fundCode string, dat
 		}
 		defer stmt.Close()
 
+		priceByDate := make(map[string]float64, len(data.Dividends))
 		for _, div := range data.Dividends {
-			price, ok := priceByDate[div.DateISO]
-			if !ok {
-				var p float64
-				err := tx.QueryRowContext(
-					ctx,
-					`SELECT price FROM cotation WHERE fund_code = $1 AND date_iso = $2`,
-					div.FundCode,
-					div.DateISO,
-				).Scan(&p)
-				if err != nil {
-					if err != sql.ErrNoRows {
-						return fmt.Errorf("failed to fetch cotation price: %w", err)
-					}
-					p = 0
-				}
-				priceByDate[div.DateISO] = p
-				price = p
-			}
+			yield := 0.0
 
-			yield := calcYield(div.Value, price)
+			if !p.skipDividendYield {
+				price, ok := priceByDate[div.DateISO]
+				if !ok {
+					var p float64
+					err := tx.QueryRowContext(
+						ctx,
+						`SELECT price FROM cotation WHERE fund_code = $1 AND date_iso = $2`,
+						div.FundCode,
+						div.DateISO,
+					).Scan(&p)
+					if err != nil {
+						if err != sql.ErrNoRows {
+							return fmt.Errorf("failed to fetch cotation price: %w", err)
+						}
+						p = 0
+					}
+					priceByDate[div.DateISO] = p
+					price = p
+				}
+
+				yield = calcYield(div.Value, price)
+			}
 
 			_, err := stmt.ExecContext(ctx, div.FundCode, div.DateISO, div.Payment, div.Type, div.Value, yield)
 			if err != nil {
@@ -175,6 +182,22 @@ func calcYield(value, price float64) float64 {
 		return 0
 	}
 	return (value / price) * 100
+}
+
+func (p *Persister) RecomputeDividendYields(ctx context.Context) (int64, error) {
+	res, err := p.db.ExecContext(ctx, `
+		UPDATE dividend d
+		SET yield = (d.value / c.price) * 100
+		FROM cotation c
+		WHERE d.fund_code = c.fund_code
+			AND d.date_iso = c.date_iso
+			AND c.price > 0
+			AND d.yield = 0
+	`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // PersistIndicators persists fund indicators

@@ -131,7 +131,7 @@ func main() {
 	log.Printf("registered %d collectors\n", len(registry.List()))
 
 	// Initialize persister
-	persister := persistence.New(database)
+	persister := persistence.New(database, cfg.Mode)
 
 	// Create work channel with small buffer
 	workChan := make(chan scheduler.WorkItem, 20)
@@ -151,7 +151,7 @@ func main() {
 	var wg sync.WaitGroup
 	for i := 0; i < cfg.WorkerPoolSize; i++ {
 		wg.Add(1)
-		w := worker.New(i+1, registry, persister, workChan)
+		w := worker.New(i+1, registry, persister, workChan, cfg.Mode)
 		go func() {
 			defer wg.Done()
 			if err := w.Start(ctx); err != nil && err != context.Canceled {
