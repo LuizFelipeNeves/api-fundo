@@ -53,8 +53,8 @@ jobs:
           file: ${{ matrix.file }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: |
-            ghcr.io/${{ github.repository }}-${{ matrix.name }}:latest
-            ghcr.io/${{ github.repository }}-${{ matrix.name }}:${{ github.sha }}
+            ghcr.io/${{ toLower(github.repository) }}-${{ matrix.name }}:latest
+            ghcr.io/${{ toLower(github.repository) }}-${{ matrix.name }}:${{ github.sha }}
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
