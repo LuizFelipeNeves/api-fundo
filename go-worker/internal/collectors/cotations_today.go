@@ -29,7 +29,9 @@ func (c *CotationsTodayCollector) Name() string {
 // Collect fetches today's cotations from statusinvest.com.br
 func (c *CotationsTodayCollector) Collect(ctx context.Context, req CollectRequest) (*CollectResult, error) {
 	code := parsers.NormalizeFundCode(req.FundCode)
-	log.Printf("[cotations_today] collecting today's cotations for %s\n", code)
+	if verboseLogs() {
+		log.Printf("[cotations_today] collecting today's cotations for %s\n", code)
+	}
 
 	// Build form data
 	params := url.Values{}

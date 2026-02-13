@@ -29,7 +29,9 @@ func (c *FundDetailsCollector) Name() string {
 // Collect fetches fund details by scraping HTML
 func (c *FundDetailsCollector) Collect(ctx context.Context, req CollectRequest) (*CollectResult, error) {
 	code := parsers.NormalizeFundCode(req.FundCode)
-	log.Printf("[fund_details] collecting details for %s\n", code)
+	if verboseLogs() {
+		log.Printf("[fund_details] collecting details for %s\n", code)
+	}
 
 	// Fetch HTML page
 	html, err := c.client.GetHTML(ctx, fmt.Sprintf("%s/fiis/%s/", httpclient.BaseURL, code))

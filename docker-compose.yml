@@ -1,10 +1,10 @@
 services:
-  api-read:
+  api:
     build: .
     command: ["bun", "run", "apps/api/src/index.ts"]
     environment:
       PORT: "${PORT:-8080}"
-      DATABASE_URL: "${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/fii}"
+      DATABASE_URL: "${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/fii?sslmode=disable}"
       RABBITMQ_URL: "${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}"
       RABBITMQ_HEARTBEAT: "${RABBITMQ_HEARTBEAT:-60}"
       RABBITMQ_FRAME_MAX: "${RABBITMQ_FRAME_MAX:-1048576}"
@@ -26,7 +26,7 @@ services:
     command: ["bun", "run", "apps/worker/src/index.ts"]
     environment:
       FORCE_RUN_JOBS: ${FORCE_RUN_JOBS:-}
-      DATABASE_URL: "${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/fii}"
+      DATABASE_URL: "${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/fii?sslmode=disable}"
       RABBITMQ_URL: "${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}"
       RABBITMQ_HEARTBEAT: "${RABBITMQ_HEARTBEAT:-60}"
       RABBITMQ_FRAME_MAX: "${RABBITMQ_FRAME_MAX:-1048576}"
@@ -49,6 +49,33 @@ services:
     depends_on:
       - postgres
       - rabbitmq
+
+  go-worker:
+    build:
+      context: ./go-worker
+      dockerfile: Dockerfile
+    environment:
+      FORCE_RUN_JOBS: ${FORCE_RUN_JOBS:-}
+      DATABASE_URL: "${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/fii?sslmode=disable}"
+      WORKER_POOL_SIZE: "${WORKER_POOL_SIZE:-25}"
+      SCHEDULER_INTERVAL_MS: "${SCHEDULER_INTERVAL_MS:-60000}"
+      BATCH_SIZE: "${BATCH_SIZE:-25}"
+      WORKER_STATS_INTERVAL: "${WORKER_STATS_INTERVAL:-1m}"
+      INTERVAL_FUND_LIST_MIN: "${INTERVAL_FUND_LIST_MIN:-30}"
+      INTERVAL_FUND_DETAILS_MIN: "${INTERVAL_FUND_DETAILS_MIN:-15}"
+      INTERVAL_COTATIONS_MIN: "${INTERVAL_COTATIONS_MIN:-5}"
+      INTERVAL_COTATIONS_TODAY_MIN: "${INTERVAL_COTATIONS_TODAY_MIN:-5}"
+      INTERVAL_INDICATORS_MIN: "${INTERVAL_INDICATORS_MIN:-30}"
+      INTERVAL_DOCUMENTS_MIN: "${INTERVAL_DOCUMENTS_MIN:-25}"
+      TZ: "America/Sao_Paulo"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1'
 
   postgres:
     image: postgres:16-alpine

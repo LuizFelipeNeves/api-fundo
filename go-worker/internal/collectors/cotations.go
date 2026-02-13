@@ -35,7 +35,9 @@ func (c *CotationsCollector) Collect(ctx context.Context, req CollectRequest) (*
 	code := parsers.NormalizeFundCode(req.FundCode)
 	days := 1825 // ~5 years
 
-	log.Printf("[cotations] collecting cotations for %s (days=%d)\n", code, days)
+	if verboseLogs() {
+		log.Printf("[cotations] collecting cotations for %s (days=%d)\n", code, days)
+	}
 
 	// Get fund ID from database
 	fundID, err := c.db.GetFundIDByCode(ctx, code)

@@ -4,11 +4,42 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"strings"
+	"sync/atomic"
 
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/collectors"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/persistence"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/scheduler"
 )
+
+var (
+	inFlight       int64
+	processedTotal int64
+	errorTotal     int64
+)
+
+type StatsSnapshot struct {
+	InFlight  int64
+	Processed int64
+	Errors    int64
+}
+
+func Stats() StatsSnapshot {
+	return StatsSnapshot{
+		InFlight:  atomic.LoadInt64(&inFlight),
+		Processed: atomic.LoadInt64(&processedTotal),
+		Errors:    atomic.LoadInt64(&errorTotal),
+	}
+}
+
+func verboseLogs() bool {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("LOG_VERBOSE")), "true") {
+		return true
+	}
+	level := strings.ToLower(strings.TrimSpace(os.Getenv("LOG_LEVEL")))
+	return level == "debug" || level == "trace"
+}
 
 // Worker processes work items from the scheduler
 type Worker struct {
@@ -55,6 +86,7 @@ func (w *Worker) Start(ctx context.Context) error {
 			}
 
 			if err := w.processWorkItem(ctx, item); err != nil {
+				atomic.AddInt64(&errorTotal, 1)
 				log.Println(
 					"[worker-", w.id,
 					"] error processing ", item.CollectorName,
@@ -68,6 +100,8 @@ func (w *Worker) Start(ctx context.Context) error {
 
 // processWorkItem processes a single work item: collect → persist
 func (w *Worker) processWorkItem(ctx context.Context, item scheduler.WorkItem) error {
+	atomic.AddInt64(&inFlight, 1)
+	defer atomic.AddInt64(&inFlight, -1)
 
 	// registry lookup (map lookup is cheap)
 	collector, err := w.registry.Get(item.CollectorName)
@@ -90,11 +124,15 @@ func (w *Worker) processWorkItem(ctx context.Context, item scheduler.WorkItem) e
 		return fmt.Errorf("persistence failed: %w", err)
 	}
 
-	log.Println(
-		"[worker-", w.id,
-		"] completed ", item.CollectorName,
-		" for ", item.FundCode,
-	)
+	atomic.AddInt64(&processedTotal, 1)
+
+	if verboseLogs() {
+		log.Println(
+			"[worker-", w.id,
+			"] completed ", item.CollectorName,
+			" for ", item.FundCode,
+		)
+	}
 
 	return nil
 }

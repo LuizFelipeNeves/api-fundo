@@ -34,7 +34,9 @@ func (c *DocumentsCollector) Name() string {
 // Collect fetches fund documents from FNET
 func (c *DocumentsCollector) Collect(ctx context.Context, req CollectRequest) (*CollectResult, error) {
 	code := parsers.NormalizeFundCode(req.FundCode)
-	log.Printf("[documents] collecting documents for %s\n", code)
+	if verboseLogs() {
+		log.Printf("[documents] collecting documents for %s\n", code)
+	}
 
 	// Get CNPJ from database
 	cnpj, err := c.db.GetFundCNPJByCode(ctx, code)

@@ -2,11 +2,16 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/collectors"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/config"
@@ -16,6 +21,75 @@ import (
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/scheduler"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/worker"
 )
+
+func statsInterval() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("WORKER_STATS_INTERVAL"))
+	if raw == "" {
+		return 30 * time.Second
+	}
+	if raw == "0" || raw == "0s" {
+		return 0
+	}
+
+	if d, err := time.ParseDuration(raw); err == nil {
+		return d
+	}
+
+	if seconds, err := strconv.Atoi(raw); err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		return time.Duration(seconds) * time.Second
+	}
+
+	return 30 * time.Second
+}
+
+func applyDatabaseSchema(ctx context.Context, database *db.DB) error {
+	cwd, _ := os.Getwd()
+
+	candidates := []string{
+		strings.TrimSpace(os.Getenv("DATABASE_SCHEMA_PATH")),
+		filepath.Join(cwd, "database", "schema.sql"),
+		filepath.Join(cwd, "..", "database", "schema.sql"),
+		filepath.Join(cwd, "..", "..", "database", "schema.sql"),
+		"/app/database/schema.sql",
+	}
+
+	var schemaPath string
+	var schemaSQL []byte
+	for _, p := range candidates {
+		if p == "" {
+			continue
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(string(b)) == "" {
+			continue
+		}
+		schemaPath = p
+		schemaSQL = b
+		break
+	}
+
+	if schemaPath == "" {
+		return fmt.Errorf("database schema.sql not found (set DATABASE_SCHEMA_PATH)")
+	}
+
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, string(schemaSQL)); err != nil {
+		return fmt.Errorf("failed to apply schema from %s: %w", schemaPath, err)
+	}
+
+	return tx.Commit()
+}
 
 func main() {
 	// Load configuration
@@ -32,6 +106,10 @@ func main() {
 	defer database.Close()
 
 	log.Println("connected to database")
+
+	if errDb := applyDatabaseSchema(context.Background(), database); errDb != nil {
+		log.Fatalf("failed to apply database schema: %v", errDb)
+	}
 
 	// Initialize HTTP clients
 	httpClient, err := httpclient.New(cfg)
@@ -92,6 +170,31 @@ func main() {
 	}()
 
 	log.Printf("go-worker started with %d workers\n", cfg.WorkerPoolSize)
+
+	if interval := statsInterval(); interval > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					s := worker.Stats()
+					log.Printf(
+						"[stats] in_flight=%d processed=%d errors=%d queue_len=%d",
+						s.InFlight,
+						s.Processed,
+						s.Errors,
+						len(workChan),
+					)
+				}
+			}
+		}()
+	}
 
 	// Wait for shutdown signal
 	<-sigChan

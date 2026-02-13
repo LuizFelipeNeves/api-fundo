@@ -96,10 +96,14 @@ CREATE TABLE IF NOT EXISTS document (
   url TEXT NOT NULL,
   status TEXT NOT NULL,
   version INTEGER NOT NULL,
+  send BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (fund_code, document_id)
 );
 CREATE INDEX IF NOT EXISTS idx_document_fund_upload ON document(fund_code, date_upload_iso DESC);
+
+ALTER TABLE document
+  ADD COLUMN IF NOT EXISTS send BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS telegram_user (
   chat_id TEXT PRIMARY KEY,

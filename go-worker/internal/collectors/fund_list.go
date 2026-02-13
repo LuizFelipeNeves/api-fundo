@@ -30,7 +30,9 @@ func (c *FundListCollector) Name() string {
 
 // Collect fetches the fund list
 func (c *FundListCollector) Collect(ctx context.Context, req CollectRequest) (*CollectResult, error) {
-	log.Println("[fund_list] collecting fund list")
+	if verboseLogs() {
+		log.Println("[fund_list] collecting fund list")
+	}
 
 	// Build form data for advanced search
 	formData := buildFundListParams()

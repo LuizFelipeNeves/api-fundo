@@ -3,7 +3,17 @@ package collectors
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 )
+
+func verboseLogs() bool {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("LOG_VERBOSE")), "true") {
+		return true
+	}
+	level := strings.ToLower(strings.TrimSpace(os.Getenv("LOG_LEVEL")))
+	return level == "debug" || level == "trace"
+}
 
 // Collector interface for all collectors
 type Collector interface {

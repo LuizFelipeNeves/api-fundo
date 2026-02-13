@@ -33,7 +33,9 @@ func (c *IndicatorsCollector) Name() string {
 // Collect fetches fund indicators
 func (c *IndicatorsCollector) Collect(ctx context.Context, req CollectRequest) (*CollectResult, error) {
 	code := parsers.NormalizeFundCode(req.FundCode)
-	log.Printf("[indicators] collecting indicators for %s\n", code)
+	if verboseLogs() {
+		log.Printf("[indicators] collecting indicators for %s\n", code)
+	}
 
 	// Get fund ID from database
 	fundID, err := c.db.GetFundIDByCode(ctx, code)
