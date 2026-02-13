@@ -48,7 +48,7 @@ func Load() (*Config, error) {
 	return &Config{
 		DatabaseURL:       getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/fii?sslmode=disable"),
 		WorkerPoolSize:    getEnvInt("WORKER_POOL_SIZE", 3),
-		SchedulerInterval: time.Duration(getEnvInt("SCHEDULER_INTERVAL_MS", 60000)) * time.Millisecond,
+		SchedulerInterval: time.Duration(getEnvInt("SCHEDULER_INTERVAL_MS", 30000)) * time.Millisecond,
 
 		MaxOpenConns: 5,
 		MaxIdleConns: 2,

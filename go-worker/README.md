@@ -28,7 +28,7 @@ docker build -t go-worker .
 ```bash
 export DATABASE_URL="postgres://postgres:postgres@localhost:5432/fii?sslmode=disable"
 export WORKER_POOL_SIZE=3
-export SCHEDULER_INTERVAL_MS=60000
+export SCHEDULER_INTERVAL_MS=30000
 
 ./worker
 ```
@@ -47,7 +47,7 @@ All configuration via environment variables:
 |----------|---------|-------------|
 | `DATABASE_URL` | `postgres://postgres:postgres@localhost:5432/fii?sslmode=disable` | PostgreSQL connection string |
 | `WORKER_POOL_SIZE` | `3` | Number of worker goroutines |
-| `SCHEDULER_INTERVAL_MS` | `60000` | Scheduler tick interval (ms) |
+| `SCHEDULER_INTERVAL_MS` | `30000` | Scheduler tick interval (ms) |
 | `BATCH_SIZE` | `3` | Max funds per batch |
 | `INTERVAL_FUND_LIST_MIN` | `30` | Fund list update interval (minutes) |
 | `INTERVAL_FUND_DETAILS_MIN` | `15` | Fund details update interval (minutes) |

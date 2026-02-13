@@ -343,7 +343,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		if s.shouldRunEOD(now) {
 			dateISO := now.Format("2006-01-02")
 			if dateISO != lastEODDate {
-				s.scheduleEODCotation(ctx)
+				s.scheduleEODCotation(ctx, dateISO)
 				lastEODDate = dateISO
 			}
 		}
@@ -420,12 +420,17 @@ func (s *Scheduler) Start(ctx context.Context) error {
 
 // ================= EOD + BUSINESS HOURS =================
 
-func (s *Scheduler) scheduleEODCotation(ctx context.Context) {
+func (s *Scheduler) scheduleEODCotation(ctx context.Context, dateISO string) {
 
 	lockKey := int64(4419270101)
 
 	err := s.db.TryAdvisoryLock(ctx, lockKey, func(tx *sql.Tx) error {
 		log.Println("[scheduler] processing EOD cotation")
+		inserted, err := runEODCotation(ctx, tx, dateISO)
+		if err != nil {
+			return err
+		}
+		log.Printf("[scheduler] EOD cotation done inserted=%d\n", inserted)
 		return nil
 	})
 

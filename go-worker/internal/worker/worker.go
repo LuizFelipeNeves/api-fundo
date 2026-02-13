@@ -69,7 +69,9 @@ func New(
 
 // Start begins processing work items
 func (w *Worker) Start(ctx context.Context) error {
-	log.Println("[worker-", w.id, "] started")
+	if verboseLogs() {
+		log.Println("[worker-", w.id, "] started")
+	}
 
 	for {
 		select {

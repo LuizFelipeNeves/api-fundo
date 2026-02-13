@@ -1,16 +1,11 @@
 services:
-  api:
-    build: .
-    command: ["bun", "run", "apps/api/src/index.ts"]
+  go-api:
+    build:
+      context: ./go-api
+      dockerfile: Dockerfile
     environment:
       PORT: "${PORT:-8080}"
       DATABASE_URL: "${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/fii?sslmode=disable}"
-      RABBITMQ_URL: "${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}"
-      RABBITMQ_HEARTBEAT: "${RABBITMQ_HEARTBEAT:-60}"
-      RABBITMQ_FRAME_MAX: "${RABBITMQ_FRAME_MAX:-1048576}"
-      TELEGRAM_QUEUE_NAME: "${TELEGRAM_QUEUE_NAME:-telegram.updates}"
-      TELEGRAM_DLX: "${TELEGRAM_DLX:-telegram.dlx}"
-      TELEGRAM_DLQ: "${TELEGRAM_DLQ:-telegram.dlq}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       LOG_FORMAT: "${LOG_FORMAT:-text}"
@@ -19,48 +14,18 @@ services:
       - "8080:8080"
     depends_on:
       - postgres
-      - rabbitmq
-
-  worker:
-    build: .
-    command: ["bun", "run", "apps/worker/src/index.ts"]
-    environment:
-      FORCE_RUN_JOBS: ${FORCE_RUN_JOBS:-}
-      DATABASE_URL: "${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/fii?sslmode=disable}"
-      RABBITMQ_URL: "${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}"
-      RABBITMQ_HEARTBEAT: "${RABBITMQ_HEARTBEAT:-60}"
-      RABBITMQ_FRAME_MAX: "${RABBITMQ_FRAME_MAX:-1048576}"
-      TELEGRAM_QUEUE_NAME: "${TELEGRAM_QUEUE_NAME:-telegram.updates}"
-      COLLECT_REQUESTS_QUEUE: "${COLLECT_REQUESTS_QUEUE:-collector.requests}"
-      TELEGRAM_QUEUE_PREFETCH: "${TELEGRAM_QUEUE_PREFETCH:-4}"
-      COLLECTOR_PREFETCH: "${COLLECTOR_PREFETCH:-2}"
-      COLLECTOR_MESSAGE_TIMEOUT_MS: "${COLLECTOR_MESSAGE_TIMEOUT_MS:-60000}"
-      HTTP_RETRY_MAX: "${HTTP_RETRY_MAX:-2}"
-      HTTP_RETRY_BASE_MS: "${HTTP_RETRY_BASE_MS:-1000}"
-      HTTP_RETRY_AFTER_MAX_MS: "${HTTP_RETRY_AFTER_MAX_MS:-5000}"
-      HTTP_MAX_TOTAL_MS: "${HTTP_MAX_TOTAL_MS:-45000}"
-      COLLECTOR_RETRY_BASE_MS: "${COLLECTOR_RETRY_BASE_MS:-500}"
-      COLLECTOR_MAX_RETRIES: "${COLLECTOR_MAX_RETRIES:-5}"
-      CRON_INTERVAL_MS: "${CRON_INTERVAL_MS:-60000}"
-      COLLECTOR_QUEUE_BACKLOG_LIMIT: "${COLLECTOR_QUEUE_BACKLOG_LIMIT:-1200}"
-      SCHED_BATCH_SIZE: "${SCHED_BATCH_SIZE:-200}"
-      SCHED_MIN_INTERVAL_MIN: "${SCHED_MIN_INTERVAL_MIN:-5}"
-      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
-    depends_on:
-      - postgres
-      - rabbitmq
 
   go-worker:
     build:
-      context: ./go-worker
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: go-worker/Dockerfile
     environment:
       FORCE_RUN_JOBS: ${FORCE_RUN_JOBS:-}
       DATABASE_URL: "${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/fii?sslmode=disable}"
       WORKER_POOL_SIZE: "${WORKER_POOL_SIZE:-25}"
-      SCHEDULER_INTERVAL_MS: "${SCHEDULER_INTERVAL_MS:-60000}"
-      BATCH_SIZE: "${BATCH_SIZE:-25}"
-      WORKER_STATS_INTERVAL: "${WORKER_STATS_INTERVAL:-1m}"
+      SCHEDULER_INTERVAL_MS: "${SCHEDULER_INTERVAL_MS:-30000}"
+      BATCH_SIZE: "${BATCH_SIZE:-50}"
+      WORKER_STATS_INTERVAL: "${WORKER_STATS_INTERVAL:-60}"
       INTERVAL_FUND_LIST_MIN: "${INTERVAL_FUND_LIST_MIN:-30}"
       INTERVAL_FUND_DETAILS_MIN: "${INTERVAL_FUND_DETAILS_MIN:-15}"
       INTERVAL_COTATIONS_MIN: "${INTERVAL_COTATIONS_MIN:-5}"
@@ -87,14 +52,6 @@ services:
       - "5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
-
-  rabbitmq:
-    image: rabbitmq:3-management-alpine
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    volumes:
-      - rabbit_data:/var/lib/rabbitmq
 
 volumes:
   pg_data:
