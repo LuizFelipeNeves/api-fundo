@@ -37,8 +37,8 @@ func (p *Persister) PersistFundList(ctx context.Context, items []collectors.Fund
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO fund_master (
 			code, sector, p_vp, dividend_yield, dividend_yield_last_5_years,
-			daily_liquidity, net_worth, type, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+			daily_liquidity, net_worth, type, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
 		ON CONFLICT (code) DO UPDATE SET
 			sector = EXCLUDED.sector,
 			p_vp = EXCLUDED.p_vp,
@@ -87,8 +87,8 @@ func (p *Persister) PersistFundDetails(ctx context.Context, fundCode string, dat
 			code, id, cnpj, razao_social, publico_alvo, mandato, segmento,
 			tipo_fundo, prazo_duracao, tipo_gestao, taxa_adminstracao,
 			daily_liquidity, vacancia, numero_cotistas, cotas_emitidas,
-			valor_patrimonial_cota, valor_patrimonial, ultimo_rendimento, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW())
+			valor_patrimonial_cota, valor_patrimonial, ultimo_rendimento, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW())
 		ON CONFLICT (code) DO UPDATE SET
 			id = EXCLUDED.id,
 			cnpj = EXCLUDED.cnpj,
