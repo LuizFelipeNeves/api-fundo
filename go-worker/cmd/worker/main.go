@@ -184,12 +184,18 @@ func main() {
 					return
 				case <-ticker.C:
 					s := worker.Stats()
+					inFlightPeak := worker.InFlightPeakAndReset()
+					queuePeak := scheduler.QueueLenPeakAndReset()
+					enqueued := scheduler.EnqueuedTotal()
 					log.Printf(
-						"[stats] in_flight=%d processed=%d errors=%d queue_len=%d",
+						"[stats] in_flight=%d processed=%d errors=%d queue_len=%d in_flight_peak=%d queue_peak=%d enqueued=%d",
 						s.InFlight,
 						s.Processed,
 						s.Errors,
 						len(workChan),
+						inFlightPeak,
+						queuePeak,
+						enqueued,
 					)
 				}
 			}

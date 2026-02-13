@@ -218,37 +218,22 @@ func (rt *Router) Handler() http.Handler {
 			return
 		case "export":
 			cotDays, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("cotationsDays")))
-			if cotDays <= 0 {
-				cotDays = 1825
-			}
+			snapLimit, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("indicatorsSnapshotsLimit")))
 
-			details, err := rt.FII.GetFundDetails(ctx, code)
+			data, found, err := rt.FII.ExportFund(ctx, code, fii.ExportFundOptions{
+				CotationsDays:            cotDays,
+				IndicatorsSnapshotsLimit: snapLimit,
+			})
 			if err != nil {
 				writeJSON(w, 500, map[string]any{"error": "internal_error"})
 				return
 			}
-			if details == nil {
+			if !found || data == nil {
 				writeJSON(w, 404, map[string]any{"error": "FII não encontrado"})
 				return
 			}
 
-			cotations, _ := rt.FII.GetCotations(ctx, code, cotDays)
-			dividends, _, _ := rt.FII.GetDividends(ctx, code)
-			indicators, _, _ := rt.FII.GetLatestIndicators(ctx, code)
-			today, _, _ := rt.FII.GetLatestCotationsToday(ctx, code)
-
-			writeJSON(w, 200, map[string]any{
-				"data": map[string]any{
-					"details":           details,
-					"cotations":         cotations,
-					"dividends":         dividends,
-					"latest_indicators": indicators,
-					"cotations_today":   today,
-					"cotations_days":    cotDays,
-					"generated_at":      time.Now().UTC().Format(time.RFC3339),
-					"note":              "export simplificado (sem analytics)",
-				},
-			})
+			writeJSON(w, 200, data)
 			return
 		}
 

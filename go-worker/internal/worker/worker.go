@@ -15,6 +15,7 @@ import (
 
 var (
 	inFlight       int64
+	inFlightPeak   int64
 	processedTotal int64
 	errorTotal     int64
 )
@@ -30,6 +31,22 @@ func Stats() StatsSnapshot {
 		InFlight:  atomic.LoadInt64(&inFlight),
 		Processed: atomic.LoadInt64(&processedTotal),
 		Errors:    atomic.LoadInt64(&errorTotal),
+	}
+}
+
+func InFlightPeakAndReset() int64 {
+	return atomic.SwapInt64(&inFlightPeak, 0)
+}
+
+func bumpPeak(dst *int64, v int64) {
+	for {
+		cur := atomic.LoadInt64(dst)
+		if v <= cur {
+			return
+		}
+		if atomic.CompareAndSwapInt64(dst, cur, v) {
+			return
+		}
 	}
 }
 
@@ -102,7 +119,8 @@ func (w *Worker) Start(ctx context.Context) error {
 
 // processWorkItem processes a single work item: collect → persist
 func (w *Worker) processWorkItem(ctx context.Context, item scheduler.WorkItem) error {
-	atomic.AddInt64(&inFlight, 1)
+	curInFlight := atomic.AddInt64(&inFlight, 1)
+	bumpPeak(&inFlightPeak, curInFlight)
 	defer atomic.AddInt64(&inFlight, -1)
 
 	// registry lookup (map lookup is cheap)

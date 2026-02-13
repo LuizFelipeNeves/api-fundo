@@ -25,6 +25,8 @@ const (
 	KindAdd        CommandKind = "add"
 	KindRemove     CommandKind = "remove"
 	KindDocumentos CommandKind = "documentos"
+	KindRankHoje   CommandKind = "rank_hoje"
+	KindRankV      CommandKind = "rankv"
 	KindCancel     CommandKind = "cancel"
 	KindConfirm    CommandKind = "confirm"
 )
@@ -66,6 +68,17 @@ func ParseBotCommand(text string) botCommand {
 	case "/documentos", "/docs":
 		code, limit := parseDocumentosArgs(tail)
 		return botCommand{Kind: KindDocumentos, Code: code, Limit: limit}
+	case "/rank":
+		rest := strings.TrimSpace(tail)
+		if strings.HasPrefix(strings.ToLower(rest), "hoje") {
+			rest = strings.TrimSpace(rest[4:])
+			return botCommand{Kind: KindRankHoje, Codes: extractFundCodes(rest)}
+		}
+		return botCommand{Kind: KindHelp}
+	case "/rankhoje":
+		return botCommand{Kind: KindRankHoje, Codes: extractFundCodes(tail)}
+	case "/rankv":
+		return botCommand{Kind: KindRankV, Codes: extractFundCodes(tail)}
 	default:
 		return botCommand{Kind: KindHelp}
 	}

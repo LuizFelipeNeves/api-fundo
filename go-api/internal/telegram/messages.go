@@ -231,3 +231,95 @@ func FormatNewDocumentMessage(fundCode string, d model.DocumentData) string {
 	lines = append(lines, fmt.Sprintf("📚 Ver mais: /documentos %s", code))
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
+
+type RankHojeItem struct {
+	Code                 string
+	PVP                  float64
+	DividendYieldMonthly float64
+	Sharpe               float64
+	TodayReturn          float64
+}
+
+type RankVItem struct {
+	Code                 string
+	PVP                  float64
+	DividendYieldMonthly float64
+	Regularity           float64
+	TodayReturn          float64
+}
+
+func FormatRankHojeMessage(items []RankHojeItem, total int, missing []string) string {
+	lines := []string{
+		"🏆 Rank hoje — Value Investing FII (v2)",
+		"Filtro: 0.35 <= P/VP <= 0.83 | DY mensal > 1,18% | Sharpe > 1.8",
+		fmt.Sprintf("Selecionados: %d de %d%s", len(items), total, func() string {
+			if len(missing) == 0 {
+				return ""
+			}
+			return fmt.Sprintf(" (%d não encontrados)", len(missing))
+		}()),
+	}
+	if len(items) == 0 {
+		lines = append(lines, "", "Nenhum fundo atende aos critérios agora.")
+		return strings.TrimSpace(strings.Join(lines, "\n"))
+	}
+
+	lines = append(lines, "", "Aporte Prioritário:")
+	for i, it := range items {
+		lines = append(lines, fmt.Sprintf(
+			"%d. %s — Dia %s | P/VP %s | DY mensal %s | Sharpe %s",
+			i+1,
+			strings.ToUpper(strings.TrimSpace(it.Code)),
+			formatSignedPctPtBR(it.TodayReturn, 2),
+			formatNumberPtBR(it.PVP, 2),
+			formatPctPtBR(it.DividendYieldMonthly, 2),
+			formatNumberPtBR(it.Sharpe, 2),
+		))
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func FormatRankVMessage(items []RankVItem, total int) string {
+	lines := []string{
+		"🏆 RankV — Value (todos os fundos)",
+		"Filtro: P/VP <= 0,70 | DY mensal > 1,16% | Pagou todos os meses",
+		fmt.Sprintf("Selecionados: %d de %d", len(items), total),
+	}
+	if len(items) == 0 {
+		lines = append(lines, "", "Nenhum fundo atende aos critérios agora.")
+		return strings.TrimSpace(strings.Join(lines, "\n"))
+	}
+
+	lines = append(lines, "", "Aporte Prioritário:")
+	for i, it := range items {
+		lines = append(lines, fmt.Sprintf(
+			"%d. %s — Dia %s | P/VP %s | DY mensal %s | Regularidade %s",
+			i+1,
+			strings.ToUpper(strings.TrimSpace(it.Code)),
+			formatSignedPctPtBR(it.TodayReturn, 2),
+			formatNumberPtBR(it.PVP, 2),
+			formatPctPtBR(it.DividendYieldMonthly, 2),
+			formatPctPtBR(it.Regularity, 1),
+		))
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func formatNumberPtBR(v float64, decimals int) string {
+	if decimals <= 0 {
+		return strings.ReplaceAll(fmt.Sprintf("%.0f", v), ".", ",")
+	}
+	return strings.ReplaceAll(fmt.Sprintf("%."+strconv.Itoa(decimals)+"f", v), ".", ",")
+}
+
+func formatPctPtBR(v float64, decimals int) string {
+	return fmt.Sprintf("%s%%", formatNumberPtBR(v*100, decimals))
+}
+
+func formatSignedPctPtBR(v float64, decimals int) string {
+	p := v * 100
+	if p > 0 {
+		return "+" + formatNumberPtBR(p, decimals) + "%"
+	}
+	return formatNumberPtBR(p, decimals) + "%"
+}

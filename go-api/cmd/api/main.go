@@ -32,9 +32,8 @@ func main() {
 
 	tgClient := &telegram.Client{Token: cfg.TelegramBotToken, HTTP: httpClient}
 	tgRepo := telegram.NewRepo(conn)
-	tgProcessor := &telegram.Processor{Repo: tgRepo, Client: tgClient}
-
 	fiiSvc := fii.New(conn)
+	tgProcessor := &telegram.Processor{Repo: tgRepo, Client: tgClient, FII: fiiSvc}
 
 	appCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

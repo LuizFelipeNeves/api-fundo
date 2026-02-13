@@ -120,6 +120,28 @@ func (r *Repo) ListExistingFundCodes(ctx context.Context, codes []string) ([]str
 	return out, rows.Err()
 }
 
+func (r *Repo) ListAllFundCodes(ctx context.Context) ([]string, error) {
+	rows, err := r.DB.QueryContext(ctx, `
+		SELECT code
+		FROM fund_master
+		ORDER BY code ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return nil, err
+		}
+		out = append(out, strings.ToUpper(strings.TrimSpace(code)))
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) SetUserFunds(ctx context.Context, chatID string, codes []string) error {
 	uniq := uniqueUppercase(codes)
 	tx, err := r.DB.BeginTx(ctx, nil)
