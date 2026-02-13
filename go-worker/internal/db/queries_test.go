@@ -19,4 +19,3 @@ func TestUpdateFundStateTimestamp_EmptyFundCode_ReturnsError(t *testing.T) {
 		t.Fatalf("expected error, got nil")
 	}
 }
-

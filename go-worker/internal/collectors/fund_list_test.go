@@ -38,4 +38,3 @@ func TestFundListResponse_UnmarshalJSON_Object(t *testing.T) {
 		t.Fatalf("expected name=YBRC11, got %q", r.Data[1].Name)
 	}
 }
-

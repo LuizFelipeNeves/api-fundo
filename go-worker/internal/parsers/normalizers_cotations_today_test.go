@@ -28,4 +28,3 @@ func TestNormalizeCotationsToday_Array(t *testing.T) {
 		t.Fatalf("expected []interface{}, got %T", got)
 	}
 }
-
