@@ -2,9 +2,12 @@ package telegram
 
 import (
 	"fmt"
+	"math"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/luizfelipeneves/api-fundo/go-api/internal/model"
 )
@@ -322,4 +325,329 @@ func formatSignedPctPtBR(v float64, decimals int) string {
 		return "+" + formatNumberPtBR(p, decimals) + "%"
 	}
 	return formatNumberPtBR(p, decimals) + "%"
+}
+
+func clipText(value string, maxChars int) string {
+	v := strings.TrimSpace(value)
+	if v == "" {
+		return ""
+	}
+	if maxChars <= 0 || len(v) <= maxChars {
+		return v
+	}
+	if maxChars == 1 {
+		return "…"
+	}
+	return strings.TrimSpace(v[:maxChars-1]) + "…"
+}
+
+func normalizeCategoryKey(value string) string {
+	v := strings.ToLower(strings.TrimSpace(value))
+	r := strings.NewReplacer(
+		"á", "a", "à", "a", "â", "a", "ã", "a",
+		"é", "e", "ê", "e",
+		"í", "i",
+		"ó", "o", "ô", "o", "õ", "o",
+		"ú", "u",
+		"ç", "c",
+	)
+	v = r.Replace(v)
+	return v
+}
+
+func pickCategoryEmoji(category string) string {
+	key := normalizeCategoryKey(category)
+	if strings.Contains(key, "titulo") || strings.Contains(key, "valores mobiliarios") {
+		return "📄"
+	}
+	if strings.Contains(key, "fiagro") {
+		return "🌾"
+	}
+	if strings.Contains(key, "hibrid") || strings.Contains(key, "misto") {
+		return "🏢"
+	}
+	if strings.Contains(key, "infra") {
+		return "⚙️"
+	}
+	if strings.Contains(key, "logistic") || strings.Contains(key, "industr") || strings.Contains(key, "galp") {
+		return "🏭"
+	}
+	if strings.Contains(key, "shopping") || strings.Contains(key, "varejo") {
+		return "🛍️"
+	}
+	if strings.Contains(key, "lajes") || strings.Contains(key, "corporativ") {
+		return "🏙️"
+	}
+	if strings.Contains(key, "hospital") {
+		return "🏥"
+	}
+	if strings.Contains(key, "agencia") && strings.Contains(key, "banc") {
+		return "🏦"
+	}
+	if strings.Contains(key, "educa") {
+		return "🎓"
+	}
+	if strings.Contains(key, "hote") {
+		return "🏨"
+	}
+	if strings.Contains(key, "residenc") {
+		return "🏘️"
+	}
+	if strings.Contains(key, "fundo de fundos") || key == "fof" {
+		return "🧺"
+	}
+	if strings.Contains(key, "fip") || strings.Contains(key, "participacoes") {
+		return "🤝"
+	}
+	if strings.Contains(key, "tijolo") {
+		return "🧱"
+	}
+	if strings.Contains(key, "papel") {
+		return "📄"
+	}
+	if strings.Contains(key, "desenvolvimento") {
+		return "🏗️"
+	}
+	if strings.Contains(key, "outro") {
+		return "🧩"
+	}
+	if strings.Contains(key, "sem categoria") || strings.Contains(key, "desconhecid") {
+		return "❓"
+	}
+	return "📌"
+}
+
+func FormatCategoriesMessage(funds []string, info []FundCategoryInfo) string {
+	if len(funds) == 0 {
+		return "Sua lista está vazia."
+	}
+
+	byCode := map[string]string{}
+	for _, r := range info {
+		picked := strings.TrimSpace(firstNonEmpty(r.Segmento, r.Sector, r.TipoFundo, r.Type))
+		if picked == "" {
+			picked = "(sem categoria)"
+		}
+		byCode[strings.ToUpper(strings.TrimSpace(r.Code))] = picked
+	}
+
+	groups := map[string][]string{}
+	for _, code := range uniqueUppercase(funds) {
+		cat := byCode[code]
+		if strings.TrimSpace(cat) == "" {
+			cat = "(sem categoria)"
+		}
+		groups[cat] = append(groups[cat], code)
+	}
+
+	type group struct {
+		Cat   string
+		Codes []string
+	}
+	list := make([]group, 0, len(groups))
+	for cat, codes := range groups {
+		list = append(list, group{Cat: cat, Codes: codes})
+	}
+	sort.Slice(list, func(i, j int) bool {
+		byCount := len(list[j].Codes) - len(list[i].Codes)
+		if byCount != 0 {
+			return byCount < 0
+		}
+		return list[i].Cat < list[j].Cat
+	})
+
+	lines := []string{}
+	for _, g := range list {
+		emoji := pickCategoryEmoji(g.Cat)
+		lines = append(lines, fmt.Sprintf("%s %s (%d)", emoji, g.Cat, len(g.Codes)))
+		shown := g.Codes
+		suffix := ""
+		if len(shown) > 50 {
+			shown = shown[:50]
+			suffix = ", …"
+		}
+		lines = append(lines, strings.Join(shown, ", ")+suffix, "")
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func FormatPesquisaMessage(f FundPesquisaInfo) string {
+	code := strings.ToUpper(strings.TrimSpace(f.Code))
+	lines := []string{fmt.Sprintf("🔎 Pesquisa — %s", code)}
+
+	if strings.TrimSpace(f.RazaoSocial) != "" {
+		lines = append(lines, strings.TrimSpace(f.RazaoSocial))
+	}
+	if strings.TrimSpace(f.CNPJ) != "" {
+		lines = append(lines, "🏷️ CNPJ: "+strings.TrimSpace(f.CNPJ))
+	}
+
+	line1 := []string{}
+	if strings.TrimSpace(f.Sector) != "" {
+		line1 = append(line1, "📚 Setor: "+strings.TrimSpace(f.Sector))
+	}
+	if strings.TrimSpace(f.Type) != "" {
+		line1 = append(line1, "🏷️ Tipo: "+strings.TrimSpace(f.Type))
+	}
+	if len(line1) > 0 {
+		lines = append(lines, "", strings.Join(line1, " | "))
+	}
+
+	line2 := []string{}
+	if strings.TrimSpace(f.Segmento) != "" {
+		line2 = append(line2, "🗂️ Segmento: "+strings.TrimSpace(f.Segmento))
+	}
+	if strings.TrimSpace(f.TipoFundo) != "" {
+		line2 = append(line2, "🏢 Fundo: "+strings.TrimSpace(f.TipoFundo))
+	}
+	if len(line2) > 0 {
+		lines = append(lines, strings.Join(line2, " | "))
+	}
+
+	line3 := []string{}
+	if f.PVP != nil && isFinite(*f.PVP) {
+		line3 = append(line3, "📈 P/VP: "+formatNumberPtBR(*f.PVP, 2))
+	}
+	if f.DividendYield != nil && isFinite(*f.DividendYield) {
+		line3 = append(line3, "💸 DY: "+formatPctPtBR(*f.DividendYield, 2))
+	}
+	if f.DividendYieldLast5Yrs != nil && isFinite(*f.DividendYieldLast5Yrs) {
+		line3 = append(line3, "💸 DY 5Y: "+formatPctPtBR(*f.DividendYieldLast5Yrs, 2))
+	}
+	if len(line3) > 0 {
+		lines = append(lines, strings.Join(line3, " | "))
+	}
+
+	line4 := []string{}
+	if f.DailyLiquidity != nil && isFinite(*f.DailyLiquidity) && *f.DailyLiquidity > 0 {
+		line4 = append(line4, "💧 Liquidez: "+formatNumberPtBR(*f.DailyLiquidity, 0))
+	}
+	if f.NetWorth != nil && isFinite(*f.NetWorth) && *f.NetWorth > 0 {
+		line4 = append(line4, "🏦 PL: "+formatNumberPtBR(*f.NetWorth, 0))
+	}
+	if len(line4) > 0 {
+		lines = append(lines, strings.Join(line4, " | "))
+	}
+
+	line5 := []string{}
+	if f.Vacancia != nil && isFinite(*f.Vacancia) {
+		line5 = append(line5, "🏚️ Vacância: "+formatPctPtBR(*f.Vacancia, 2))
+	}
+	if f.NumeroCotistas != nil && *f.NumeroCotistas > 0 {
+		line5 = append(line5, fmt.Sprintf("👥 Cotistas: %d", *f.NumeroCotistas))
+	}
+	if len(line5) > 0 {
+		lines = append(lines, strings.Join(line5, " | "))
+	}
+
+	line6 := []string{}
+	if f.UltimoRendimento != nil && isFinite(*f.UltimoRendimento) && *f.UltimoRendimento > 0 {
+		line6 = append(line6, "🧾 Últ. rend.: R$ "+formatNumberPtBR(*f.UltimoRendimento, 2))
+	}
+	if f.ValorPatrimonialCota != nil && isFinite(*f.ValorPatrimonialCota) && *f.ValorPatrimonialCota > 0 {
+		line6 = append(line6, "📕 VP/Cota: R$ "+formatNumberPtBR(*f.ValorPatrimonialCota, 2))
+	}
+	if len(line6) > 0 {
+		lines = append(lines, strings.Join(line6, " | "))
+	}
+
+	extra := []string{}
+	if strings.TrimSpace(f.PublicoAlvo) != "" {
+		extra = append(extra, "🎯 Público: "+strings.TrimSpace(f.PublicoAlvo))
+	}
+	if strings.TrimSpace(f.Mandato) != "" {
+		extra = append(extra, "🧭 Mandato: "+strings.TrimSpace(f.Mandato))
+	}
+	if strings.TrimSpace(f.TipoGestao) != "" {
+		extra = append(extra, "🧑‍💼 Gestão: "+strings.TrimSpace(f.TipoGestao))
+	}
+	if strings.TrimSpace(f.PrazoDuracao) != "" {
+		extra = append(extra, "⏳ Prazo: "+strings.TrimSpace(f.PrazoDuracao))
+	}
+	if strings.TrimSpace(f.TaxaAdminstracao) != "" {
+		extra = append(extra, "🧾 Taxa adm.: "+strings.TrimSpace(f.TaxaAdminstracao))
+	}
+	if len(extra) > 0 {
+		lines = append(lines, "", strings.Join(extra, "\n"))
+	}
+
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func isFinite(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0)
+}
+
+func formatOptSignedPctPtBR(v *float64, decimals int) string {
+	if v == nil || !isFinite(*v) {
+		return "—"
+	}
+	return formatSignedPctPtBR(*v, decimals)
+}
+
+func formatOptPctPtBR(v *float64, decimals int) string {
+	if v == nil || !isFinite(*v) {
+		return "—"
+	}
+	return formatPctPtBR(*v, decimals)
+}
+
+func FormatCotationMessage(fundCode string, asOfDate string, lastPrice float64, ret7 *float64, ret30 *float64, ret90 *float64, maxDrawdown *float64, vol30 *float64, vol90 *float64) string {
+	code := strings.ToUpper(strings.TrimSpace(fundCode))
+	lines := []string{
+		"📈 Cotação — " + code,
+		"🗓️ Data base: " + FormatDateHuman(asOfDate),
+		"💰 Último preço: R$ " + formatNumberPtBR(lastPrice, 2),
+		"",
+		"📊 Variações",
+		"- 7d: " + formatOptSignedPctPtBR(ret7, 2),
+		"- 30d: " + formatOptSignedPctPtBR(ret30, 2),
+		"- 90d: " + formatOptSignedPctPtBR(ret90, 2),
+		"",
+		"📉 Drawdown máximo: " + formatOptPctPtBR(maxDrawdown, 2),
+	}
+
+	v30 := "—"
+	if vol30 != nil && isFinite(*vol30) {
+		v30 = formatPctPtBR(*vol30, 2)
+	}
+	v90 := "—"
+	if vol90 != nil && isFinite(*vol90) {
+		v90 = formatPctPtBR(*vol90, 2)
+	}
+	lines = append(lines, "🌪️ Volatilidade (anualizada): 30d "+v30+" | 90d "+v90)
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func FormatExportMessage(generatedAt string, exportedCodes []string, missingCodes []string) string {
+	t := strings.TrimSpace(generatedAt)
+	stamp := t
+	if parsed, err := time.Parse(time.RFC3339Nano, t); err == nil {
+		stamp = parsed.Local().Format("02/01/2006 15:04:05")
+	} else if parsed, err := time.Parse(time.RFC3339, t); err == nil {
+		stamp = parsed.Local().Format("02/01/2006 15:04:05")
+	}
+
+	lines := []string{
+		"📤 Exportação de FIIs",
+		"📅 Gerado: " + stamp,
+		fmt.Sprintf("📁 Fundos exportados: %d", len(exportedCodes)),
+		fmt.Sprintf("❌ Não encontrados: %d", len(missingCodes)),
+	}
+	if len(exportedCodes) > 0 {
+		lines = append(lines, "", strings.Join(exportedCodes, ", "))
+	}
+	if len(missingCodes) > 0 {
+		lines = append(lines, "", "⚠️ Não encontrados: "+strings.Join(missingCodes, ", "))
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }

@@ -21,10 +21,15 @@ type CommandKind string
 const (
 	KindHelp       CommandKind = "help"
 	KindList       CommandKind = "list"
+	KindCategories CommandKind = "categories"
+	KindExport     CommandKind = "export"
+	KindResumoDoc  CommandKind = "resumo-documento"
 	KindSet        CommandKind = "set"
 	KindAdd        CommandKind = "add"
 	KindRemove     CommandKind = "remove"
 	KindDocumentos CommandKind = "documentos"
+	KindPesquisa   CommandKind = "pesquisa"
+	KindCotation   CommandKind = "cotation"
 	KindRankHoje   CommandKind = "rank_hoje"
 	KindRankV      CommandKind = "rankv"
 	KindCancel     CommandKind = "cancel"
@@ -55,10 +60,16 @@ func ParseBotCommand(text string) botCommand {
 
 	tail := strings.TrimSpace(strings.TrimPrefix(raw, parts[0]))
 	switch head {
-	case "/start", "/help":
+	case "/start", "/help", "/menu", "/ajuda":
 		return botCommand{Kind: KindHelp}
 	case "/lista", "/list":
 		return botCommand{Kind: KindList}
+	case "/categorias", "/categoria", "/categories":
+		return botCommand{Kind: KindCategories}
+	case "/export", "/exportar":
+		return botCommand{Kind: KindExport, Codes: extractFundCodes(tail)}
+	case "/resumo-documento", "/resumo_documento", "/resumodocumento":
+		return botCommand{Kind: KindResumoDoc, Codes: extractFundCodes(tail)}
 	case "/set":
 		return botCommand{Kind: KindSet, Codes: extractFundCodes(tail)}
 	case "/add":
@@ -68,6 +79,26 @@ func ParseBotCommand(text string) botCommand {
 	case "/documentos", "/docs":
 		code, limit := parseDocumentosArgs(tail)
 		return botCommand{Kind: KindDocumentos, Code: code, Limit: limit}
+	case "/pesquisa":
+		code := ""
+		codes := extractFundCodes(tail)
+		if len(codes) > 0 {
+			code = codes[0]
+		}
+		if code == "" {
+			return botCommand{Kind: KindHelp}
+		}
+		return botCommand{Kind: KindPesquisa, Code: code}
+	case "/cotation", "/contation", "/cotacao":
+		code := ""
+		codes := extractFundCodes(tail)
+		if len(codes) > 0 {
+			code = codes[0]
+		}
+		if code == "" {
+			return botCommand{Kind: KindHelp}
+		}
+		return botCommand{Kind: KindCotation, Code: code}
 	case "/rank":
 		rest := strings.TrimSpace(tail)
 		if strings.HasPrefix(strings.ToLower(rest), "hoje") {

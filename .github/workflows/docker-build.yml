@@ -3,7 +3,15 @@ name: docker-build
 on:
   push:
     branches: ["main"]
+    paths:
+      - "database/**"
+      - "go-api/**"
+      - "go-worker/**"
   pull_request:
+    paths:
+      - "database/**"
+      - "go-api/**"
+      - "go-worker/**"
   workflow_dispatch:
 
 jobs:

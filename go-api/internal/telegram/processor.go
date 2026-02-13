@@ -74,6 +74,12 @@ func (p *Processor) ProcessUpdate(ctx context.Context, update *model.TelegramUpd
 		return p.handleHelp(ctx, chatIDStr)
 	case KindList:
 		return p.handleList(ctx, chatIDStr)
+	case KindCategories:
+		return p.handleCategories(ctx, chatIDStr)
+	case KindExport:
+		return p.handleExport(ctx, chatIDStr, cmd.Codes)
+	case KindResumoDoc:
+		return p.handleResumoDocumento(ctx, chatIDStr, cmd.Codes)
 	case KindSet:
 		return p.handleSet(ctx, chatIDStr, cmd.Codes)
 	case KindAdd:
@@ -82,6 +88,10 @@ func (p *Processor) ProcessUpdate(ctx context.Context, update *model.TelegramUpd
 		return p.handleRemove(ctx, chatIDStr, cmd.Codes)
 	case KindDocumentos:
 		return p.handleDocumentos(ctx, chatIDStr, cmd.Code, cmd.Limit)
+	case KindPesquisa:
+		return p.handlePesquisa(ctx, chatIDStr, cmd.Code)
+	case KindCotation:
+		return p.handleCotation(ctx, chatIDStr, cmd.Code)
 	case KindRankHoje:
 		return p.handleRankHoje(ctx, chatIDStr, cmd.Codes)
 	case KindRankV:

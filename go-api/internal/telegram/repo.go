@@ -47,6 +47,50 @@ type LatestDocumentRow struct {
 	URL        string
 }
 
+type LatestDocumentBrief struct {
+	FundCode   string
+	DocumentID int
+	Category   string
+	Type       string
+	DateUpload string
+	URL        string
+}
+
+type FundCategoryInfo struct {
+	Code      string
+	Segmento  string
+	Sector    string
+	TipoFundo string
+	Type      string
+}
+
+type FundPesquisaInfo struct {
+	Code                   string
+	Sector                 string
+	Type                   string
+	Segmento               string
+	TipoFundo              string
+	PVP                    *float64
+	DividendYield          *float64
+	DividendYieldLast5Yrs  *float64
+	DailyLiquidity         *float64
+	NetWorth               *float64
+	RazaoSocial            string
+	CNPJ                   string
+	PublicoAlvo            string
+	Mandato                string
+	PrazoDuracao           string
+	TipoGestao             string
+	TaxaAdminstracao       string
+	Vacancia               *float64
+	NumeroCotistas         *int64
+	CotasEmitidas          *int64
+	ValorPatrimonialCota   *float64
+	ValorPatrimonial       *float64
+	UltimoRendimento       *float64
+	FundMasterUpdatedAtUTC *time.Time
+}
+
 func (r *Repo) UpsertUser(ctx context.Context, chatID string, username string, firstName string, lastName string) error {
 	now := time.Now()
 	_, err := r.DB.ExecContext(ctx, `
@@ -277,6 +321,201 @@ func (r *Repo) ListLatestDocuments(ctx context.Context, fundCodes []string, limi
 		out = append(out, rr)
 	}
 	return out, rows.Err()
+}
+
+func (r *Repo) ListLatestDocumentsByFund(ctx context.Context, fundCodes []string) (map[string]LatestDocumentBrief, error) {
+	codes := uniqueUppercase(fundCodes)
+	if len(codes) == 0 {
+		return map[string]LatestDocumentBrief{}, nil
+	}
+	rows, err := r.DB.QueryContext(ctx, `
+		SELECT fund_code, document_id, category, type, "dateUpload", url
+		FROM document
+		WHERE fund_code = ANY($1)
+		ORDER BY date_upload_iso DESC, document_id DESC
+	`, pq.Array(codes))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]LatestDocumentBrief{}
+	for rows.Next() {
+		var rr LatestDocumentBrief
+		if err := rows.Scan(&rr.FundCode, &rr.DocumentID, &rr.Category, &rr.Type, &rr.DateUpload, &rr.URL); err != nil {
+			return nil, err
+		}
+		code := strings.ToUpper(strings.TrimSpace(rr.FundCode))
+		if code == "" {
+			continue
+		}
+		if _, ok := out[code]; ok {
+			continue
+		}
+		rr.FundCode = code
+		out[code] = rr
+	}
+	return out, rows.Err()
+}
+
+func (r *Repo) ListFundCategoryInfoByCodes(ctx context.Context, fundCodes []string) ([]FundCategoryInfo, error) {
+	codes := uniqueUppercase(fundCodes)
+	if len(codes) == 0 {
+		return []FundCategoryInfo{}, nil
+	}
+	rows, err := r.DB.QueryContext(ctx, `
+		SELECT code, segmento, sector, tipo_fundo, type
+		FROM fund_master
+		WHERE code = ANY($1)
+		ORDER BY code ASC
+	`, pq.Array(codes))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []FundCategoryInfo
+	for rows.Next() {
+		var (
+			code, segmento, sector, tipoFundo, typ sql.NullString
+		)
+		if err := rows.Scan(&code, &segmento, &sector, &tipoFundo, &typ); err != nil {
+			return nil, err
+		}
+		out = append(out, FundCategoryInfo{
+			Code:      strings.ToUpper(strings.TrimSpace(code.String)),
+			Segmento:  strings.TrimSpace(segmento.String),
+			Sector:    strings.TrimSpace(sector.String),
+			TipoFundo: strings.TrimSpace(tipoFundo.String),
+			Type:      strings.TrimSpace(typ.String),
+		})
+	}
+	return out, rows.Err()
+}
+
+func (r *Repo) GetFundPesquisaInfo(ctx context.Context, fundCode string) (*FundPesquisaInfo, error) {
+	code := strings.ToUpper(strings.TrimSpace(fundCode))
+	if code == "" {
+		return nil, nil
+	}
+
+	var (
+		sector, typ, segmento, tipoFundo                          sql.NullString
+		pvp, dy, dy5, dailyLiq, netWorth                          sql.NullFloat64
+		razao, cnpj, publico, mandato, prazo, tipoGestao, taxaAdm sql.NullString
+		vac, vpc, vp, ultimo                                      sql.NullFloat64
+		numCotistas, cotasEmitidas                                sql.NullInt64
+		updatedAt                                                 sql.NullTime
+	)
+	err := r.DB.QueryRowContext(ctx, `
+		SELECT code,
+		       sector,
+		       type,
+		       segmento,
+		       tipo_fundo,
+		       p_vp,
+		       dividend_yield,
+		       dividend_yield_last_5_years,
+		       daily_liquidity,
+		       net_worth,
+		       razao_social,
+		       cnpj,
+		       publico_alvo,
+		       mandato,
+		       prazo_duracao,
+		       tipo_gestao,
+		       taxa_adminstracao,
+		       vacancia,
+		       numero_cotistas,
+		       cotas_emitidas,
+		       valor_patrimonial_cota,
+		       valor_patrimonial,
+		       ultimo_rendimento,
+		       updated_at
+		FROM fund_master
+		WHERE code = $1
+		LIMIT 1
+	`, code).Scan(
+		&code,
+		&sector,
+		&typ,
+		&segmento,
+		&tipoFundo,
+		&pvp,
+		&dy,
+		&dy5,
+		&dailyLiq,
+		&netWorth,
+		&razao,
+		&cnpj,
+		&publico,
+		&mandato,
+		&prazo,
+		&tipoGestao,
+		&taxaAdm,
+		&vac,
+		&numCotistas,
+		&cotasEmitidas,
+		&vpc,
+		&vp,
+		&ultimo,
+		&updatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	floatPtr := func(v sql.NullFloat64) *float64 {
+		if !v.Valid {
+			return nil
+		}
+		x := v.Float64
+		return &x
+	}
+	int64Ptr := func(v sql.NullInt64) *int64 {
+		if !v.Valid {
+			return nil
+		}
+		x := v.Int64
+		return &x
+	}
+	timePtr := func(v sql.NullTime) *time.Time {
+		if !v.Valid {
+			return nil
+		}
+		t := v.Time.UTC()
+		return &t
+	}
+
+	return &FundPesquisaInfo{
+		Code:                   strings.ToUpper(strings.TrimSpace(code)),
+		Sector:                 strings.TrimSpace(sector.String),
+		Type:                   strings.TrimSpace(typ.String),
+		Segmento:               strings.TrimSpace(segmento.String),
+		TipoFundo:              strings.TrimSpace(tipoFundo.String),
+		PVP:                    floatPtr(pvp),
+		DividendYield:          floatPtr(dy),
+		DividendYieldLast5Yrs:  floatPtr(dy5),
+		DailyLiquidity:         floatPtr(dailyLiq),
+		NetWorth:               floatPtr(netWorth),
+		RazaoSocial:            strings.TrimSpace(razao.String),
+		CNPJ:                   strings.TrimSpace(cnpj.String),
+		PublicoAlvo:            strings.TrimSpace(publico.String),
+		Mandato:                strings.TrimSpace(mandato.String),
+		PrazoDuracao:           strings.TrimSpace(prazo.String),
+		TipoGestao:             strings.TrimSpace(tipoGestao.String),
+		TaxaAdminstracao:       strings.TrimSpace(taxaAdm.String),
+		Vacancia:               floatPtr(vac),
+		NumeroCotistas:         int64Ptr(numCotistas),
+		CotasEmitidas:          int64Ptr(cotasEmitidas),
+		ValorPatrimonialCota:   floatPtr(vpc),
+		ValorPatrimonial:       floatPtr(vp),
+		UltimoRendimento:       floatPtr(ultimo),
+		FundMasterUpdatedAtUTC: timePtr(updatedAt),
+	}, nil
 }
 
 func uniqueUppercase(items []string) []string {
