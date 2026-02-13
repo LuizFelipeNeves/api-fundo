@@ -35,7 +35,9 @@ func (s *Scheduler) startNormal(ctx context.Context) error {
 		{
 			collector:      "documents",
 			refillInterval: s.cfg.SchedulerInterval,
-			enabled:        s.isBusinessHours,
+			enabled: func(now time.Time) bool {
+				return true
+			},
 			refill: func(ctx context.Context) ([]db.FundCandidate, error) {
 				return s.db.SelectFundsForDocuments(ctx, s.cfg.IntervalDocumentsMin, s.cfg.BatchSize)
 			},

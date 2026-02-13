@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/config"
@@ -148,7 +149,9 @@ func (c *FnetClient) setFnetDataHeaders(req *http.Request, jsessionID string) {
 	req.Header.Set("Accept", "application/json, text/javascript, */*; q=0.01")
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("Connection", "keep-alive")
-	req.Header.Set("Cookie", jsessionID)
+	if strings.TrimSpace(jsessionID) != "" {
+		req.AddCookie(&http.Cookie{Name: "JSESSIONID", Value: strings.TrimSpace(jsessionID)})
+	}
 }
 
 // extractJSessionID extracts JSESSIONID from response headers

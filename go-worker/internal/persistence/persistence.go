@@ -332,7 +332,7 @@ func (p *Persister) PersistDocuments(ctx context.Context, fundCode string, items
 
 	for _, doc := range items {
 		_, err := stmt.ExecContext(ctx,
-			doc.FundCode, doc.DocumentID, doc.Title, doc.Category, doc.Type,
+			fundCode, doc.DocumentID, doc.Title, doc.Category, doc.Type,
 			doc.Date, doc.DateUploadISO, doc.DateUpload, doc.URL,
 			doc.Status, doc.Version,
 		)
