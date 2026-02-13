@@ -6,14 +6,16 @@ import (
 	"strings"
 )
 
-var htmlStripScriptStyleRe = regexp.MustCompile(`(?is)<(script|style)[^>]*>.*?</\1>`)
+var htmlStripScriptRe = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
+var htmlStripStyleRe = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
 var htmlTableRe = regexp.MustCompile(`(?is)<table[^>]*>.*?</table>`)
 var htmlTrRe = regexp.MustCompile(`(?is)<tr[^>]*>.*?</tr>`)
 var htmlCellRe = regexp.MustCompile(`(?is)<t[dh][^>]*>.*?</t[dh]>`)
 var htmlTagRe = regexp.MustCompile(`(?is)<[^>]+>`)
 
 func extractHTMLTablePairs(rawHTML string) map[string]string {
-	clean := htmlStripScriptStyleRe.ReplaceAllString(rawHTML, "")
+	clean := htmlStripScriptRe.ReplaceAllString(rawHTML, "")
+	clean = htmlStripStyleRe.ReplaceAllString(clean, "")
 	out := map[string]string{}
 
 	tables := htmlTableRe.FindAllString(clean, -1)
