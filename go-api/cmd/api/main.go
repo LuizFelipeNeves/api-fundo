@@ -47,11 +47,10 @@ func main() {
 	notifier.Start(appCtx, cfg.DocumentNotifyInterval)
 
 	rt := &httpapi.Router{
-		FII:                   fiiSvc,
-		Telegram:              tgProcessor,
-		TelegramWebhookSecret: cfg.TelegramWebhookSecret,
-		TelegramWebhookToken:  cfg.TelegramWebhookToken,
-		LogRequests:           cfg.LogRequests,
+		FII:                  fiiSvc,
+		Telegram:             tgProcessor,
+		TelegramWebhookToken: cfg.TelegramWebhookToken,
+		LogRequests:          cfg.LogRequests,
 	}
 
 	addr := fmt.Sprintf("0.0.0.0:%d", cfg.Port)

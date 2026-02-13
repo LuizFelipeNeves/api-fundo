@@ -12,7 +12,6 @@ type Config struct {
 	PGPoolMax              int
 	LogRequests            bool
 	TelegramBotToken       string
-	TelegramWebhookSecret  string
 	TelegramWebhookToken   string
 	APIEndpoint            string
 	DocumentNotifyInterval time.Duration
@@ -26,7 +25,6 @@ func Load(getenv func(string) string) Config {
 		PGPoolMax:              2,
 		LogRequests:            strings.TrimSpace(getenv("LOG_REQUESTS")) != "0",
 		TelegramBotToken:       strings.TrimSpace(getenv("TELEGRAM_BOT_TOKEN")),
-		TelegramWebhookSecret:  strings.TrimSpace(getenv("TELEGRAM_WEBHOOK_SECRET")),
 		TelegramWebhookToken:   strings.TrimSpace(getenv("TELEGRAM_WEBHOOK_TOKEN")),
 		APIEndpoint:            strings.TrimSpace(getenv("API_ENDPOINT")),
 		DocumentNotifyInterval: parseInterval(getenv("DOCUMENT_NOTIFY_INTERVAL"), time.Minute),

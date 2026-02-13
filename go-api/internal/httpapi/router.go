@@ -16,11 +16,10 @@ import (
 )
 
 type Router struct {
-	FII                   *fii.Service
-	Telegram              *telegram.Processor
-	TelegramWebhookSecret string
-	TelegramWebhookToken  string
-	LogRequests           bool
+	FII                  *fii.Service
+	Telegram             *telegram.Processor
+	TelegramWebhookToken string
+	LogRequests          bool
 }
 
 func (rt *Router) Handler() http.Handler {
@@ -72,15 +71,6 @@ func (rt *Router) Handler() http.Handler {
 			return
 		}
 
-		secret := strings.TrimSpace(rt.TelegramWebhookSecret)
-		if secret != "" {
-			header := strings.TrimSpace(r.Header.Get("x-telegram-bot-api-secret-token"))
-			if header != secret {
-				writeJSON(w, 200, map[string]any{"ok": true})
-				return
-			}
-		}
-
 		rt.processTelegramWebhook(w, r)
 	})
 
@@ -94,15 +84,6 @@ func (rt *Router) Handler() http.Handler {
 		if requiredToken != "" {
 			raw := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/telegram/webhook/"), "/")
 			if raw == "" || strings.Contains(raw, "/") || raw != requiredToken {
-				writeJSON(w, 200, map[string]any{"ok": true})
-				return
-			}
-		}
-
-		secret := strings.TrimSpace(rt.TelegramWebhookSecret)
-		if secret != "" {
-			header := strings.TrimSpace(r.Header.Get("x-telegram-bot-api-secret-token"))
-			if header != secret {
 				writeJSON(w, 200, map[string]any{"ok": true})
 				return
 			}
