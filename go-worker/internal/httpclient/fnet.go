@@ -37,20 +37,20 @@ func (c *FnetClient) FetchWithSession(ctx context.Context, initURL, dataURL stri
 			time.Sleep(time.Duration(c.cfg.HTTPRetryDelayMS) * time.Millisecond)
 		}
 
-		// Phase 1: Initialize session and get JSESSIONID
-		jsessionID, err := c.initSession(ctx, initURL)
+		// Phase 1: Initialize session and get cookies (JSESSIONID + others)
+		cookies, err := c.initSession(ctx, initURL)
 		if err != nil {
 			lastErr = err
 			continue
 		}
 
-		if jsessionID == "" {
+		if extractJSessionIDFromCookies(cookies) == "" {
 			lastErr = fmt.Errorf("FNET_INIT_NO_JSESSIONID")
 			continue
 		}
 
 		// Phase 2: Fetch data with session cookie
-		err = c.fetchData(ctx, dataURL, jsessionID, result)
+		err = c.fetchData(ctx, dataURL, initURL, cookies, result)
 		if err != nil {
 			// Retry on 401/403 (session expired)
 			if isAuthError(err) && attempt+1 < c.cfg.HTTPRetryMax {
@@ -70,39 +70,39 @@ func (c *FnetClient) FetchWithSession(ctx context.Context, initURL, dataURL stri
 	return fmt.Errorf("FNET request failed after %d attempts", c.cfg.HTTPRetryMax)
 }
 
-// initSession initializes FNET session and extracts JSESSIONID
-func (c *FnetClient) initSession(ctx context.Context, initURL string) (string, error) {
+// initSession initializes FNET session and returns response cookies
+func (c *FnetClient) initSession(ctx context.Context, initURL string) ([]*http.Cookie, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", initURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create init request: %w", err)
+		return nil, fmt.Errorf("failed to create init request: %w", err)
 	}
 
 	c.setFnetInitHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to execute init request: %w", err)
+		return nil, fmt.Errorf("failed to execute init request: %w", err)
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("init request failed with status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("init request failed with status: %d", resp.StatusCode)
 	}
 
-	// Extract JSESSIONID from Set-Cookie header
-	jsessionID := extractJSessionID(resp)
-
-	defer resp.Body.Close()
-	return jsessionID, nil
+	return resp.Cookies(), nil
 }
 
 // fetchData fetches data from FNET with session cookie
-func (c *FnetClient) fetchData(ctx context.Context, dataURL, jsessionID string, result interface{}) error {
+func (c *FnetClient) fetchData(ctx context.Context, dataURL, refererURL string, cookies []*http.Cookie, result interface{}) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", dataURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create data request: %w", err)
 	}
 
-	c.setFnetDataHeaders(req, jsessionID)
+	c.setFnetDataHeaders(req, cookies)
+	if strings.TrimSpace(refererURL) != "" {
+		req.Header.Set("Referer", refererURL)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -144,21 +144,28 @@ func (c *FnetClient) setFnetInitHeaders(req *http.Request) {
 }
 
 // setFnetDataHeaders sets headers for FNET data request
-func (c *FnetClient) setFnetDataHeaders(req *http.Request, jsessionID string) {
+func (c *FnetClient) setFnetDataHeaders(req *http.Request, cookies []*http.Cookie) {
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 	req.Header.Set("Accept", "application/json, text/javascript, */*; q=0.01")
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("Connection", "keep-alive")
-	if strings.TrimSpace(jsessionID) != "" {
-		req.AddCookie(&http.Cookie{Name: "JSESSIONID", Value: strings.TrimSpace(jsessionID)})
+	for _, cookie := range cookies {
+		if cookie == nil || cookie.Name == "" {
+			continue
+		}
+		value := strings.TrimSpace(cookie.Value)
+		if value == "" {
+			continue
+		}
+		req.AddCookie(&http.Cookie{Name: cookie.Name, Value: value})
 	}
 }
 
 // extractJSessionID extracts JSESSIONID from response headers
-func extractJSessionID(resp *http.Response) string {
-	for _, cookie := range resp.Cookies() {
+func extractJSessionIDFromCookies(cookies []*http.Cookie) string {
+	for _, cookie := range cookies {
 		if cookie.Name == "JSESSIONID" {
-			return cookie.Value
+			return strings.TrimSpace(cookie.Value)
 		}
 	}
 	return ""

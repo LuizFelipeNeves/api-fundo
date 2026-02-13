@@ -15,7 +15,7 @@ func TestFnetClient_SetFnetDataHeaders_SetsJSessionIDCookie(t *testing.T) {
 		t.Fatalf("failed to create request: %v", err)
 	}
 
-	c.setFnetDataHeaders(req, "abc123")
+	c.setFnetDataHeaders(req, []*http.Cookie{{Name: "JSESSIONID", Value: "abc123"}})
 
 	got := req.Header.Get("Cookie")
 	if got == "" {
