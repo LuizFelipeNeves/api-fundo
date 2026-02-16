@@ -518,10 +518,10 @@ func FormatPesquisaMessage(f FundPesquisaInfo) string {
 		line3 = append(line3, "📈 P/VP: "+formatNumberPtBR(*f.PVP, 2))
 	}
 	if f.DividendYield != nil && isFinite(*f.DividendYield) {
-		line3 = append(line3, "💸 DY: "+formatPctPtBR(*f.DividendYield, 2))
+		line3 = append(line3, "💸 DY: "+formatNumberPtBR(*f.DividendYield, 2))
 	}
 	if f.DividendYieldLast5Yrs != nil && isFinite(*f.DividendYieldLast5Yrs) {
-		line3 = append(line3, "💸 DY 5Y: "+formatPctPtBR(*f.DividendYieldLast5Yrs, 2))
+		line3 = append(line3, "💸 DY 5a: "+formatNumberPtBR(*f.DividendYieldLast5Yrs, 2))
 	}
 	if len(line3) > 0 {
 		lines = append(lines, strings.Join(line3, " | "))
