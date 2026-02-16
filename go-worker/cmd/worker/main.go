@@ -143,6 +143,12 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	if updated, err := persister.RecomputeDividendYields(ctx); err != nil {
+		log.Printf("[startup] dividend yield recompute error: %v\n", err)
+	} else {
+		log.Printf("[startup] dividend yields updated=%d\n", updated)
+	}
+
 	// Handle shutdown signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
