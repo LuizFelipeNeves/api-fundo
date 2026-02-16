@@ -41,9 +41,12 @@ func (p *Processor) handleRankHoje(ctx context.Context, chatID string, codes []s
 			continue
 		}
 
-		vacancia := exp.Fund.Vacancia
+		if exp.Fund.Vacancia == nil || !isFinite(*exp.Fund.Vacancia) {
+			continue
+		}
+		vacancia := *exp.Fund.Vacancia
 		dailyLiquidity := 0.0
-		if exp.Fund.DailyLiquidity != nil && *exp.Fund.DailyLiquidity > 0 {
+		if exp.Fund.DailyLiquidity != nil && isFinite(*exp.Fund.DailyLiquidity) && *exp.Fund.DailyLiquidity > 0 {
 			dailyLiquidity = *exp.Fund.DailyLiquidity
 		}
 

@@ -29,7 +29,7 @@ type FundDetails struct {
 	TipoGestao           string   `json:"tipo_gestao"`
 	TaxaAdminstracao     string   `json:"taxa_adminstracao"`
 	DailyLiquidity       *float64 `json:"daily_liquidity"`
-	Vacancia             float64  `json:"vacancia"`
+	Vacancia             *float64 `json:"vacancia"`
 	NumeroCotistas       float64  `json:"numero_cotistas"`
 	CotasEmitidas        float64  `json:"cotas_emitidas"`
 	ValorPatrimonialCota float64  `json:"valor_patrimonial_cota"`

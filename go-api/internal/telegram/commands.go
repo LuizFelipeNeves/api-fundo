@@ -44,9 +44,6 @@ func ParseBotCommand(text string) botCommand {
 	if raw == "" {
 		return botCommand{Kind: KindHelp}
 	}
-	if !strings.HasPrefix(raw, "/") {
-		return botCommand{Kind: KindHelp}
-	}
 
 	parts := strings.Fields(raw)
 	if len(parts) == 0 {
@@ -56,6 +53,16 @@ func ParseBotCommand(text string) botCommand {
 	head := strings.ToLower(strings.TrimSpace(parts[0]))
 	if i := strings.Index(head, "@"); i >= 0 {
 		head = head[:i]
+	}
+	if !strings.HasPrefix(head, "/") {
+		switch head {
+		case "rank":
+			head = "/rank"
+		case "rankv":
+			head = "/rankv"
+		default:
+			return botCommand{Kind: KindHelp}
+		}
 	}
 
 	tail := strings.TrimSpace(strings.TrimPrefix(raw, parts[0]))
@@ -100,16 +107,9 @@ func ParseBotCommand(text string) botCommand {
 		}
 		return botCommand{Kind: KindCotation, Code: code}
 	case "/rank":
-		rest := strings.TrimSpace(tail)
-		if strings.HasPrefix(strings.ToLower(rest), "hoje") {
-			rest = strings.TrimSpace(rest[4:])
-			return botCommand{Kind: KindRankHoje, Codes: extractFundCodes(rest)}
-		}
-		return botCommand{Kind: KindHelp}
-	case "/rankhoje":
 		return botCommand{Kind: KindRankHoje, Codes: extractFundCodes(tail)}
 	case "/rankv":
-		return botCommand{Kind: KindRankV, Codes: extractFundCodes(tail)}
+		return botCommand{Kind: KindRankV}
 	default:
 		return botCommand{Kind: KindHelp}
 	}

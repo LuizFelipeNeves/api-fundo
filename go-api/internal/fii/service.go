@@ -131,6 +131,12 @@ func (s *Service) GetFundDetails(ctx context.Context, code string) (*model.FundD
 		dailyPtr = &v
 	}
 
+	var vacPtr *float64
+	if vac.Valid {
+		v := vac.Float64
+		vacPtr = &v
+	}
+
 	return &model.FundDetails{
 		ID:                   id.String,
 		Code:                 strings.ToUpper(strings.TrimSpace(rowCode)),
@@ -144,7 +150,7 @@ func (s *Service) GetFundDetails(ctx context.Context, code string) (*model.FundD
 		TipoGestao:           nullString(tipoGestao),
 		TaxaAdminstracao:     nullString(taxa),
 		DailyLiquidity:       dailyPtr,
-		Vacancia:             nullFloat(vac),
+		Vacancia:             vacPtr,
 		NumeroCotistas:       nullFloat(cotistas),
 		CotasEmitidas:        nullFloat(emitidas),
 		ValorPatrimonialCota: nullFloat(vpc),
