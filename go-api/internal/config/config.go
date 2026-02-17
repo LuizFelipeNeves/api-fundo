@@ -28,7 +28,7 @@ func Load(getenv func(string) string) Config {
 		TelegramWebhookToken:   strings.TrimSpace(getenv("TELEGRAM_WEBHOOK_TOKEN")),
 		APIEndpoint:            strings.TrimSpace(getenv("API_ENDPOINT")),
 		DocumentNotifyInterval: parseInterval(getenv("DOCUMENT_NOTIFY_INTERVAL"), time.Minute),
-		HTTPClientTimeout:      15 * time.Second,
+		HTTPClientTimeout:      30 * time.Second,
 	}
 
 	if cfg.APIEndpoint == "" {

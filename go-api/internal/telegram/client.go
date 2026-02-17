@@ -91,7 +91,7 @@ func (c *Client) SendDocument(ctx context.Context, chatID string, filePath strin
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("telegram sendDocument request failed: %s", redactTelegramToken(err.Error(), token))
 	}
 	defer resp.Body.Close()
 
@@ -143,7 +143,7 @@ func (c *Client) SendText(ctx context.Context, chatID string, text string, reply
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("telegram sendMessage request failed: %s", redactTelegramToken(err.Error(), token))
 	}
 	defer resp.Body.Close()
 
@@ -187,7 +187,7 @@ func (c *Client) AckCallbackQuery(ctx context.Context, callbackQueryID string) e
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("telegram answerCallbackQuery request failed: %s", redactTelegramToken(err.Error(), token))
 	}
 	defer resp.Body.Close()
 
@@ -196,4 +196,11 @@ func (c *Client) AckCallbackQuery(ctx context.Context, callbackQueryID string) e
 		return fmt.Errorf("telegram answerCallbackQuery status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(msg)))
 	}
 	return nil
+}
+
+func redactTelegramToken(s string, token string) string {
+	if strings.TrimSpace(token) == "" || strings.TrimSpace(s) == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, token, "<redacted>")
 }

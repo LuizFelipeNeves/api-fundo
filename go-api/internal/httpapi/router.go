@@ -254,7 +254,7 @@ func (rt *Router) processTelegramWebhook(w http.ResponseWriter, r *http.Request)
 	}
 
 	go func(u model.TelegramUpdate) {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		if err := rt.Telegram.ProcessUpdate(ctx, &u); err != nil {
 			log.Printf("[telegram_webhook] process error: %v\n", err)
