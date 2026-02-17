@@ -55,15 +55,17 @@ CREATE TABLE IF NOT EXISTS indicators_snapshot (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_indicators_snapshot_unique ON indicators_snapshot(fund_code);
 CREATE INDEX IF NOT EXISTS idx_indicators_snapshot_fund_date ON indicators_snapshot(fund_code, fetched_at DESC);
 
-CREATE TABLE IF NOT EXISTS cotations_today_snapshot (
-  id BIGSERIAL PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS cotation_today (
   fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
   date_iso DATE NOT NULL,
+  hour TEXT NOT NULL,
+  price DOUBLE PRECISION NOT NULL,
   fetched_at TIMESTAMPTZ NOT NULL,
-  data_json JSONB NOT NULL
+  PRIMARY KEY (fund_code, date_iso, hour)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_cotations_today_unique ON cotations_today_snapshot(fund_code, date_iso);
-CREATE INDEX IF NOT EXISTS idx_cotations_today_fund_date ON cotations_today_snapshot(fund_code, fetched_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cotation_today_fund_date_hour ON cotation_today(fund_code, date_iso DESC, hour ASC);
+
+DROP TABLE IF EXISTS cotations_today_snapshot;
 
 CREATE TABLE IF NOT EXISTS cotation (
   fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,

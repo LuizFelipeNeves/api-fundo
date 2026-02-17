@@ -225,23 +225,42 @@ func (p *Persister) PersistIndicators(ctx context.Context, data collectors.Indic
 
 // PersistCotationsToday persists today's cotations snapshot
 func (p *Persister) PersistCotationsToday(ctx context.Context, data collectors.CotationsTodayData) error {
-	dataJSON, err := json.Marshal(data.Data)
-	if err != nil {
-		return fmt.Errorf("failed to marshal cotations: %w", err)
+	if len(data.Data) == 0 {
+		return p.db.UpdateFundStateTimestamp(ctx, data.FundCode, "last_cotations_today_at", time.Now())
 	}
 
-	_, err = p.db.ExecContext(ctx, `
-		INSERT INTO cotations_today_snapshot (fund_code, date_iso, fetched_at, data_json)
-		VALUES ($1, $2, NOW(), $3)
-		ON CONFLICT (fund_code, date_iso) DO UPDATE SET
-			fetched_at = NOW(),
-			data_json = EXCLUDED.data_json
-	`, data.FundCode, data.DateISO, dataJSON)
+	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to persist cotations today: %w", err)
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO cotation_today (fund_code, date_iso, hour, price, fetched_at)
+		VALUES ($1, $2, $3, $4, NOW())
+		ON CONFLICT (fund_code, date_iso, hour) DO UPDATE SET
+			price = EXCLUDED.price,
+			fetched_at = NOW()
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare cotation_today statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, it := range data.Data {
+		if it.Hour == "" || it.Price <= 0 {
+			continue
+		}
+
+		if _, err := stmt.ExecContext(ctx, data.FundCode, data.DateISO, it.Hour, it.Price); err != nil {
+			return fmt.Errorf("failed to insert cotation_today: %w", err)
+		}
 	}
 
-	// Update fund_state timestamp
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit: %w", err)
+	}
+
 	return p.db.UpdateFundStateTimestamp(ctx, data.FundCode, "last_cotations_today_at", time.Now())
 }
 

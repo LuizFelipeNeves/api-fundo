@@ -6,10 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"regexp"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -27,7 +24,6 @@ func New(db *db.DB) *Service {
 
 var fiiCodeRe = regexp.MustCompile(`^[A-Za-z]{4}11$`)
 var isoDateRe = regexp.MustCompile(`^(\d{4})-(\d{2})-(\d{2})`)
-var hhmmRe = regexp.MustCompile(`\b(\d{2}:\d{2})\b`)
 
 func ValidateFundCode(raw string) (string, bool) {
 	v := strings.TrimSpace(raw)
@@ -287,87 +283,15 @@ func (s *Service) GetDividends(ctx context.Context, code string) ([]model.Divide
 	return out, true, nil
 }
 
-func formatHour(v any) string {
-	switch t := v.(type) {
-	case string:
-		s := strings.TrimSpace(t)
-		if m := hhmmRe.FindStringSubmatch(s); len(m) == 2 {
-			return m[1]
-		}
-		if len(s) >= 16 && (s[10] == 'T' || s[10] == ' ') && s[13] == ':' {
-			tail := s[16:]
-			if !strings.ContainsAny(tail, "Z+-") {
-				return s[11:16]
-			}
-		}
-		if parsed, err := time.Parse(time.RFC3339, s); err == nil {
-			return parsed.Format("15:04")
-		}
-	case float64:
-		if t > 0 {
-			parsed := time.UnixMilli(int64(t))
-			return parsed.Format("15:04")
-		}
-	}
-	return "00:00"
-}
-
-func canonicalizeCotationsToday(items []any) []model.CotationTodayItem {
-	if len(items) == 0 {
-		return []model.CotationTodayItem{}
-	}
-	byHour := map[string]model.CotationTodayItem{}
-	for _, it := range items {
-		m, ok := it.(map[string]any)
-		if !ok {
-			continue
-		}
-		price, ok := toFloat(m["price"])
-		if !ok {
-			continue
-		}
-		hour := formatHour(m["hour"])
-		byHour[hour] = model.CotationTodayItem{Price: price, Hour: hour}
-	}
-	out := make([]model.CotationTodayItem, 0, len(byHour))
-	for _, v := range byHour {
-		out = append(out, v)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Hour < out[j].Hour })
-	return out
-}
-
-func toFloat(v any) (float64, bool) {
-	switch t := v.(type) {
-	case float64:
-		if !isFinite(t) {
-			return 0, false
-		}
-		return t, true
-	case string:
-		f, err := strconv.ParseFloat(strings.TrimSpace(t), 64)
-		if err != nil || !isFinite(f) {
-			return 0, false
-		}
-		return f, true
-	default:
-		return 0, false
-	}
-}
-
-func isFinite(f float64) bool {
-	return !math.IsNaN(f) && !math.IsInf(f, 0)
-}
-
 func (s *Service) GetLatestCotationsToday(ctx context.Context, code string) ([]model.CotationTodayItem, bool, error) {
-	var raw []byte
+	var latestDate time.Time
 	err := s.DB.QueryRowContext(ctx, `
-		SELECT data_json
-		FROM cotations_today_snapshot
+		SELECT date_iso
+		FROM cotation_today
 		WHERE fund_code = $1
-		ORDER BY fetched_at DESC
+		ORDER BY date_iso DESC
 		LIMIT 1
-	`, code).Scan(&raw)
+	`, code).Scan(&latestDate)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -375,19 +299,34 @@ func (s *Service) GetLatestCotationsToday(ctx context.Context, code string) ([]m
 		return nil, false, err
 	}
 
-	var parsed any
-	if err := json.Unmarshal(raw, &parsed); err != nil {
+	rows, err := s.DB.QueryContext(ctx, `
+		SELECT hour, price
+		FROM cotation_today
+		WHERE fund_code = $1 AND date_iso = $2
+		ORDER BY hour ASC
+	`, code, latestDate.Format("2006-01-02"))
+	if err != nil {
 		return nil, false, err
 	}
-	if arr, ok := parsed.([]any); ok {
-		return canonicalizeCotationsToday(arr), true, nil
-	}
-	if obj, ok := parsed.(map[string]any); ok {
-		if arr, ok := obj["real"].([]any); ok {
-			return canonicalizeCotationsToday(arr), true, nil
+	defer rows.Close()
+
+	out := []model.CotationTodayItem{}
+	for rows.Next() {
+		var it model.CotationTodayItem
+		if err := rows.Scan(&it.Hour, &it.Price); err != nil {
+			return nil, false, err
 		}
+		out = append(out, it)
 	}
-	return []model.CotationTodayItem{}, true, nil
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+
+	if len(out) == 0 {
+		return nil, false, nil
+	}
+
+	return out, true, nil
 }
 
 func (s *Service) GetDocuments(ctx context.Context, code string) ([]model.DocumentData, bool, error) {
