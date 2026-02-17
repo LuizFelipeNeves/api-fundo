@@ -117,6 +117,8 @@ func (r *FundListResponse) UnmarshalJSON(data []byte) error {
 	}
 
 	type dataTablesResponse struct {
+		Draw            int               `json:"draw"`
+		Total           int               `json:"total"`
 		RecordsTotal    int               `json:"recordsTotal"`
 		RecordsFiltered int               `json:"recordsFiltered"`
 		Data            []FundListAPIItem `json:"data"`
@@ -124,10 +126,13 @@ func (r *FundListResponse) UnmarshalJSON(data []byte) error {
 
 	var dt dataTablesResponse
 	if err := json.Unmarshal(b, &dt); err == nil {
-		if dt.RecordsTotal != 0 || dt.RecordsFiltered != 0 || dt.Data != nil {
-			if dt.RecordsFiltered > 0 {
+		if dt.Draw != 0 || dt.Total != 0 || dt.RecordsTotal != 0 || dt.RecordsFiltered != 0 {
+			switch {
+			case dt.Total > 0:
+				r.Total = dt.Total
+			case dt.RecordsFiltered > 0:
 				r.Total = dt.RecordsFiltered
-			} else {
+			default:
 				r.Total = dt.RecordsTotal
 			}
 			r.Data = dt.Data
