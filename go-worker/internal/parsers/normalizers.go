@@ -200,21 +200,34 @@ func NormalizeCotations(raw map[string][]interface{}) *NormalizedCotations {
 	}
 
 	if realData, ok := raw["real"]; ok {
+		out := make([]CotationItem, 0, len(realData))
 		for _, item := range realData {
-			if itemMap, ok := item.(map[string]interface{}); ok {
-				cotation := CotationItem{}
-
-				if date, ok := itemMap["date"].(string); ok {
-					cotation.Date = date
-				}
-
-				if price, ok := itemMap["price"].(float64); ok {
-					cotation.Price = price
-				}
-
-				result.Real = append(result.Real, cotation)
+			itemMap, ok := item.(map[string]interface{})
+			if !ok {
+				continue
 			}
+
+			date := ""
+			for _, k := range []string{"date", "created_at", "createdAt", "at", "data"} {
+				if v, ok := itemMap[k]; ok {
+					if s, ok := v.(string); ok {
+						date = strings.TrimSpace(s)
+						break
+					}
+				}
+			}
+			if date == "" {
+				continue
+			}
+
+			price := extractPriceAny(itemMap)
+			if !isFinitePositive(price) {
+				continue
+			}
+
+			out = append(out, CotationItem{Date: date, Price: price})
 		}
+		result.Real = out
 	}
 
 	return result

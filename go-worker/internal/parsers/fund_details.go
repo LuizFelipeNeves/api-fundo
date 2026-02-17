@@ -281,7 +281,22 @@ func parseInt64(s string) *int64 {
 
 // ToDateISO converts Brazilian date format (DD/MM/YYYY) to ISO (YYYY-MM-DD)
 func ToDateISO(brDate string) string {
-	parts := strings.Split(brDate, "/")
+	s := strings.TrimSpace(brDate)
+	if s == "" {
+		return ""
+	}
+	if len(s) >= 10 {
+		head := s[:10]
+		if len(head) == 10 && head[2] == '/' && head[5] == '/' {
+			s = head
+		} else if len(head) == 10 && head[4] == '-' && head[7] == '-' {
+			if _, err := time.Parse("2006-01-02", head); err == nil {
+				return head
+			}
+		}
+	}
+
+	parts := strings.Split(s, "/")
 	if len(parts) != 3 {
 		return ""
 	}
@@ -296,7 +311,7 @@ func ToDateISO(brDate string) string {
 	}
 
 	// Parse to validate date
-	_, err := time.Parse("02/01/2006", brDate)
+	_, err := time.Parse("02/01/2006", s)
 	if err != nil {
 		return ""
 	}
