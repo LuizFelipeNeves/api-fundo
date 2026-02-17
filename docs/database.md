@@ -7,7 +7,7 @@ O schema está em [database/schema.sql](../database/schema.sql).
 - `fund_master`: dados do fundo.
 - `fund_state`: timestamps/estado para agendamento incremental.
 - `indicators_snapshot`: último snapshot de indicadores (1 por fundo).
-- `cotations_today_snapshot`: snapshot intraday por data.
+- `cotation_today`: série intraday por data/hora.
 - `cotation`: histórico diário (BRL).
 - `dividend`: dividendos e amortizações.
 - `document`: documentos da CVM/FNET.
