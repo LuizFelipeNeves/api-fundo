@@ -46,13 +46,20 @@ CREATE TABLE IF NOT EXISTS fund_state (
 );
 
 CREATE TABLE IF NOT EXISTS indicators_snapshot (
-  id BIGSERIAL PRIMARY KEY,
   fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
+  ano SMALLINT NOT NULL,
+  cotas_emitidas DOUBLE PRECISION,
+  numero_de_cotistas DOUBLE PRECISION,
+  vacancia DOUBLE PRECISION,
+  valor_patrimonial_cota DOUBLE PRECISION,
+  valor_patrimonial DOUBLE PRECISION,
+  liquidez_diaria DOUBLE PRECISION,
+  dividend_yield DOUBLE PRECISION,
+  pvp DOUBLE PRECISION,
+  valor_mercado DOUBLE PRECISION,
   fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  data_hash TEXT NOT NULL,
-  data_json JSONB NOT NULL
+  PRIMARY KEY (fund_code, ano)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_indicators_snapshot_unique ON indicators_snapshot(fund_code);
 
 CREATE TABLE IF NOT EXISTS cotation_today (
   fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
@@ -86,9 +93,8 @@ CREATE TABLE IF NOT EXISTS document (
   title TEXT NOT NULL,
   category TEXT NOT NULL,
   type TEXT NOT NULL,
-  date TEXT NOT NULL,
-  date_upload_iso DATE NOT NULL,
-  "dateUpload" TEXT NOT NULL,
+  date TIMESTAMPTZ NOT NULL,
+  "dateUpload" TIMESTAMPTZ NOT NULL,
   url TEXT NOT NULL,
   status TEXT NOT NULL,
   version INTEGER NOT NULL,
@@ -96,7 +102,7 @@ CREATE TABLE IF NOT EXISTS document (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (fund_code, document_id)
 );
-CREATE INDEX IF NOT EXISTS idx_document_fund_upload ON document(fund_code, date_upload_iso DESC);
+CREATE INDEX IF NOT EXISTS idx_document_fund_upload ON document(fund_code, "dateUpload" DESC, document_id DESC);
 
 CREATE TABLE IF NOT EXISTS telegram_user (
   chat_id TEXT PRIMARY KEY,

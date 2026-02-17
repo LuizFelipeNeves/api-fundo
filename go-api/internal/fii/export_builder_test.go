@@ -36,7 +36,7 @@ func TestBuildExportFundJSON_PVPCurrent_UsesSnapshot(t *testing.T) {
 			FetchedAt: "2026-02-17T12:00:00.000Z",
 			Data: model.NormalizedIndicators{
 				"pvp": []model.IndicatorItem{
-					{Year: "Atual", Value: &v},
+					{Year: "2026", Value: &v},
 				},
 			},
 		},

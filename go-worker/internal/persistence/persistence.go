@@ -3,14 +3,15 @@ package persistence
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/lib/pq"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/collectors"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/db"
+	"github.com/luizfelipeneves/api-fundo/go-worker/internal/parsers"
 )
 
 // Persister handles data persistence to PostgreSQL
@@ -218,24 +219,143 @@ func (p *Persister) RecomputeDividendYields(ctx context.Context) (int64, error) 
 
 // PersistIndicators persists fund indicators
 func (p *Persister) PersistIndicators(ctx context.Context, data collectors.IndicatorsData) error {
-	dataJSON, err := json.Marshal(data.Data)
-	if err != nil {
-		return fmt.Errorf("failed to marshal indicators: %w", err)
+	type indicatorsSnapshotRow struct {
+		Year                 int16
+		CotasEmitidas        *float64
+		NumeroDeCotistas     *float64
+		Vacancia             *float64
+		ValorPatrimonialCota *float64
+		ValorPatrimonial     *float64
+		LiquidezDiaria       *float64
+		DividendYield        *float64
+		PVP                  *float64
+		ValorMercado         *float64
 	}
 
-	_, err = p.db.ExecContext(ctx, `
-		INSERT INTO indicators_snapshot (fund_code, fetched_at, data_hash, data_json)
-		VALUES ($1, NOW(), $2, $3)
-		ON CONFLICT (fund_code) DO UPDATE SET
+	parseAno := func(raw string) (int16, bool) {
+		s := strings.TrimSpace(raw)
+		if s == "" {
+			return 0, false
+		}
+		if strings.EqualFold(s, "Atual") {
+			year := time.Now().In(time.Local).Year()
+			if year < 0 || year > 32767 {
+				return 0, false
+			}
+			return int16(year), true
+		}
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 0 || n > 32767 {
+			return 0, false
+		}
+		return int16(n), true
+	}
+
+	byYear := make(map[int16]*indicatorsSnapshotRow, 8)
+	for key, items := range data.Data {
+		for _, it := range items {
+			ano, ok := parseAno(it.Year)
+			if !ok {
+				continue
+			}
+			row, ok := byYear[ano]
+			if !ok {
+				row = &indicatorsSnapshotRow{Year: ano}
+				byYear[ano] = row
+			}
+			switch key {
+			case "cotas_emitidas":
+				row.CotasEmitidas = it.Value
+			case "numero_de_cotistas":
+				row.NumeroDeCotistas = it.Value
+			case "vacancia":
+				row.Vacancia = it.Value
+			case "valor_patrimonial_cota":
+				row.ValorPatrimonialCota = it.Value
+			case "valor_patrimonial":
+				row.ValorPatrimonial = it.Value
+			case "liquidez_diaria":
+				row.LiquidezDiaria = it.Value
+			case "dividend_yield":
+				row.DividendYield = it.Value
+			case "pvp":
+				row.PVP = it.Value
+			case "valor_mercado":
+				row.ValorMercado = it.Value
+			}
+		}
+	}
+
+	if len(byYear) == 0 {
+		return p.db.UpdateFundStateTimestamp(ctx, data.FundCode, "last_indicators_at", time.Now())
+	}
+
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	toDBFloat := func(v *float64) any {
+		if v == nil {
+			return nil
+		}
+		return *v
+	}
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO indicators_snapshot (
+			fund_code, ano, fetched_at,
+			cotas_emitidas, numero_de_cotistas, vacancia,
+			valor_patrimonial_cota, valor_patrimonial, liquidez_diaria,
+			dividend_yield, pvp, valor_mercado
+		) VALUES (
+			$1, $2, NOW(),
+			$3, $4, $5,
+			$6, $7, $8,
+			$9, $10, $11
+		)
+		ON CONFLICT (fund_code, ano) DO UPDATE SET
 			fetched_at = NOW(),
-			data_hash = EXCLUDED.data_hash,
-			data_json = EXCLUDED.data_json
-	`, data.FundCode, data.DataHash, dataJSON)
+			cotas_emitidas = COALESCE(EXCLUDED.cotas_emitidas, indicators_snapshot.cotas_emitidas),
+			numero_de_cotistas = COALESCE(EXCLUDED.numero_de_cotistas, indicators_snapshot.numero_de_cotistas),
+			vacancia = COALESCE(EXCLUDED.vacancia, indicators_snapshot.vacancia),
+			valor_patrimonial_cota = COALESCE(EXCLUDED.valor_patrimonial_cota, indicators_snapshot.valor_patrimonial_cota),
+			valor_patrimonial = COALESCE(EXCLUDED.valor_patrimonial, indicators_snapshot.valor_patrimonial),
+			liquidez_diaria = COALESCE(EXCLUDED.liquidez_diaria, indicators_snapshot.liquidez_diaria),
+			dividend_yield = COALESCE(EXCLUDED.dividend_yield, indicators_snapshot.dividend_yield),
+			pvp = COALESCE(EXCLUDED.pvp, indicators_snapshot.pvp),
+			valor_mercado = COALESCE(EXCLUDED.valor_mercado, indicators_snapshot.valor_mercado)
+	`)
 	if err != nil {
-		return fmt.Errorf("failed to persist indicators: %w", err)
+		return fmt.Errorf("failed to prepare indicators_snapshot statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, row := range byYear {
+		_, err := stmt.ExecContext(
+			ctx,
+			data.FundCode,
+			row.Year,
+			toDBFloat(row.CotasEmitidas),
+			toDBFloat(row.NumeroDeCotistas),
+			toDBFloat(row.Vacancia),
+			toDBFloat(row.ValorPatrimonialCota),
+			toDBFloat(row.ValorPatrimonial),
+			toDBFloat(row.LiquidezDiaria),
+			toDBFloat(row.DividendYield),
+			toDBFloat(row.PVP),
+			toDBFloat(row.ValorMercado),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to persist indicators for fund=%s year=%d: %w", data.FundCode, row.Year, err)
+		}
 	}
 
-	// Update fund_state timestamp
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit indicators_snapshot transaction: %w", err)
+	}
+
 	return p.db.UpdateFundStateTimestamp(ctx, data.FundCode, "last_indicators_at", time.Now())
 }
 
@@ -404,14 +524,13 @@ func (p *Persister) PersistDocuments(ctx context.Context, fundCode string, items
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO document (
 			fund_code, document_id, title, category, type, date,
-			date_upload_iso, "dateUpload", url, status, version, "send", created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, FALSE, NOW())
+			"dateUpload", url, status, version, "send", created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, FALSE, NOW())
 		ON CONFLICT (fund_code, document_id) DO UPDATE SET
 			title = EXCLUDED.title,
 			category = EXCLUDED.category,
 			type = EXCLUDED.type,
 			date = EXCLUDED.date,
-			date_upload_iso = EXCLUDED.date_upload_iso,
 			"dateUpload" = EXCLUDED."dateUpload",
 			url = EXCLUDED.url,
 			status = EXCLUDED.status,
@@ -422,10 +541,47 @@ func (p *Persister) PersistDocuments(ctx context.Context, fundCode string, items
 	}
 	defer stmt.Close()
 
+	parseDateISOToUTC := func(dateISO string) (time.Time, bool) {
+		s := strings.TrimSpace(dateISO)
+		if s == "" {
+			return time.Time{}, false
+		}
+		t, err := time.Parse("2006-01-02", s)
+		if err != nil {
+			return time.Time{}, false
+		}
+		return t.UTC(), true
+	}
+
 	for _, doc := range items {
+		uploadISO := strings.TrimSpace(doc.DateUploadISO)
+		if uploadISO == "" {
+			uploadISO = parsers.ToDateISO(doc.DateUpload)
+		}
+		if uploadISO == "" {
+			uploadISO = parsers.ToDateISO(doc.Date)
+		}
+		if uploadISO == "" {
+			uploadISO = time.Now().UTC().Format("2006-01-02")
+		}
+
+		uploadAt, ok := parseDateISOToUTC(uploadISO)
+		if !ok {
+			uploadAt = time.Now().UTC()
+		}
+
+		dateISO := parsers.ToDateISO(doc.Date)
+		if dateISO == "" {
+			dateISO = uploadISO
+		}
+		dateAt, ok := parseDateISOToUTC(dateISO)
+		if !ok {
+			dateAt = uploadAt
+		}
+
 		_, err := stmt.ExecContext(ctx,
 			fundCode, doc.DocumentID, doc.Title, doc.Category, doc.Type,
-			doc.Date, doc.DateUploadISO, doc.DateUpload, doc.URL,
+			dateAt, uploadAt, doc.URL,
 			doc.Status, doc.Version,
 		)
 		if err != nil {

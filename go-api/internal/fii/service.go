@@ -3,10 +3,10 @@ package fii
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -156,25 +156,96 @@ func (s *Service) GetFundDetails(ctx context.Context, code string) (*model.FundD
 }
 
 func (s *Service) GetLatestIndicators(ctx context.Context, code string) (model.NormalizedIndicators, bool, error) {
-	var raw []byte
-	err := s.DB.QueryRowContext(ctx, `
-		SELECT data_json
+	rows, err := s.DB.QueryContext(ctx, `
+		SELECT
+			ano,
+			cotas_emitidas,
+			numero_de_cotistas,
+			vacancia,
+			valor_patrimonial_cota,
+			valor_patrimonial,
+			liquidez_diaria,
+			dividend_yield,
+			pvp,
+			valor_mercado
 		FROM indicators_snapshot
 		WHERE fund_code = $1
-		ORDER BY fetched_at DESC
-		LIMIT 1
-	`, code).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, false, nil
-	}
+		ORDER BY (CASE WHEN ano = 0 THEN 32767 ELSE ano END) ASC
+	`, code)
 	if err != nil {
 		return nil, false, err
 	}
-	var parsed model.NormalizedIndicators
-	if err := json.Unmarshal(raw, &parsed); err != nil {
+	defer rows.Close()
+
+	nullFloatPtr := func(v sql.NullFloat64) *float64 {
+		if !v.Valid {
+			return nil
+		}
+		x := v.Float64
+		return &x
+	}
+
+	out := make(model.NormalizedIndicators, 9)
+	currentYear := int16(time.Now().In(time.Local).Year())
+	seenYears := map[int16]struct{}{}
+	rowCount := 0
+	for rows.Next() {
+		rowCount++
+		var (
+			ano              int16
+			cotasEmitidas    sql.NullFloat64
+			numeroDeCotistas sql.NullFloat64
+			vacancia         sql.NullFloat64
+			valorPatCota     sql.NullFloat64
+			valorPat         sql.NullFloat64
+			liquidezDiaria   sql.NullFloat64
+			dividendYield    sql.NullFloat64
+			pvp              sql.NullFloat64
+			valorMercado     sql.NullFloat64
+		)
+		if err := rows.Scan(
+			&ano,
+			&cotasEmitidas,
+			&numeroDeCotistas,
+			&vacancia,
+			&valorPatCota,
+			&valorPat,
+			&liquidezDiaria,
+			&dividendYield,
+			&pvp,
+			&valorMercado,
+		); err != nil {
+			return nil, false, err
+		}
+
+		if ano == 0 {
+			ano = currentYear
+		}
+		if _, ok := seenYears[ano]; ok {
+			continue
+		}
+		seenYears[ano] = struct{}{}
+
+		year := strconv.Itoa(int(ano))
+
+		out["cotas_emitidas"] = append(out["cotas_emitidas"], model.IndicatorItem{Year: year, Value: nullFloatPtr(cotasEmitidas)})
+		out["numero_de_cotistas"] = append(out["numero_de_cotistas"], model.IndicatorItem{Year: year, Value: nullFloatPtr(numeroDeCotistas)})
+		out["vacancia"] = append(out["vacancia"], model.IndicatorItem{Year: year, Value: nullFloatPtr(vacancia)})
+		out["valor_patrimonial_cota"] = append(out["valor_patrimonial_cota"], model.IndicatorItem{Year: year, Value: nullFloatPtr(valorPatCota)})
+		out["valor_patrimonial"] = append(out["valor_patrimonial"], model.IndicatorItem{Year: year, Value: nullFloatPtr(valorPat)})
+		out["liquidez_diaria"] = append(out["liquidez_diaria"], model.IndicatorItem{Year: year, Value: nullFloatPtr(liquidezDiaria)})
+		out["dividend_yield"] = append(out["dividend_yield"], model.IndicatorItem{Year: year, Value: nullFloatPtr(dividendYield)})
+		out["pvp"] = append(out["pvp"], model.IndicatorItem{Year: year, Value: nullFloatPtr(pvp)})
+		out["valor_mercado"] = append(out["valor_mercado"], model.IndicatorItem{Year: year, Value: nullFloatPtr(valorMercado)})
+	}
+	if err := rows.Err(); err != nil {
 		return nil, false, err
 	}
-	return parsed, true, nil
+	if rowCount == 0 {
+		return nil, false, nil
+	}
+
+	return out, true, nil
 }
 
 func (s *Service) GetCotations(ctx context.Context, code string, days int) (*model.NormalizedCotations, error) {
@@ -331,10 +402,19 @@ func (s *Service) GetLatestCotationsToday(ctx context.Context, code string) ([]m
 
 func (s *Service) GetDocuments(ctx context.Context, code string) ([]model.DocumentData, bool, error) {
 	rows, err := s.DB.QueryContext(ctx, `
-		SELECT document_id, title, category, type, date, "dateUpload", url, status, version
+		SELECT
+			document_id,
+			title,
+			category,
+			type,
+			to_char(date AT TIME ZONE 'UTC', 'DD/MM/YYYY') as date,
+			to_char("dateUpload" AT TIME ZONE 'UTC', 'DD/MM/YYYY') as "dateUpload",
+			url,
+			status,
+			version
 		FROM document
 		WHERE fund_code = $1
-		ORDER BY date_upload_iso DESC, document_id DESC
+		ORDER BY document."dateUpload" DESC, document_id DESC
 	`, code)
 	if err != nil {
 		return nil, false, err

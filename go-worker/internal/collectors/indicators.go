@@ -59,17 +59,10 @@ func (c *IndicatorsCollector) Collect(ctx context.Context, req CollectRequest) (
 	// Normalize indicators
 	indicators := parsers.NormalizeIndicatorsAny(rawData)
 
-	// Calculate hash
-	dataHash, err := parsers.SHA256Hash(indicators)
-	if err != nil {
-		return nil, fmt.Errorf("failed to calculate hash: %w", err)
-	}
-
 	return &CollectResult{
 		Data: IndicatorsData{
 			FundCode: code,
 			Data:     indicators,
-			DataHash: dataHash,
 		},
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}, nil
@@ -79,5 +72,4 @@ func (c *IndicatorsCollector) Collect(ctx context.Context, req CollectRequest) (
 type IndicatorsData struct {
 	FundCode string
 	Data     parsers.NormalizedIndicators
-	DataHash string
 }

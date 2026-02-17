@@ -301,10 +301,16 @@ func (r *Repo) ListLatestDocuments(ctx context.Context, fundCodes []string, limi
 		return []LatestDocumentRow{}, nil
 	}
 	rows, err := r.DB.QueryContext(ctx, `
-		SELECT fund_code, title, category, type, "dateUpload", url
+		SELECT
+			fund_code,
+			title,
+			category,
+			type,
+			to_char("dateUpload" AT TIME ZONE 'UTC', 'DD/MM/YYYY') as "dateUpload",
+			url
 		FROM document
 		WHERE fund_code = ANY($1)
-		ORDER BY date_upload_iso DESC, document_id DESC
+		ORDER BY document."dateUpload" DESC, document_id DESC
 		LIMIT $2
 	`, pq.Array(codes), limit)
 	if err != nil {
@@ -329,10 +335,16 @@ func (r *Repo) ListLatestDocumentsByFund(ctx context.Context, fundCodes []string
 		return map[string]LatestDocumentBrief{}, nil
 	}
 	rows, err := r.DB.QueryContext(ctx, `
-		SELECT fund_code, document_id, category, type, "dateUpload", url
+		SELECT
+			fund_code,
+			document_id,
+			category,
+			type,
+			to_char("dateUpload" AT TIME ZONE 'UTC', 'DD/MM/YYYY') as "dateUpload",
+			url
 		FROM document
 		WHERE fund_code = ANY($1)
-		ORDER BY date_upload_iso DESC, document_id DESC
+		ORDER BY document."dateUpload" DESC, document_id DESC
 	`, pq.Array(codes))
 	if err != nil {
 		return nil, err

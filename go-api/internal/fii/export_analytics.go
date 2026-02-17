@@ -109,20 +109,14 @@ func pickIndicatorValue(data model.NormalizedIndicators, key string) (float64, b
 	if len(series) == 0 {
 		return 0, false
 	}
-	var candidate *float64
-	for i := range series {
-		if strings.TrimSpace(series[i].Year) == "Atual" {
-			candidate = series[i].Value
-			break
+	for i := len(series) - 1; i >= 0; i-- {
+		v := series[i].Value
+		if v == nil || !isFiniteFloat(*v) {
+			continue
 		}
+		return *v, true
 	}
-	if candidate == nil {
-		candidate = series[0].Value
-	}
-	if candidate == nil || !isFiniteFloat(*candidate) {
-		return 0, false
-	}
-	return *candidate, true
+	return 0, false
 }
 
 func parseISOTime(value string) (time.Time, bool) {
