@@ -14,7 +14,12 @@ import (
 )
 
 // NormalizedIndicators represents normalized indicators data
-type NormalizedIndicators map[string][]interface{}
+type NormalizedIndicators map[string][]IndicatorData
+
+type IndicatorData struct {
+	Year  string   `json:"year"`
+	Value *float64 `json:"value"`
+}
 
 // NormalizedCotations represents normalized cotations data
 type NormalizedCotations struct {
@@ -51,7 +56,36 @@ type DocumentData struct {
 
 // NormalizeIndicators normalizes indicators JSON response
 func NormalizeIndicators(raw map[string][]interface{}) NormalizedIndicators {
-	return NormalizedIndicators(raw)
+	normalized := make(NormalizedIndicators, len(raw))
+
+	for indicatorName, values := range raw {
+		normalizedName := indicatorKeyMap[indicatorName]
+		if normalizedName == "" {
+			normalizedName = indicatorName
+		}
+
+		out := make([]IndicatorData, 0, len(values))
+		for _, it := range values {
+			m, ok := it.(map[string]interface{})
+			if !ok || m == nil {
+				continue
+			}
+
+			year := ""
+			if v, ok := m["year"]; ok {
+				year = strings.TrimSpace(fmt.Sprint(v))
+			}
+
+			out = append(out, IndicatorData{
+				Year:  year,
+				Value: extractFloat64Ptr(m["value"]),
+			})
+		}
+
+		normalized[normalizedName] = out
+	}
+
+	return normalized
 }
 
 func NormalizeIndicatorsAny(raw interface{}) NormalizedIndicators {
@@ -67,13 +101,95 @@ func NormalizeIndicatorsAny(raw interface{}) NormalizedIndicators {
 			}
 			if arr, ok := value.([]interface{}); ok {
 				converted[k] = arr
+				continue
 			}
+			converted[k] = []interface{}{}
 		}
 		return NormalizeIndicators(converted)
 	case []interface{}:
 		return NormalizedIndicators{}
 	default:
 		return NormalizedIndicators{}
+	}
+}
+
+var indicatorKeyMap = map[string]string{
+	"COTAS EMITIDAS":           "cotas_emitidas",
+	"NÚMERO DE COTISTAS":       "numero_de_cotistas",
+	"VACÂNCIA":                 "vacancia",
+	"VAL. PATRIMONIAL P/ COTA": "valor_patrimonial_cota",
+	"VALOR PATRIMONIAL":        "valor_patrimonial",
+	"LIQUIDEZ DIÁRIA":          "liquidez_diaria",
+	"DIVIDEND YIELD (DY)":      "dividend_yield",
+	"P/VP":                     "pvp",
+	"VALOR DE MERCADO":         "valor_mercado",
+}
+
+func extractFloat64Ptr(raw interface{}) *float64 {
+	if raw == nil {
+		return nil
+	}
+
+	switch v := raw.(type) {
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return nil
+		}
+		return &v
+	case float32:
+		f := float64(v)
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return nil
+		}
+		return &f
+	case int:
+		f := float64(v)
+		return &f
+	case int64:
+		f := float64(v)
+		return &f
+	case int32:
+		f := float64(v)
+		return &f
+	case uint:
+		f := float64(v)
+		return &f
+	case uint64:
+		f := float64(v)
+		return &f
+	case uint32:
+		f := float64(v)
+		return &f
+	case json.Number:
+		f, err := v.Float64()
+		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+			return nil
+		}
+		return &f
+	case string:
+		s := strings.TrimSpace(v)
+		if s == "" {
+			return nil
+		}
+		s = strings.ReplaceAll(s, ",", ".")
+		s = strings.ReplaceAll(s, "%", "")
+		f, err := strconv.ParseFloat(s, 64)
+		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+			return nil
+		}
+		return &f
+	default:
+		s := strings.TrimSpace(fmt.Sprint(raw))
+		if s == "" {
+			return nil
+		}
+		s = strings.ReplaceAll(s, ",", ".")
+		s = strings.ReplaceAll(s, "%", "")
+		f, err := strconv.ParseFloat(s, 64)
+		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+			return nil
+		}
+		return &f
 	}
 }
 
