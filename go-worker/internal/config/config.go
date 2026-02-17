@@ -32,8 +32,6 @@ type Config struct {
 	Location *time.Location
 
 	// HTTP client settings
-	CSRFToken        string
-	Cookie           string
 	HTTPTimeoutMS    int
 	HTTPRetryMax     int
 	HTTPRetryDelayMS int
@@ -71,8 +69,6 @@ func Load() (*Config, error) {
 
 		Location: loc,
 
-		CSRFToken:        getEnv("CSRF_TOKEN", "CTGmgCUHY62gqvsBGnHJRUWtuRZhmLw5WXQNPjBn"),
-		Cookie:           getEnv("COOKIE", "XSRF-TOKEN=eyJpdiI6InNSa25kbjBBai9Oc0xKUFlrU1NwN0E9PSIsInZhbHVlIjoiNnc0SElMV2dUSzRTNjVBNktrcW1iRHBNRUp4cFhyKzNQUnZqSnR4RnVGMEwyWVJPalZOVHFSczRMVHJvWFl5MTJBWGYyZjVwbjM2MFhyS00ybnIxUlp3TTF4Nzh0dFp2NGdaTVN0K1BWMzhrRzVmdXJZajBvRkNmTmo4UXdndjkiLCJtYWMiOiJjODJmNDcwOGI1YTA4NDdkMDYwOTE2OWRiNGIyNTUwNDU5MGJlNTczZDNjMGNmZDMzN2EzZjFlZmYxYzViNDM0IiwidGFnIjoiIn0%3D; laravel_session=eyJpdiI6IklGTzFWazBJN3RjSVIrQnF1by9adHc9PSIsInZhbHVlIjoieWlidUp0a0psUGVhQ0hwUXRRM1NTYkZ1ZldQc2dETjlwZFl0aHJ5RENLNXBVQndqYkpjaytrWFhwTDlIamFwMTNRVjRpbnhiUS9UV0FFR3BjVS9malljTFZLMmp2dHV0NStqck1xbnFFOTFzZ1VlenpZc2RScWtaMHd4RExzUHMiLCJtYWMiOiJmODk1YmNiZGM3MWNlNzY4ZTllODY2YTFlY2I0MDMwMzE1ZTk1NjUwYjc1NTdlYTA2ZmE5Nzk4ZDM2MzE0YjZhIiwidGFnIjoiIn0%3D"),
 		HTTPTimeoutMS:    getEnvInt("HTTP_TIMEOUT_MS", 25000),
 		HTTPRetryMax:     getEnvInt("HTTP_RETRY_MAX", 5),
 		HTTPRetryDelayMS: getEnvInt("HTTP_RETRY_DELAY_MS", 2000),

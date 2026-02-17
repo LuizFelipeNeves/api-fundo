@@ -8,6 +8,9 @@ import (
 	"math"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -51,8 +54,6 @@ func (c *Client) GetJSON(ctx context.Context, url string, result interface{}) er
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	c.setInvestidor10Headers(req)
-
 	resp, err := c.doWithRetry(req)
 	if err != nil {
 		return err
@@ -72,12 +73,39 @@ func (c *Client) GetJSON(ctx context.Context, url string, result interface{}) er
 
 // PostForm performs a POST request with form data and decodes JSON response
 func (c *Client) PostForm(ctx context.Context, url string, formData string, result interface{}) error {
+	csrfToken, cookieHeader, err := c.GetInvestidor10Session(ctx)
+	if err != nil {
+		return err
+	}
+	return c.PostFormInvestidor10(ctx, url, formData, csrfToken, cookieHeader, result)
+}
+
+func (c *Client) GetInvestidor10Session(ctx context.Context) (csrfToken string, cookieHeader string, err error) {
+	html, err := c.GetHTML(ctx, BaseURL+"/fiis/busca-avancada/")
+	if err != nil {
+		return "", "", err
+	}
+
+	csrfToken = extractCSRFTokenFromHTML(html)
+	if strings.TrimSpace(csrfToken) == "" {
+		return "", "", fmt.Errorf("csrf-token not found in investidor10 HTML")
+	}
+
+	cookieHeader = c.investidor10CookieHeader()
+	if strings.TrimSpace(cookieHeader) == "" {
+		return "", "", fmt.Errorf("investidor10 cookies not captured")
+	}
+
+	return csrfToken, cookieHeader, nil
+}
+
+func (c *Client) PostFormInvestidor10(ctx context.Context, url string, formData string, csrfToken string, cookieHeader string, result interface{}) error {
 	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(formData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	c.setInvestidor10Headers(req)
+	c.setInvestidor10HeadersDynamic(req, csrfToken, cookieHeader)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
 
 	resp, err := c.doWithRetry(req)
@@ -181,15 +209,22 @@ func (c *Client) GetJSONStatusInvest(ctx context.Context, url string, result int
 	return nil
 }
 
-func (c *Client) setInvestidor10Headers(req *http.Request) {
-	req.Header.Set("Accept", "application/json")
+func (c *Client) setInvestidor10HeadersDynamic(req *http.Request, csrfToken string, cookieHeader string) {
+	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("Accept-Language", "pt-BR,pt;q=0.9")
 	req.Header.Set("Origin", BaseURL)
 	req.Header.Set("Referer", BaseURL+"/fiis/busca-avancada/")
 	req.Header.Set("User-Agent", DefaultUserAgent)
-	req.Header.Set("X-CSRF-TOKEN", c.cfg.CSRFToken)
+	if strings.TrimSpace(csrfToken) != "" {
+		req.Header.Set("X-CSRF-TOKEN", csrfToken)
+	}
+	if v := extractXSRFTokenFromCookieHeader(cookieHeader); strings.TrimSpace(v) != "" {
+		req.Header.Set("X-XSRF-TOKEN", v)
+	}
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
-	req.Header.Set("Cookie", c.cfg.Cookie)
+	if strings.TrimSpace(cookieHeader) != "" {
+		req.Header.Set("Cookie", cookieHeader)
+	}
 }
 
 // setHTMLHeaders sets headers for HTML requests
@@ -249,6 +284,98 @@ func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
 	}
 
 	return nil, fmt.Errorf("request failed after %d attempts", c.cfg.HTTPRetryMax)
+}
+
+var csrfMetaTokenRe = regexp.MustCompile(`(?i)<meta[^>]*\bname=["']csrf-token["'][^>]*\bcontent=["']([^"']+)["'][^>]*>`)
+var csrfMetaTokenReAlt = regexp.MustCompile(`(?i)<meta[^>]*\bcontent=["']([^"']+)["'][^>]*\bname=["']csrf-token["'][^>]*>`)
+
+func extractCSRFTokenFromHTML(html string) string {
+	if strings.TrimSpace(html) == "" {
+		return ""
+	}
+	if m := csrfMetaTokenRe.FindStringSubmatch(html); len(m) > 1 {
+		return strings.TrimSpace(m[1])
+	}
+	if m := csrfMetaTokenReAlt.FindStringSubmatch(html); len(m) > 1 {
+		return strings.TrimSpace(m[1])
+	}
+	return ""
+}
+
+func (c *Client) investidor10CookieHeader() string {
+	u, err := url.Parse(BaseURL)
+	if err != nil || u == nil {
+		return ""
+	}
+
+	if c.httpClient == nil || c.httpClient.Jar == nil {
+		return ""
+	}
+
+	merged := map[string]string{}
+	for _, ck := range c.httpClient.Jar.Cookies(u) {
+		if ck == nil || strings.TrimSpace(ck.Name) == "" {
+			continue
+		}
+		value := strings.TrimSpace(ck.Value)
+		if value == "" {
+			continue
+		}
+		merged[ck.Name] = value
+	}
+
+	return buildCookieHeader(merged)
+}
+
+func parseCookieHeaderToMap(raw string) map[string]string {
+	out := map[string]string{}
+	for _, part := range strings.Split(raw, ";") {
+		p := strings.TrimSpace(part)
+		if p == "" {
+			continue
+		}
+		kv := strings.SplitN(p, "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		name := strings.TrimSpace(kv[0])
+		if name == "" {
+			continue
+		}
+		out[name] = strings.TrimSpace(kv[1])
+	}
+	return out
+}
+
+func extractXSRFTokenFromCookieHeader(cookieHeader string) string {
+	cookies := parseCookieHeaderToMap(cookieHeader)
+	raw := strings.TrimSpace(cookies["XSRF-TOKEN"])
+	if raw == "" {
+		return ""
+	}
+	decoded, err := url.QueryUnescape(raw)
+	if err != nil {
+		return raw
+	}
+	return strings.TrimSpace(decoded)
+}
+
+func buildCookieHeader(m map[string]string) string {
+	if len(m) == 0 {
+		return ""
+	}
+
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+m[k])
+	}
+	return strings.Join(parts, "; ")
 }
 
 // isRetryableStatus checks if a status code is retryable
