@@ -33,7 +33,7 @@ func (c *CotationsCollector) Name() string {
 // Collect fetches historical cotations
 func (c *CotationsCollector) Collect(ctx context.Context, req CollectRequest) (*CollectResult, error) {
 	code := parsers.NormalizeFundCode(req.FundCode)
-	days := 1825 // ~5 years
+	days := 3650 // ~10 years
 
 	if verboseLogs() {
 		log.Printf("[cotations] collecting cotations for %s (days=%d)\n", code, days)
