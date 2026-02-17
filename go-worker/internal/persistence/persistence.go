@@ -187,13 +187,28 @@ func calcYield(value, price float64) float64 {
 
 func (p *Persister) RecomputeDividendYields(ctx context.Context) (int64, error) {
 	res, err := p.db.ExecContext(ctx, `
-		UPDATE dividend d
-		SET yield = (d.value / c.price) * 100
-		FROM cotation c
-		WHERE d.fund_code = c.fund_code
-			AND d.date_iso = c.date_iso
+	UPDATE dividend d
+		SET yield = (
+		d.value / (
+			SELECT c.price
+			FROM cotation c
+			WHERE c.fund_code = d.fund_code
+			AND c.date_iso <= d.date_iso
 			AND c.price > 0
-			AND d.yield = 0
+			ORDER BY c.date_iso DESC
+			LIMIT 1
+		)
+		) * 100
+		WHERE 
+		d.yield = 0
+		AND d.value > 0
+		AND EXISTS (
+			SELECT 1
+			FROM cotation c
+			WHERE c.fund_code = d.fund_code
+			AND c.date_iso <= d.date_iso
+			AND c.price > 0
+		);
 	`)
 	if err != nil {
 		return 0, err
