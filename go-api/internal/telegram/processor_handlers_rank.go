@@ -2,7 +2,6 @@ package telegram
 
 import (
 	"context"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -51,6 +50,9 @@ func (p *Processor) handleRankHoje(ctx context.Context, chatID string, codes []s
 		}
 
 		pvp := exp.Metrics.Valuation.PVPCurrent
+		if !isFinite(pvp) || pvp <= 0 {
+			continue
+		}
 		dyMonthly := exp.Metrics.DividendYield.MonthlyMean
 		sharpe := exp.Metrics.Risk.Sharpe
 		todayReturn := exp.Metrics.Today.Return
@@ -105,24 +107,33 @@ func (p *Processor) handleRankV(ctx context.Context, chatID string) error {
 		}
 
 		pvp := exp.Metrics.Valuation.PVPCurrent
+		if !isFinite(pvp) || pvp <= 0 {
+			continue
+		}
 		dyMonthly := exp.Metrics.DividendYield.MonthlyMean
-		regularity := exp.Metrics.Dividends.Regularity
-		monthsWithoutPayment := exp.Metrics.Dividends.MonthsWithoutPayment
 		dividendCv := exp.Metrics.Dividends.CV
 		dividendTrend := exp.Metrics.Dividends.TrendSlope
 		drawdownMax := exp.Metrics.Risk.DrawdownMax
 		recoveryDays := exp.Metrics.Risk.RecoveryTimeDays
 		volAnnual := exp.Metrics.Risk.VolatilityAnnualized
 		pvpPercentile := exp.Metrics.Valuation.PVPPercentile
+		if !isFinite(pvpPercentile) || pvpPercentile <= 0 {
+			continue
+		}
 		liqMean := exp.Metrics.Liquidity.Mean
 		pctDaysTraded := exp.Metrics.Liquidity.PctDaysTraded
 		last3dReturn := exp.Metrics.Price.Last3dReturn
 		todayReturn := exp.Metrics.Today.Return
 
-		series, ok := lastYearDividendSeries(exp.Data.Dividends)
+		series, paidMonths, ok := last12MonthlyDividendSeries(exp.Data.Dividends, time.Now().UTC())
 		if !ok {
 			continue
 		}
+		if paidMonths < 12 {
+			continue
+		}
+		regularity := float64(paidMonths) / 12.0
+
 		dividendValues := make([]float64, 0, len(series))
 		for _, it := range series {
 			dividendValues = append(dividendValues, it.Value)
@@ -157,13 +168,10 @@ func (p *Processor) handleRankV(ctx context.Context, chatID string) error {
 		lastSpikeOk := !hasPrevMean || lastDividend <= prevMean*2.2
 		minOk := dividendMean > 0 && dividendMin >= dividendMean*0.4
 		regimeOk := !hasHalves || lastHalfMean <= firstHalfMean*1.8
-		regularityYear := math.Min(1, float64(len(series))/12.0)
 		notMelting := todayReturn > -0.01 && last3dReturn >= 0
 
 		if pvp <= 0.7 &&
 			dyMonthly > 0.0116 &&
-			monthsWithoutPayment == 0 &&
-			regularityYear >= 0.999 &&
 			dividendCv <= 0.6 &&
 			dividendTrend > 0 &&
 			drawdownMax > -0.25 &&
@@ -207,27 +215,49 @@ type dividendPoint struct {
 	Value float64
 }
 
-func lastYearDividendSeries(dividends []model.DividendData) ([]dividendPoint, bool) {
+func last12MonthlyDividendSeries(dividends []model.DividendData, now time.Time) ([]dividendPoint, int, bool) {
 	if len(dividends) == 0 {
-		return nil, false
+		return nil, 0, false
 	}
-	cutoff := time.Now().UTC().AddDate(-1, 0, 0).Format("2006-01-02")
-	out := make([]dividendPoint, 0, len(dividends))
+
+	lastDayPrevMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1)
+	endMonth := time.Date(lastDayPrevMonth.Year(), lastDayPrevMonth.Month(), 1, 0, 0, 0, 0, time.UTC)
+
+	months := make([]string, 0, 12)
+	for i := 11; i >= 0; i-- {
+		m := endMonth.AddDate(0, -i, 0)
+		months = append(months, m.Format("2006-01"))
+	}
+
+	dividendByMonth := map[string]float64{}
 	for _, d := range dividends {
 		if d.Type != model.Dividendos || d.Value <= 0 {
 			continue
 		}
 		iso := toDateIsoFromBr(d.Date)
-		if iso == "" || iso < cutoff {
+		if iso == "" {
+			iso = toDateIsoFromBr(d.Payment)
+		}
+		if len(iso) < 7 {
 			continue
 		}
-		out = append(out, dividendPoint{Iso: iso, Value: d.Value})
+		mk := iso[:7]
+		dividendByMonth[mk] += d.Value
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Iso < out[j].Iso })
-	if len(out) < 12 {
-		return nil, false
+
+	out := make([]dividendPoint, 0, 12)
+	paidMonths := 0
+	for _, mk := range months {
+		v := dividendByMonth[mk]
+		if v > 0 {
+			paidMonths++
+		}
+		out = append(out, dividendPoint{Iso: mk + "-01", Value: v})
 	}
-	return out, true
+	if paidMonths == 0 {
+		return nil, 0, false
+	}
+	return out, paidMonths, true
 }
 
 func toDateIsoFromBr(dateBr string) string {
