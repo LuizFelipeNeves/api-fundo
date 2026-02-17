@@ -48,43 +48,37 @@ CREATE TABLE IF NOT EXISTS fund_state (
 CREATE TABLE IF NOT EXISTS indicators_snapshot (
   id BIGSERIAL PRIMARY KEY,
   fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
-  fetched_at TIMESTAMPTZ NOT NULL,
+  fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   data_hash TEXT NOT NULL,
   data_json JSONB NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_indicators_snapshot_unique ON indicators_snapshot(fund_code);
-CREATE INDEX IF NOT EXISTS idx_indicators_snapshot_fund_date ON indicators_snapshot(fund_code, fetched_at DESC);
 
 CREATE TABLE IF NOT EXISTS cotation_today (
   fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
   date_iso DATE NOT NULL,
-  hour TEXT NOT NULL,
-  price DOUBLE PRECISION NOT NULL,
-  fetched_at TIMESTAMPTZ NOT NULL,
+  hour TIME NOT NULL,
+  price REAL NOT NULL,
+  fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (fund_code, date_iso, hour)
 );
-CREATE INDEX IF NOT EXISTS idx_cotation_today_fund_date_hour ON cotation_today(fund_code, date_iso DESC, hour ASC);
-
-DROP TABLE IF EXISTS cotations_today_snapshot;
 
 CREATE TABLE IF NOT EXISTS cotation (
   fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
   date_iso DATE NOT NULL,
-  price DOUBLE PRECISION NOT NULL,
+  price REAL NOT NULL,
   PRIMARY KEY (fund_code, date_iso)
 );
-CREATE INDEX IF NOT EXISTS idx_cotation_fund_date ON cotation(fund_code, date_iso DESC);
 
 CREATE TABLE IF NOT EXISTS dividend (
   fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
   date_iso DATE NOT NULL,
   payment DATE NOT NULL,
   type INTEGER NOT NULL,
-  value DOUBLE PRECISION NOT NULL,
-  yield DOUBLE PRECISION NOT NULL,
+  value REAL NOT NULL,
+  yield REAL NOT NULL,
   PRIMARY KEY (fund_code, date_iso, type)
 );
-CREATE INDEX IF NOT EXISTS idx_dividend_fund_date ON dividend(fund_code, date_iso DESC);
 
 CREATE TABLE IF NOT EXISTS document (
   fund_code TEXT NOT NULL REFERENCES fund_master(code) ON DELETE CASCADE,
@@ -130,6 +124,6 @@ CREATE TABLE IF NOT EXISTS telegram_pending_action (
 CREATE TABLE IF NOT EXISTS fund_cotation_stats (
   fund_code TEXT PRIMARY KEY REFERENCES fund_master(code) ON DELETE CASCADE,
   source_last_date_iso DATE NOT NULL,
-  computed_at TIMESTAMPTZ NOT NULL,
+  computed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   data_json JSONB NOT NULL
 );

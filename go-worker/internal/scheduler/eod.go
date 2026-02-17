@@ -16,8 +16,6 @@ func runEODCotation(ctx context.Context, tx *sql.Tx, dateISO string) (int, error
 			FROM cotation_today
 			WHERE date_iso = $1
 				AND price > 0
-				AND length(hour) = 5
-				AND substring(hour, 3, 1) = ':'
 			ORDER BY fund_code, hour DESC, fetched_at DESC
 		) t
 	`, dateISO)

@@ -300,7 +300,7 @@ func (s *Service) GetLatestCotationsToday(ctx context.Context, code string) ([]m
 	}
 
 	rows, err := s.DB.QueryContext(ctx, `
-		SELECT hour, price
+		SELECT to_char(hour, 'HH24:MI') as hour, price
 		FROM cotation_today
 		WHERE fund_code = $1 AND date_iso = $2
 		ORDER BY hour ASC

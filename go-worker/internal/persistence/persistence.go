@@ -290,7 +290,7 @@ func (p *Persister) PersistMarketSnapshot(ctx context.Context, data collectors.M
 
 	stmtCotationToday, err := tx.PrepareContext(ctx, `
 		INSERT INTO cotation_today (fund_code, date_iso, hour, price, fetched_at)
-		VALUES ($1, $2, $3, $4, NOW())
+		VALUES ($1, $2, $3::time, $4, NOW())
 		ON CONFLICT (fund_code, date_iso, hour) DO UPDATE SET
 			price = EXCLUDED.price,
 			fetched_at = NOW()
