@@ -324,6 +324,20 @@ func buildExportFundJSON(
 		pvpValues = append(pvpValues, p.Value)
 		pvpCurrent = p.Value
 	}
+	if pvpCurrent <= 0 && len(pvpValues) > 0 {
+		for i := len(pvpValues) - 1; i >= 0; i-- {
+			if pvpValues[i] > 0 {
+				pvpCurrent = pvpValues[i]
+				break
+			}
+		}
+	}
+	if pvpCurrent <= 0 && priceFinal > 0 && details != nil && details.ValorPatrimonialCota > 0 {
+		pvpCurrent = priceFinal / details.ValorPatrimonialCota
+	}
+	if len(pvpValues) == 0 && pvpCurrent > 0 {
+		pvpValues = append(pvpValues, pvpCurrent)
+	}
 	pvpMean := mean(pvpValues)
 	pvpMin := 0.0
 	pvpMax := 0.0
@@ -340,7 +354,10 @@ func buildExportFundJSON(
 		}
 	}
 	pvpStd := stdev(pvpValues)
-	pvpPercentile := percentileRank(pvpValues, pvpCurrent)
+	pvpPercentile := 1.0
+	if len(pvpValues) > 0 && pvpCurrent > 0 {
+		pvpPercentile = percentileRank(pvpValues, pvpCurrent)
+	}
 	pvpTimeAbove1 := 0.0
 	if len(pvpValues) > 0 {
 		count := 0
