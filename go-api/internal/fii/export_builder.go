@@ -152,6 +152,9 @@ func buildExportFundJSON(
 
 	monthLastPrice := map[string]float64{}
 	for _, it := range cotationItems {
+		if !isFiniteFloat(it.Price) || it.Price <= 0 {
+			continue
+		}
 		mk := toMonthKeyFromBr(it.Date)
 		if mk == "" {
 			continue
@@ -188,6 +191,9 @@ func buildExportFundJSON(
 		tmp := make([]model.DividendData, 0, len(dividends))
 		for _, d := range dividends {
 			iso := toDateIsoFromBr(d.Date)
+			if iso == "" {
+				iso = toDateIsoFromBr(d.Payment)
+			}
 			if iso == "" || iso < start || iso > end {
 				continue
 			}
@@ -241,6 +247,9 @@ func buildExportFundJSON(
 	dividendByMonth := map[string]float64{}
 	for _, d := range dividendsOnly {
 		mk := toMonthKeyFromBr(d.Date)
+		if mk == "" {
+			mk = toMonthKeyFromBr(d.Payment)
+		}
 		if mk == "" {
 			continue
 		}
