@@ -26,24 +26,9 @@ func (s *Scheduler) startBackfill(ctx context.Context) error {
 					return s.db.SelectFundsMissingDetails(ctx, s.cfg.BatchSize)
 				},
 			},
-			{
-				collector:      "cotations_today",
-				refillInterval: s.cfg.SchedulerInterval,
-				refill: func(ctx context.Context) ([]db.FundCandidate, error) {
-					return s.db.SelectFundsMissingCotationsToday(ctx, s.cfg.BatchSize)
-				},
-			},
 		},
 		func(ctx context.Context) (int, error) {
-			a, err := s.db.CountFundsMissingDetails(ctx)
-			if err != nil {
-				return 0, err
-			}
-			b, err := s.db.CountFundsMissingCotationsToday(ctx)
-			if err != nil {
-				return 0, err
-			}
-			return a + b, nil
+			return s.db.CountFundsMissingDetails(ctx)
 		},
 	); err != nil {
 		return err

@@ -9,10 +9,17 @@ import (
 func runEODCotation(ctx context.Context, tx *sql.Tx, dateISO string) (int, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT fund_code, price
-		FROM cotations_today_snapshot
-		WHERE date_iso = $1
-			AND price IS NOT NULL
-			AND price > 0
+		FROM (
+			SELECT DISTINCT ON (fund_code)
+				fund_code,
+				price
+			FROM cotation_today
+			WHERE date_iso = $1
+				AND price > 0
+				AND length(hour) = 5
+				AND substring(hour, 3, 1) = ':'
+			ORDER BY fund_code, hour DESC, fetched_at DESC
+		) t
 	`, dateISO)
 	if err != nil {
 		return 0, err

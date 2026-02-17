@@ -237,12 +237,12 @@ func (w *Worker) persistResult(
 		}
 		return w.persister.PersistIndicators(ctx, data)
 
-	case "cotations_today":
-		data, ok := result.Data.(collectors.CotationsTodayData)
+	case "market_snapshot":
+		data, ok := result.Data.(collectors.MarketSnapshotData)
 		if !ok {
-			return fmt.Errorf("invalid data type for cotations_today")
+			return fmt.Errorf("invalid data type for market_snapshot")
 		}
-		return w.persister.PersistCotationsToday(ctx, data)
+		return w.persister.PersistMarketSnapshot(ctx, data)
 
 	case "cotations":
 		items, ok := result.Data.([]collectors.CotationItem)

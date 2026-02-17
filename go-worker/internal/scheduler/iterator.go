@@ -27,6 +27,15 @@ type iteratorState struct {
 	singletonPending bool
 }
 
+func (it *iteratorState) isSingleton() bool {
+	switch it.collector {
+	case "fund_list", "market_snapshot":
+		return true
+	default:
+		return false
+	}
+}
+
 func nextRefillWithPhase(now time.Time, interval, phase time.Duration) time.Time {
 	if interval <= 0 {
 		return now
@@ -48,7 +57,7 @@ func nextRefillWithPhase(now time.Time, interval, phase time.Duration) time.Time
 }
 
 func (it *iteratorState) hasBuffered() bool {
-	if it.collector == "fund_list" {
+	if it.isSingleton() {
 		return it.singletonPending
 	}
 	return it.candidateIndex < len(it.candidates)
@@ -62,7 +71,7 @@ func (it *iteratorState) peek(ctx context.Context, now time.Time) (WorkItem, boo
 		return WorkItem{}, false
 	}
 
-	if it.collector == "fund_list" {
+	if it.isSingleton() {
 		if !it.singletonPending {
 			if it.nextRefill.IsZero() || !now.Before(it.nextRefill) {
 				it.singletonPending = true
@@ -118,7 +127,7 @@ func (it *iteratorState) peek(ctx context.Context, now time.Time) (WorkItem, boo
 }
 
 func (it *iteratorState) commit() {
-	if it.collector == "fund_list" {
+	if it.isSingleton() {
 		it.singletonPending = false
 		return
 	}

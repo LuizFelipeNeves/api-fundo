@@ -19,6 +19,7 @@ import (
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/httpclient"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/persistence"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/scheduler"
+	"github.com/luizfelipeneves/api-fundo/go-worker/internal/statusinvest"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/worker"
 )
 
@@ -118,13 +119,14 @@ func main() {
 	}
 
 	fnetClient := httpclient.NewFnetClient(cfg)
+	statusInvestSvc := statusinvest.NewAdvancedSearchService(httpClient)
 
 	// Initialize collector registry
 	registry := collectors.NewRegistry()
 	registry.Register(collectors.NewFundListCollector(httpClient))
 	registry.Register(collectors.NewFundDetailsCollector(httpClient))
 	registry.Register(collectors.NewIndicatorsCollector(httpClient, database))
-	registry.Register(collectors.NewCotationsTodayCollector(httpClient))
+	registry.Register(collectors.NewMarketSnapshotCollector(statusInvestSvc))
 	registry.Register(collectors.NewCotationsCollector(httpClient, database))
 	registry.Register(collectors.NewDocumentsCollector(fnetClient, database))
 

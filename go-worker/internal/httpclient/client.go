@@ -156,6 +156,31 @@ func (c *Client) PostFormStatusInvest(ctx context.Context, url string, formData 
 }
 
 // setInvestidor10Headers sets headers for investidor10.com.br requests
+func (c *Client) GetJSONStatusInvest(ctx context.Context, url string, result interface{}) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	c.setStatusInvestHeaders(req)
+
+	resp, err := c.doWithRetry(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+		return fmt.Errorf("failed to decode JSON: %w", err)
+	}
+
+	return nil
+}
+
 func (c *Client) setInvestidor10Headers(req *http.Request) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Accept-Language", "pt-BR,pt;q=0.9")

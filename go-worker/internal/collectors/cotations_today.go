@@ -2,76 +2,63 @@ package collectors
 
 import (
 	"context"
-	"fmt"
-	"log"
-	"net/url"
 	"time"
 
-	"github.com/luizfelipeneves/api-fundo/go-worker/internal/httpclient"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/parsers"
+	"github.com/luizfelipeneves/api-fundo/go-worker/internal/statusinvest"
 )
 
-// CotationsTodayCollector collects today's cotations from statusinvest
-type CotationsTodayCollector struct {
-	client *httpclient.Client
+type MarketSnapshotCollector struct {
+	svc *statusinvest.AdvancedSearchService
 }
 
-// NewCotationsTodayCollector creates a new cotations_today collector
-func NewCotationsTodayCollector(client *httpclient.Client) *CotationsTodayCollector {
-	return &CotationsTodayCollector{client: client}
+func NewMarketSnapshotCollector(svc *statusinvest.AdvancedSearchService) *MarketSnapshotCollector {
+	return &MarketSnapshotCollector{svc: svc}
 }
 
-// Name returns the collector name
-func (c *CotationsTodayCollector) Name() string {
-	return "cotations_today"
+func (c *MarketSnapshotCollector) Name() string {
+	return "market_snapshot"
 }
 
-// Collect fetches today's cotations from statusinvest.com.br
-func (c *CotationsTodayCollector) Collect(ctx context.Context, req CollectRequest) (*CollectResult, error) {
-	code := parsers.NormalizeFundCode(req.FundCode)
-	if verboseLogs() {
-		log.Printf("[cotations_today] collecting today's cotations for %s\n", code)
-	}
-
-	// Build form data
-	params := url.Values{}
-	params.Set("ticker", code)
-	params.Set("type", "-1")
-	params.Add("currences[]", "1")
-
-	// POST to statusinvest API
-	var rawData interface{}
-	err := c.client.PostFormStatusInvest(
-		ctx,
-		httpclient.StatusInvestBase+"/fii/tickerprice",
-		params.Encode(),
-		&rawData,
-	)
+func (c *MarketSnapshotCollector) Collect(ctx context.Context, req CollectRequest) (*CollectResult, error) {
+	quotes, err := c.svc.ListQuotes(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch cotations today: %w", err)
+		return nil, err
 	}
 
-	// Normalize data
-	data := parsers.NormalizeCotationsToday(rawData)
+	now := time.Now().In(time.Local)
+	dateISO := now.Format("2006-01-02")
+	hour := now.Format("15:04")
+	fetchedAt := now.UTC().Format(time.RFC3339)
 
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	dateISO := timestamp[:10] // YYYY-MM-DD
+	items := make([]MarketSnapshotItem, 0, len(quotes))
+	for _, q := range quotes {
+		code := parsers.NormalizeFundCode(q.Ticker)
+		if code == "" || q.Price <= 0 {
+			continue
+		}
+		items = append(items, MarketSnapshotItem{FundCode: code, Price: q.Price})
+	}
 
 	return &CollectResult{
-		Data: CotationsTodayData{
-			FundCode:  code,
+		Data: MarketSnapshotData{
 			DateISO:   dateISO,
-			FetchedAt: timestamp,
-			Data:      data,
+			Hour:      hour,
+			FetchedAt: fetchedAt,
+			Items:     items,
 		},
-		Timestamp: timestamp,
+		Timestamp: fetchedAt,
 	}, nil
 }
 
-// CotationsTodayData represents today's cotation data
-type CotationsTodayData struct {
-	FundCode  string
+type MarketSnapshotItem struct {
+	FundCode string
+	Price    float64
+}
+
+type MarketSnapshotData struct {
 	DateISO   string
+	Hour      string
 	FetchedAt string
-	Data      parsers.CotationsTodayData
+	Items     []MarketSnapshotItem
 }

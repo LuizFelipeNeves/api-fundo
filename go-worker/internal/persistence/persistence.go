@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/lib/pq"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/collectors"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/db"
 )
@@ -223,10 +224,9 @@ func (p *Persister) PersistIndicators(ctx context.Context, data collectors.Indic
 	return p.db.UpdateFundStateTimestamp(ctx, data.FundCode, "last_indicators_at", time.Now())
 }
 
-// PersistCotationsToday persists today's cotations snapshot
-func (p *Persister) PersistCotationsToday(ctx context.Context, data collectors.CotationsTodayData) error {
-	if len(data.Data) == 0 {
-		return p.db.UpdateFundStateTimestamp(ctx, data.FundCode, "last_cotations_today_at", time.Now())
+func (p *Persister) PersistMarketSnapshot(ctx context.Context, data collectors.MarketSnapshotData) error {
+	if data.DateISO == "" || data.Hour == "" || len(data.Items) == 0 {
+		return nil
 	}
 
 	tx, err := p.db.BeginTx(ctx, nil)
@@ -235,7 +235,45 @@ func (p *Persister) PersistCotationsToday(ctx context.Context, data collectors.C
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.PrepareContext(ctx, `
+	seen := make(map[string]struct{}, len(data.Items))
+	codes := make([]string, 0, len(data.Items))
+	for _, it := range data.Items {
+		if it.FundCode == "" || it.Price <= 0 {
+			continue
+		}
+		if _, ok := seen[it.FundCode]; ok {
+			continue
+		}
+		seen[it.FundCode] = struct{}{}
+		codes = append(codes, it.FundCode)
+	}
+	if len(codes) == 0 {
+		return nil
+	}
+
+	rows, err := tx.QueryContext(ctx, `SELECT code FROM fund_master WHERE code = ANY($1)`, pq.Array(codes))
+	if err != nil {
+		return fmt.Errorf("failed to list existing fund_master codes: %w", err)
+	}
+	allowed := make(map[string]struct{}, len(codes))
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			rows.Close()
+			return fmt.Errorf("failed to scan existing fund_master code: %w", err)
+		}
+		allowed[code] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("failed to iterate existing fund_master codes: %w", err)
+	}
+	_ = rows.Close()
+	if len(allowed) == 0 {
+		return nil
+	}
+
+	stmtCotationToday, err := tx.PrepareContext(ctx, `
 		INSERT INTO cotation_today (fund_code, date_iso, hour, price, fetched_at)
 		VALUES ($1, $2, $3, $4, NOW())
 		ON CONFLICT (fund_code, date_iso, hour) DO UPDATE SET
@@ -245,15 +283,35 @@ func (p *Persister) PersistCotationsToday(ctx context.Context, data collectors.C
 	if err != nil {
 		return fmt.Errorf("failed to prepare cotation_today statement: %w", err)
 	}
-	defer stmt.Close()
+	defer stmtCotationToday.Close()
 
-	for _, it := range data.Data {
-		if it.Hour == "" || it.Price <= 0 {
+	stmtFundState, err := tx.PrepareContext(ctx, `
+		INSERT INTO fund_state (fund_code, last_cotations_today_at, created_at, updated_at)
+		VALUES ($1, NOW(), NOW(), NOW())
+		ON CONFLICT (fund_code) DO UPDATE SET
+			last_cotations_today_at = NOW(),
+			updated_at = NOW()
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare fund_state statement: %w", err)
+	}
+	defer stmtFundState.Close()
+
+	for _, it := range data.Items {
+		if it.FundCode == "" || it.Price <= 0 {
 			continue
 		}
 
-		if _, err := stmt.ExecContext(ctx, data.FundCode, data.DateISO, it.Hour, it.Price); err != nil {
-			return fmt.Errorf("failed to insert cotation_today: %w", err)
+		if _, ok := allowed[it.FundCode]; !ok {
+			continue
+		}
+
+		if _, err := stmtCotationToday.ExecContext(ctx, it.FundCode, data.DateISO, data.Hour, it.Price); err != nil {
+			return fmt.Errorf("failed to upsert cotation_today: %w", err)
+		}
+
+		if _, err := stmtFundState.ExecContext(ctx, it.FundCode); err != nil {
+			return fmt.Errorf("failed to upsert fund_state: %w", err)
 		}
 	}
 
@@ -261,7 +319,7 @@ func (p *Persister) PersistCotationsToday(ctx context.Context, data collectors.C
 		return fmt.Errorf("failed to commit: %w", err)
 	}
 
-	return p.db.UpdateFundStateTimestamp(ctx, data.FundCode, "last_cotations_today_at", time.Now())
+	return nil
 }
 
 // PersistHistoricalCotations persists historical cotations

@@ -47,3 +47,30 @@ func (s *Scheduler) shouldRunEOD(now time.Time) bool {
 	total := now.Hour()*60 + now.Minute()
 	return total >= 1140 && total <= 1150
 }
+
+func (s *Scheduler) shouldRunMarketSnapshot(now time.Time) bool {
+	if os.Getenv("FORCE_RUN_JOBS") == "true" {
+		return true
+	}
+
+	if now.Weekday() == time.Saturday || now.Weekday() == time.Sunday {
+		return false
+	}
+
+	hour := now.Hour()
+	minute := now.Minute()
+	total := hour*60 + minute
+
+	if total < 601 || total > 1135 {
+		return false
+	}
+
+	if total == 601 {
+		return true
+	}
+	if total < 605 {
+		return false
+	}
+
+	return minute%5 == 0
+}

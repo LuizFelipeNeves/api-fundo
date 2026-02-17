@@ -17,19 +17,16 @@ func (s *Scheduler) startNormal(ctx context.Context) error {
 			enabled:        s.isIndicatorsWindow,
 		},
 		{
+			collector:      "market_snapshot",
+			refillInterval: time.Minute,
+			enabled:        s.shouldRunMarketSnapshot,
+		},
+		{
 			collector:      "fund_details",
 			refillInterval: s.cfg.SchedulerInterval,
 			enabled:        s.isBusinessHours,
 			refill: func(ctx context.Context) ([]db.FundCandidate, error) {
 				return s.db.SelectFundsForDetails(ctx, s.cfg.IntervalFundDetailsMin, s.cfg.BatchSize)
-			},
-		},
-		{
-			collector:      "cotations_today",
-			refillInterval: s.cfg.SchedulerInterval,
-			enabled:        s.isBusinessHours,
-			refill: func(ctx context.Context) ([]db.FundCandidate, error) {
-				return s.db.SelectFundsForCotationsToday(ctx, s.cfg.IntervalCotationsTodayMin, s.cfg.BatchSize)
 			},
 		},
 		{
@@ -65,6 +62,9 @@ func (s *Scheduler) startNormal(ctx context.Context) error {
 	if s.cfg.SchedulerInterval > 0 && len(iters) > 0 {
 		spread := s.cfg.SchedulerInterval / time.Duration(len(iters))
 		for i := range iters {
+			if iters[i].collector == "market_snapshot" {
+				continue
+			}
 			iters[i].phase = time.Duration(i) * spread
 		}
 	}
