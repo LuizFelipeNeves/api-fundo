@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 type Client struct {
@@ -111,6 +112,26 @@ func (c *Client) SendText(ctx context.Context, chatID string, text string, reply
 	if chatID == "" {
 		return fmt.Errorf("chat_id is empty")
 	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+
+	const safeMaxChars = 3900
+	chunks := splitTelegramText(text, safeMaxChars)
+	for i, chunk := range chunks {
+		var rm *ReplyMarkup
+		if i == 0 {
+			rm = replyMarkup
+		}
+		if err := c.sendTextOnce(ctx, chatID, token, chunk, rm); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Client) sendTextOnce(ctx context.Context, chatID string, token string, text string, replyMarkup *ReplyMarkup) error {
 
 	type reqBody struct {
 		ChatID                string       `json:"chat_id"`
@@ -203,4 +224,68 @@ func redactTelegramToken(s string, token string) string {
 		return s
 	}
 	return strings.ReplaceAll(s, token, "<redacted>")
+}
+
+func splitTelegramText(text string, maxChars int) []string {
+	if maxChars <= 0 {
+		return []string{text}
+	}
+	if utf8.RuneCountInString(text) <= maxChars {
+		return []string{text}
+	}
+
+	lines := strings.Split(text, "\n")
+	out := make([]string, 0, 2)
+	cur := ""
+
+	flush := func() {
+		if strings.TrimSpace(cur) == "" {
+			cur = ""
+			return
+		}
+		out = append(out, strings.TrimSpace(cur))
+		cur = ""
+	}
+
+	for _, line := range lines {
+		if strings.TrimSpace(cur) == "" {
+			cur = line
+		} else {
+			cur = cur + "\n" + line
+		}
+
+		if utf8.RuneCountInString(cur) <= maxChars {
+			continue
+		}
+
+		parts := strings.Split(cur, "\n")
+		if len(parts) >= 2 {
+			cur = strings.Join(parts[:len(parts)-1], "\n")
+			flush()
+			cur = parts[len(parts)-1]
+		}
+
+		if utf8.RuneCountInString(cur) <= maxChars {
+			continue
+		}
+
+		r := []rune(cur)
+		for i := 0; i < len(r); i += maxChars {
+			j := i + maxChars
+			if j > len(r) {
+				j = len(r)
+			}
+			seg := strings.TrimSpace(string(r[i:j]))
+			if seg != "" {
+				out = append(out, seg)
+			}
+		}
+		cur = ""
+	}
+
+	flush()
+	if len(out) == 0 {
+		return []string{strings.TrimSpace(text)}
+	}
+	return out
 }

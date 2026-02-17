@@ -268,7 +268,12 @@ func FormatRankHojeMessage(items []RankHojeItem, total int, missing []string) st
 	}
 
 	lines = append(lines, "", "Aporte Prioritário:")
-	for i, it := range items {
+	maxItems := 20
+	shown := items
+	if maxItems > 0 && len(items) > maxItems {
+		shown = items[:maxItems]
+	}
+	for i, it := range shown {
 		lines = append(lines, fmt.Sprintf(
 			"%d. %s — Dia %s | P/VP %s | DY mensal %s | Sharpe %s",
 			i+1,
@@ -278,6 +283,9 @@ func FormatRankHojeMessage(items []RankHojeItem, total int, missing []string) st
 			formatPctPtBR(it.DividendYieldMonthly, 2),
 			formatNumberPtBR(it.Sharpe, 2),
 		))
+	}
+	if len(shown) < len(items) {
+		lines = append(lines, fmt.Sprintf("… +%d itens", len(items)-len(shown)))
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
@@ -294,7 +302,12 @@ func FormatRankVMessage(items []RankVItem, total int) string {
 	}
 
 	lines = append(lines, "", "Aporte Prioritário:")
-	for i, it := range items {
+	maxItems := 20
+	shown := items
+	if maxItems > 0 && len(items) > maxItems {
+		shown = items[:maxItems]
+	}
+	for i, it := range shown {
 		lines = append(lines, fmt.Sprintf(
 			"%d. %s — Dia %s | P/VP %s | DY mensal %s | Regularidade %s",
 			i+1,
@@ -304,6 +317,9 @@ func FormatRankVMessage(items []RankVItem, total int) string {
 			formatPctPtBR(it.DividendYieldMonthly, 2),
 			formatPctPtBR(it.Regularity, 1),
 		))
+	}
+	if len(shown) < len(items) {
+		lines = append(lines, fmt.Sprintf("… +%d itens", len(items)-len(shown)))
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
