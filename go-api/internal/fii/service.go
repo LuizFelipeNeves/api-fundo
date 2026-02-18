@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -317,6 +316,329 @@ func (s *Service) ListFundMetricsLatest(ctx context.Context, codes []string) ([]
 	return out, nil
 }
 
+type RankHojeSource struct {
+	Code                string
+	PVPCurrent          float64
+	DYMonthlyMean       float64
+	Sharpe              float64
+	TodayReturn         float64
+	PriceLast3dReturn   float64
+	Vacancia            float64
+	VacanciaValid       bool
+	DailyLiquidity      float64
+	DailyLiquidityValid bool
+}
+
+func (s *Service) ListRankHojeSources(ctx context.Context, codes []string) ([]RankHojeSource, error) {
+	if len(codes) == 0 {
+		return []RankHojeSource{}, nil
+	}
+
+	rows, err := s.DB.QueryContext(ctx, `
+		WITH m AS (
+			SELECT
+				fund_code,
+				COALESCE(pvp_current, 0) AS pvp_current,
+				COALESCE(dy_monthly_mean, 0) AS dy_monthly_mean,
+				COALESCE(sharpe, 0) AS sharpe,
+				COALESCE(today_return, 0) AS today_return,
+				COALESCE(price_last3d_return, 0) AS price_last3d_return
+			FROM fund_metrics_latest
+			WHERE fund_code = ANY($1)
+		)
+		SELECT
+			f.code,
+			m.pvp_current,
+			m.dy_monthly_mean,
+			m.sharpe,
+			m.today_return,
+			m.price_last3d_return,
+			f.vacancia,
+			f.daily_liquidity
+		FROM m
+		JOIN fund_master f ON f.code = m.fund_code
+		WHERE
+			m.pvp_current > 0
+			AND m.dy_monthly_mean > 0
+		ORDER BY m.today_return DESC
+		LIMIT 20
+	`, pq.Array(codes))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]RankHojeSource, 0, 20)
+	for rows.Next() {
+		var (
+			code          string
+			pvpCurrent    float64
+			dyMonthlyMean float64
+			sharpe        float64
+			todayReturn   float64
+			last3dReturn  float64
+			vacancia      sql.NullFloat64
+			daily         sql.NullFloat64
+		)
+		if err := rows.Scan(
+			&code,
+			&pvpCurrent,
+			&dyMonthlyMean,
+			&sharpe,
+			&todayReturn,
+			&last3dReturn,
+			&vacancia,
+			&daily,
+		); err != nil {
+			return nil, err
+		}
+
+		out = append(out, RankHojeSource{
+			Code:                strings.ToUpper(strings.TrimSpace(code)),
+			PVPCurrent:          pvpCurrent,
+			DYMonthlyMean:       dyMonthlyMean,
+			Sharpe:              sharpe,
+			TodayReturn:         todayReturn,
+			PriceLast3dReturn:   last3dReturn,
+			Vacancia:            nullFloat(vacancia),
+			VacanciaValid:       vacancia.Valid,
+			DailyLiquidity:      nullFloat(daily),
+			DailyLiquidityValid: daily.Valid,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+type RankVCandidate struct {
+	Code                  string
+	PVPCurrent            float64
+	DYMonthlyMean         float64
+	TodayReturn           float64
+	DividendRegularity12m float64
+	DividendMean12m       float64
+	DividendPrevMean11m   float64
+	DividendFirstHalfMean float64
+	DividendLastHalfMean  float64
+	DividendMax12m        float64
+	DividendMin12m        float64
+	DividendLastValue     float64
+}
+
+func (s *Service) ListRankVCandidates(ctx context.Context, codes []string) ([]RankVCandidate, error) {
+	if len(codes) == 0 {
+		return []RankVCandidate{}, nil
+	}
+
+	rows, err := s.DB.QueryContext(ctx, `
+		SELECT
+			fund_code,
+			COALESCE(pvp_current, 0),
+			COALESCE(dy_monthly_mean, 0),
+			COALESCE(today_return, 0),
+			COALESCE(dividend_regularity_12m, 0),
+			COALESCE(dividend_mean_12m, 0),
+			COALESCE(dividend_prev_mean_11m, 0),
+			COALESCE(dividend_first_half_mean_12m, 0),
+			COALESCE(dividend_last_half_mean_12m, 0),
+			COALESCE(dividend_max_12m, 0),
+			COALESCE(dividend_min_12m, 0),
+			COALESCE(dividend_last_value, 0)
+		FROM fund_metrics_latest
+		WHERE fund_code = ANY($1)
+			AND COALESCE(pvp_current, 1e9) <= 0.7
+			AND COALESCE(dy_monthly_mean, 0) > 0.0116
+			AND COALESCE(dividend_cv, 1e9) <= 0.6
+			AND COALESCE(dividend_trend_slope, -1e9) > 0
+			AND COALESCE(drawdown_max, -1e9) > -0.25
+			AND COALESCE(recovery_time_days, 1e9) <= 120
+			AND COALESCE(vol_annual, 1e9) <= 0.3
+			AND COALESCE(pvp_percentile, 1e9) <= 0.25
+			AND COALESCE(liq_mean, 0) >= 400000
+			AND COALESCE(pct_days_traded, 0) >= 0.95
+			AND COALESCE(price_last3d_return, -1e9) >= 0
+			AND COALESCE(today_return, -1e9) > -0.01
+			AND COALESCE(dividend_paid_months_12m, 0) >= 12
+	`, pq.Array(codes))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]RankVCandidate, 0, 20)
+	for rows.Next() {
+		var (
+			code                  string
+			pvp                   float64
+			dyMonthly             float64
+			todayReturn           float64
+			regularity12m         float64
+			dividendMean12m       float64
+			dividendPrevMean11m   float64
+			dividendFirstHalfMean float64
+			dividendLastHalfMean  float64
+			dividendMax12m        float64
+			dividendMin12m        float64
+			dividendLastValue     float64
+		)
+		if err := rows.Scan(
+			&code,
+			&pvp,
+			&dyMonthly,
+			&todayReturn,
+			&regularity12m,
+			&dividendMean12m,
+			&dividendPrevMean11m,
+			&dividendFirstHalfMean,
+			&dividendLastHalfMean,
+			&dividendMax12m,
+			&dividendMin12m,
+			&dividendLastValue,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, RankVCandidate{
+			Code:                  strings.ToUpper(strings.TrimSpace(code)),
+			PVPCurrent:            pvp,
+			DYMonthlyMean:         dyMonthly,
+			TodayReturn:           todayReturn,
+			DividendRegularity12m: regularity12m,
+			DividendMean12m:       dividendMean12m,
+			DividendPrevMean11m:   dividendPrevMean11m,
+			DividendFirstHalfMean: dividendFirstHalfMean,
+			DividendLastHalfMean:  dividendLastHalfMean,
+			DividendMax12m:        dividendMax12m,
+			DividendMin12m:        dividendMin12m,
+			DividendLastValue:     dividendLastValue,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+type CotationStats struct {
+	AsOfISO      string
+	LastPrice    float64
+	Ret7         *float64
+	Ret30        *float64
+	Ret90        *float64
+	DrawdownMax  *float64
+	VolAnnual30d *float64
+	VolAnnual90d *float64
+}
+
+func (s *Service) GetCotationStats(ctx context.Context, fundCode string) (*CotationStats, bool, error) {
+	code := strings.ToUpper(strings.TrimSpace(fundCode))
+	if code == "" {
+		return nil, false, nil
+	}
+
+	var (
+		asOf         sql.NullString
+		lastPrice    sql.NullFloat64
+		ret7         sql.NullFloat64
+		ret30        sql.NullFloat64
+		ret90        sql.NullFloat64
+		drawdownMax  sql.NullFloat64
+		volAnnual30d sql.NullFloat64
+		volAnnual90d sql.NullFloat64
+	)
+
+	if err := s.DB.QueryRowContext(ctx, `
+		WITH
+		prices AS (
+			SELECT date_iso, price_int
+			FROM cotation
+			WHERE fund_code = $1
+			ORDER BY date_iso DESC
+			LIMIT 91
+		),
+		ordered AS (
+			SELECT date_iso, price_int, ROW_NUMBER() OVER (ORDER BY date_iso DESC) AS rn
+			FROM prices
+		),
+		vol30 AS (
+			SELECT sqrt(252) * stddev_samp(r) AS v
+			FROM (
+				SELECT (price_int::double precision / NULLIF(lag(price_int) OVER (ORDER BY date_iso), 0)::double precision) - 1 AS r
+				FROM (
+					SELECT date_iso, price_int
+					FROM prices
+					ORDER BY date_iso DESC
+					LIMIT 31
+				) p
+				ORDER BY date_iso
+			) x
+			WHERE r IS NOT NULL
+		),
+		vol90 AS (
+			SELECT sqrt(252) * stddev_samp(r) AS v
+			FROM (
+				SELECT (price_int::double precision / NULLIF(lag(price_int) OVER (ORDER BY date_iso), 0)::double precision) - 1 AS r
+				FROM (
+					SELECT date_iso, price_int
+					FROM prices
+					ORDER BY date_iso DESC
+					LIMIT 91
+				) p
+				ORDER BY date_iso
+			) x
+			WHERE r IS NOT NULL
+		)
+		SELECT
+			MAX(CASE WHEN rn = 1 THEN date_iso END)::text AS as_of,
+			MAX(CASE WHEN rn = 1 THEN price_int END)::double precision / 10000.0 AS last_price,
+			CASE
+				WHEN MAX(CASE WHEN rn = 8 THEN price_int END) IS NOT NULL AND MAX(CASE WHEN rn = 8 THEN price_int END) > 0
+					THEN (MAX(CASE WHEN rn = 1 THEN price_int END)::double precision / MAX(CASE WHEN rn = 8 THEN price_int END)::double precision) - 1
+				ELSE NULL
+			END AS ret_7,
+			CASE
+				WHEN MAX(CASE WHEN rn = 31 THEN price_int END) IS NOT NULL AND MAX(CASE WHEN rn = 31 THEN price_int END) > 0
+					THEN (MAX(CASE WHEN rn = 1 THEN price_int END)::double precision / MAX(CASE WHEN rn = 31 THEN price_int END)::double precision) - 1
+				ELSE NULL
+			END AS ret_30,
+			CASE
+				WHEN MAX(CASE WHEN rn = 91 THEN price_int END) IS NOT NULL AND MAX(CASE WHEN rn = 91 THEN price_int END) > 0
+					THEN (MAX(CASE WHEN rn = 1 THEN price_int END)::double precision / MAX(CASE WHEN rn = 91 THEN price_int END)::double precision) - 1
+				ELSE NULL
+			END AS ret_90,
+			(SELECT drawdown_max::double precision FROM fund_metrics_latest WHERE fund_code = $1) AS drawdown_max,
+			(SELECT v FROM vol30) AS vol_30,
+			(SELECT v FROM vol90) AS vol_90
+		FROM ordered
+	`, code).Scan(&asOf, &lastPrice, &ret7, &ret30, &ret90, &drawdownMax, &volAnnual30d, &volAnnual90d); err != nil {
+		return nil, false, err
+	}
+
+	if !asOf.Valid || !lastPrice.Valid || lastPrice.Float64 <= 0 {
+		return nil, false, nil
+	}
+
+	toPtr := func(v sql.NullFloat64) *float64 {
+		if !v.Valid {
+			return nil
+		}
+		x := v.Float64
+		return &x
+	}
+
+	return &CotationStats{
+		AsOfISO:      asOf.String,
+		LastPrice:    lastPrice.Float64,
+		Ret7:         toPtr(ret7),
+		Ret30:        toPtr(ret30),
+		Ret90:        toPtr(ret90),
+		DrawdownMax:  toPtr(drawdownMax),
+		VolAnnual30d: toPtr(volAnnual30d),
+		VolAnnual90d: toPtr(volAnnual90d),
+	}, true, nil
+}
+
 var fiiCodeRe = regexp.MustCompile(`^[A-Za-z]{4}11$`)
 var isoDateRe = regexp.MustCompile(`^(\d{4})-(\d{2})-(\d{2})`)
 
@@ -329,11 +651,15 @@ func ValidateFundCode(raw string) (string, bool) {
 }
 
 func toDateBrFromIso(dateIso string) string {
-	m := isoDateRe.FindStringSubmatch(strings.TrimSpace(dateIso))
-	if len(m) != 4 {
+	v := strings.TrimSpace(dateIso)
+	if v == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s/%s/%s", m[3], m[2], m[1])
+	t, err := time.Parse("2006-01-02", v)
+	if err != nil {
+		return ""
+	}
+	return t.Format("02/01/2006")
 }
 
 func (s *Service) ListFunds(ctx context.Context) (model.FundListResponse, error) {

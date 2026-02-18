@@ -1,24 +1,26 @@
 package fii
 
 import (
-	"regexp"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
 )
 
-var brDateRe = regexp.MustCompile(`^(\d{2})/(\d{2})/(\d{4})$`)
-
-func toDateIsoFromBr(dateBr string) string {
-	m := brDateRe.FindStringSubmatch(strings.TrimSpace(dateBr))
-	if len(m) != 4 {
+func ToDateISOFromBR(dateBr string) string {
+	v := strings.TrimSpace(dateBr)
+	if v == "" {
 		return ""
 	}
-	return m[3] + "-" + m[2] + "-" + m[1]
+	t, err := time.Parse("02/01/2006", v)
+	if err != nil {
+		return ""
+	}
+	return t.Format("2006-01-02")
 }
 
 func toMonthKeyFromBr(dateBr string) string {
-	iso := toDateIsoFromBr(dateBr)
+	iso := ToDateISOFromBR(dateBr)
 	if len(iso) < 7 {
 		return ""
 	}
@@ -60,23 +62,11 @@ func monthKeyAdd(monthKey string, deltaMonths int) string {
 }
 
 func leftPad2(v int) string {
-	if v < 10 {
-		return "0" + strconv.Itoa(v)
-	}
-	return strconv.Itoa(v)
+	return fmt.Sprintf("%02d", v)
 }
 
 func leftPad4(v int) string {
-	if v < 10 {
-		return "000" + strconv.Itoa(v)
-	}
-	if v < 100 {
-		return "00" + strconv.Itoa(v)
-	}
-	if v < 1000 {
-		return "0" + strconv.Itoa(v)
-	}
-	return strconv.Itoa(v)
+	return fmt.Sprintf("%04d", v)
 }
 
 func listMonthKeysBetweenInclusive(startKey string, endKey string) []string {

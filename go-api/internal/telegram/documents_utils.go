@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,9 +15,20 @@ import (
 )
 
 func isHTMLFilenameOrContentType(filename string, contentType string) bool {
-	ct := strings.ToLower(strings.TrimSpace(contentType))
-	name := strings.ToLower(strings.TrimSpace(filename))
-	return strings.Contains(ct, "html") || strings.HasSuffix(name, ".html") || strings.HasSuffix(name, ".htm")
+	name := strings.TrimSpace(filename)
+	if ext := strings.ToLower(filepath.Ext(name)); ext == ".html" || ext == ".htm" {
+		return true
+	}
+
+	ct := strings.TrimSpace(contentType)
+	if ct == "" {
+		return false
+	}
+	mediaType, _, err := mime.ParseMediaType(ct)
+	if err != nil {
+		mediaType = ct
+	}
+	return strings.Contains(strings.ToLower(mediaType), "html")
 }
 
 func writeTempJSONFile(data any, pattern string) (filePath string, err error) {

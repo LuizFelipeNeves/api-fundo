@@ -57,17 +57,17 @@ func (s *Service) ExportFund(ctx context.Context, code string, opts ExportFundOp
 	if len(cotationItems) > 0 {
 		periodStart = cotationItems[0].Date
 		periodEnd = cotationItems[len(cotationItems)-1].Date
-		startISO = toDateIsoFromBr(periodStart)
-		endISO = toDateIsoFromBr(periodEnd)
+		startISO = ToDateISOFromBR(periodStart)
+		endISO = ToDateISOFromBR(periodEnd)
 	}
 
 	dividendsInPeriod := dividends
 	if startISO != "" && endISO != "" {
 		tmp := make([]model.DividendData, 0, len(dividends))
 		for _, d := range dividends {
-			iso := toDateIsoFromBr(d.Date)
+			iso := ToDateISOFromBR(d.Date)
 			if iso == "" {
-				iso = toDateIsoFromBr(d.Payment)
+				iso = ToDateISOFromBR(d.Payment)
 			}
 			if iso == "" || iso < startISO || iso > endISO {
 				continue

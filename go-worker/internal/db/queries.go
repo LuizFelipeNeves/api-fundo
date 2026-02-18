@@ -17,10 +17,10 @@ type FundCandidate struct {
 }
 
 const (
-	TaskDetails   = 1
-	TaskDocuments = 2
+	TaskDetails    = 1
+	TaskDocuments  = 2
 	TaskIndicators = 4
-	TaskCotations = 8
+	TaskCotations  = 8
 )
 
 func (db *DB) SelectFundsForPipeline(ctx context.Context, detailsIntervalMin, documentsIntervalMin, cotationsIntervalMin int, indicatorsCutoff *time.Time, limit int) ([]FundCandidate, error) {

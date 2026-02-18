@@ -27,7 +27,7 @@ func buildExportFundJSON(
 		if isFiniteFloat(it.Price) && it.Price > 0 {
 			cotationPrices = append(cotationPrices, it.Price)
 		}
-		if iso := toDateIsoFromBr(it.Date); iso != "" {
+		if iso := ToDateISOFromBR(it.Date); iso != "" {
 			cotationDatesIso = append(cotationDatesIso, iso)
 		}
 	}
@@ -190,9 +190,9 @@ func buildExportFundJSON(
 		end := cotationDatesIso[len(cotationDatesIso)-1]
 		tmp := make([]model.DividendData, 0, len(dividends))
 		for _, d := range dividends {
-			iso := toDateIsoFromBr(d.Date)
+			iso := ToDateISOFromBR(d.Date)
 			if iso == "" {
-				iso = toDateIsoFromBr(d.Payment)
+				iso = ToDateISOFromBR(d.Payment)
 			}
 			if iso == "" || iso < start || iso > end {
 				continue
@@ -291,7 +291,7 @@ func buildExportFundJSON(
 
 	paymentIso := make([]string, 0, len(dividendsOnly))
 	for _, d := range dividendsOnly {
-		if iso := toDateIsoFromBr(d.Payment); iso != "" {
+		if iso := ToDateISOFromBR(d.Payment); iso != "" {
 			paymentIso = append(paymentIso, iso)
 		}
 	}

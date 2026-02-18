@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lib/pq"
+	"github.com/luizfelipeneves/api-fundo/go-worker/internal/analytics"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/collectors"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/db"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/parsers"
@@ -722,236 +723,6 @@ func (p *Persister) PersistDocuments(ctx context.Context, fundCode string, items
 	return nil
 }
 
-type drawdownResult struct {
-	MaxDrawdown     float64
-	MaxRecoveryDays int
-}
-
-func computeDrawdown(prices []float64) drawdownResult {
-	peak := math.Inf(-1)
-	maxDrawdown := 0.0
-	maxRecovery := 0
-
-	currentPeakIndex := 0
-	currentPeak := 0.0
-	if len(prices) > 0 {
-		currentPeak = prices[0]
-	}
-	peak = currentPeak
-
-	inDrawdown := false
-	drawdownStartIndex := 0
-	drawdownPeakValue := currentPeak
-
-	for i := 0; i < len(prices); i++ {
-		price := prices[i]
-		if price <= 0 {
-			continue
-		}
-
-		if price > peak {
-			peak = price
-		}
-
-		dd := 0.0
-		if peak > 0 {
-			dd = price/peak - 1
-		}
-		if dd < maxDrawdown {
-			maxDrawdown = dd
-		}
-
-		if !inDrawdown {
-			if price < currentPeak && currentPeak > 0 {
-				inDrawdown = true
-				drawdownStartIndex = currentPeakIndex
-				drawdownPeakValue = currentPeak
-			} else if price >= currentPeak {
-				currentPeak = price
-				currentPeakIndex = i
-			}
-			continue
-		}
-
-		if price >= drawdownPeakValue {
-			recovery := i - drawdownStartIndex
-			if recovery > maxRecovery {
-				maxRecovery = recovery
-			}
-			inDrawdown = false
-			currentPeak = price
-			currentPeakIndex = i
-			continue
-		}
-	}
-
-	return drawdownResult{
-		MaxDrawdown:     maxDrawdown,
-		MaxRecoveryDays: maxRecovery,
-	}
-}
-
-func mean(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-	acc := 0.0
-	for _, v := range values {
-		acc += v
-	}
-	return acc / float64(len(values))
-}
-
-func stdev(values []float64) float64 {
-	if len(values) < 2 {
-		return 0
-	}
-	m := mean(values)
-	acc := 0.0
-	for _, v := range values {
-		d := v - m
-		acc += d * d
-	}
-	return math.Sqrt(acc / float64(len(values)-1))
-}
-
-type xy struct {
-	X float64
-	Y float64
-}
-
-func linearSlope(values []xy) float64 {
-	n := len(values)
-	if n < 2 {
-		return 0
-	}
-	sumX := 0.0
-	sumY := 0.0
-	sumXY := 0.0
-	sumXX := 0.0
-	for _, p := range values {
-		sumX += p.X
-		sumY += p.Y
-		sumXY += p.X * p.Y
-		sumXX += p.X * p.X
-	}
-	denom := float64(n)*sumXX - sumX*sumX
-	if denom == 0 {
-		return 0
-	}
-	return (float64(n)*sumXY - sumX*sumY) / denom
-}
-
-func annualizeVolatility(dailyVolatility float64, tradingDays float64) float64 {
-	if !isFiniteFloat(dailyVolatility) || dailyVolatility <= 0 {
-		return 0
-	}
-	td := tradingDays
-	if !isFiniteFloat(td) || td <= 0 {
-		td = 252
-	}
-	return dailyVolatility * math.Sqrt(td)
-}
-
-func sharpeRatio(meanDailyReturn float64, dailyVolatility float64, tradingDays float64) float64 {
-	if !isFiniteFloat(meanDailyReturn) {
-		return 0
-	}
-	if !isFiniteFloat(dailyVolatility) || dailyVolatility <= 0 {
-		return 0
-	}
-	td := tradingDays
-	if !isFiniteFloat(td) || td <= 0 {
-		td = 252
-	}
-	return (meanDailyReturn / dailyVolatility) * math.Sqrt(td)
-}
-
-func percentileRank(values []float64, current float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-	sorted := make([]float64, len(values))
-	copy(sorted, values)
-	sort.Float64s(sorted)
-	count := 0
-	for _, v := range sorted {
-		if v <= current {
-			count++
-		}
-	}
-	return float64(count) / float64(len(sorted))
-}
-
-func monthKeyToParts(monthKey string) (int, int, bool) {
-	parts := strings.Split(strings.TrimSpace(monthKey), "-")
-	if len(parts) != 2 {
-		return 0, 0, false
-	}
-	y, err1 := strconv.Atoi(parts[0])
-	m, err2 := strconv.Atoi(parts[1])
-	if err1 != nil || err2 != nil || m < 1 || m > 12 {
-		return 0, 0, false
-	}
-	return y, m, true
-}
-
-func monthKeyDiff(a string, b string) int {
-	ay, am, okA := monthKeyToParts(a)
-	by, bm, okB := monthKeyToParts(b)
-	if !okA || !okB {
-		return 0
-	}
-	return (by-ay)*12 + (bm - am)
-}
-
-func leftPad2(n int) string {
-	if n < 10 && n >= 0 {
-		return "0" + strconv.Itoa(n)
-	}
-	return strconv.Itoa(n)
-}
-
-func leftPad4(n int) string {
-	if n >= 0 && n < 10 {
-		return "000" + strconv.Itoa(n)
-	}
-	if n >= 0 && n < 100 {
-		return "00" + strconv.Itoa(n)
-	}
-	if n >= 0 && n < 1000 {
-		return "0" + strconv.Itoa(n)
-	}
-	return strconv.Itoa(n)
-}
-
-func monthKeyAdd(monthKey string, deltaMonths int) string {
-	y, m, ok := monthKeyToParts(monthKey)
-	if !ok {
-		return ""
-	}
-	base := y*12 + (m - 1)
-	next := base + deltaMonths
-	yy := next / 12
-	mm := (next % 12) + 1
-	return leftPad4(yy) + "-" + leftPad2(mm)
-}
-
-func listMonthKeysBetweenInclusive(startKey string, endKey string) []string {
-	diff := monthKeyDiff(startKey, endKey)
-	if diff < 0 {
-		return []string{}
-	}
-	out := make([]string, 0, diff+1)
-	for i := 0; i <= diff; i++ {
-		k := monthKeyAdd(startKey, i)
-		if k != "" {
-			out = append(out, k)
-		}
-	}
-	return out
-}
-
 func countWeekdaysBetweenInclusive(start time.Time, end time.Time) int {
 	a := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC)
 	b := time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, time.UTC)
@@ -1097,11 +868,11 @@ func (p *Persister) computeAndUpsertMetrics(ctx context.Context, fundCode string
 			dailyReturns = append(dailyReturns, cur/prev-1)
 		}
 	}
-	meanDailyReturn := mean(dailyReturns)
-	volDaily := stdev(dailyReturns)
-	volAnnual := annualizeVolatility(volDaily, 252)
-	sharpe := sharpeRatio(meanDailyReturn, volDaily, 252)
-	dd := computeDrawdown(prices)
+	meanDailyReturn := analytics.Mean(dailyReturns)
+	volDaily := analytics.Stdev(dailyReturns)
+	volAnnual := analytics.AnnualizeVolatility(volDaily, 252)
+	sharpe := analytics.SharpeRatio(meanDailyReturn, volDaily, 252)
+	dd := analytics.ComputeDrawdown(prices)
 
 	last3dReturn := 0.0
 	if len(prices) >= 3 && prices[len(prices)-3] > 0 {
@@ -1182,8 +953,8 @@ func (p *Persister) computeAndUpsertMetrics(ctx context.Context, fundCode string
 		return err
 	}
 
-	divMean := mean(dividendValues)
-	divStd := stdev(dividendValues)
+	divMean := analytics.Mean(dividendValues)
+	divStd := analytics.Stdev(dividendValues)
 	if divMean > 0 {
 		dividendCV = divStd / divMean
 	}
@@ -1196,15 +967,15 @@ func (p *Persister) computeAndUpsertMetrics(ctx context.Context, fundCode string
 	}
 	allMonths := monthKeys
 	if firstMonth != "" && lastMonth != "" {
-		allMonths = listMonthKeysBetweenInclusive(firstMonth, lastMonth)
+		allMonths = analytics.ListMonthKeysBetweenInclusive(firstMonth, lastMonth)
 	}
 
 	if len(allMonths) > 1 {
-		points := make([]xy, 0, len(allMonths))
+		points := make([]analytics.XY, 0, len(allMonths))
 		for idx, mk := range allMonths {
-			points = append(points, xy{X: float64(idx), Y: dividendByMonth[mk]})
+			points = append(points, analytics.XY{X: float64(idx), Y: dividendByMonth[mk]})
 		}
-		dividendTrendSlope = linearSlope(points)
+		dividendTrendSlope = analytics.LinearSlope(points)
 	}
 
 	dyByMonth := make([]float64, 0, len(monthKeys))
@@ -1215,7 +986,7 @@ func (p *Persister) computeAndUpsertMetrics(ctx context.Context, fundCode string
 			dyByMonth = append(dyByMonth, div/price)
 		}
 	}
-	dyMonthlyMean = mean(dyByMonth)
+	dyMonthlyMean = analytics.Mean(dyByMonth)
 
 	now := time.Now().UTC()
 	lastDayPrevMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1)
@@ -1238,7 +1009,7 @@ func (p *Persister) computeAndUpsertMetrics(ctx context.Context, fundCode string
 
 	if dividendPaidMonths12m > 0 {
 		dividendRegularity12m = float64(dividendPaidMonths12m) / 12.0
-		dividendMean12m = mean(series12)
+		dividendMean12m = analytics.Mean(series12)
 		dividendMax12m = series12[0]
 		dividendMin12m = series12[0]
 		for _, v := range series12[1:] {
@@ -1252,11 +1023,11 @@ func (p *Persister) computeAndUpsertMetrics(ctx context.Context, fundCode string
 		dividendLastValue = series12[len(series12)-1]
 
 		prev := series12[:len(series12)-1]
-		dividendPrevMean11m = mean(prev)
+		dividendPrevMean11m = analytics.Mean(prev)
 
 		split := len(series12) / 2
-		dividendFirstHalfMean12m = mean(series12[:split])
-		dividendLastHalfMean12m = mean(series12[split:])
+		dividendFirstHalfMean12m = analytics.Mean(series12[:split])
+		dividendLastHalfMean12m = analytics.Mean(series12[split:])
 	}
 
 	pvpCurrent := 0.0
@@ -1324,10 +1095,10 @@ func (p *Persister) computeAndUpsertMetrics(ctx context.Context, fundCode string
 
 	pvpPercentile := 0.0
 	if len(pvpValues) > 0 && pvpCurrent > 0 {
-		pvpPercentile = percentileRank(pvpValues, pvpCurrent)
+		pvpPercentile = analytics.PercentileRank(pvpValues, pvpCurrent)
 	}
 
-	liqMean := mean(liqValues)
+	liqMean := analytics.Mean(liqValues)
 
 	todayReturn := 0.0
 	var latestTodayDate time.Time
@@ -1399,8 +1170,7 @@ func (p *Persister) computeAndUpsertMetrics(ctx context.Context, fundCode string
 			$16, $17,
 			$18, $19,
 			$20, $21,
-			$22, $23,
-			$24, $25, $26
+			$22, $23, $24
 		)
 		ON CONFLICT (fund_code) DO UPDATE SET
 			as_of_date = EXCLUDED.as_of_date,

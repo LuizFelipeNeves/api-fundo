@@ -2,7 +2,7 @@ package telegram
 
 import (
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -117,17 +117,16 @@ func ParseBotCommand(text string) botCommand {
 
 func extractFundCodes(text string) []string {
 	matches := codeInTextRe.FindAllString(text, -1)
-	set := map[string]struct{}{}
 	out := make([]string, 0, len(matches))
 	for _, m := range matches {
 		code := strings.ToUpper(strings.TrimSpace(m))
-		if _, ok := set[code]; ok {
+		if code == "" {
 			continue
 		}
-		set[code] = struct{}{}
 		out = append(out, code)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
+	out = slices.Compact(out)
 	return out
 }
 

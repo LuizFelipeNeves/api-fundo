@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -531,20 +531,16 @@ func (r *Repo) GetFundPesquisaInfo(ctx context.Context, fundCode string) (*FundP
 }
 
 func uniqueUppercase(items []string) []string {
-	set := map[string]struct{}{}
 	out := make([]string, 0, len(items))
 	for _, v := range items {
 		s := strings.ToUpper(strings.TrimSpace(v))
 		if s == "" {
 			continue
 		}
-		if _, ok := set[s]; ok {
-			continue
-		}
-		set[s] = struct{}{}
 		out = append(out, s)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
+	out = slices.Compact(out)
 	return out
 }
 
