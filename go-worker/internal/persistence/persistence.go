@@ -176,6 +176,8 @@ func (p *Persister) PersistFundDetails(ctx context.Context, fundCode string, dat
 
 	// Persist dividends
 	if len(data.Dividends) > 0 {
+		cutoffISO := time.Now().UTC().AddDate(-5, 0, 0).Format("2006-01-02")
+
 		stmt, err := tx.PrepareContext(ctx, `
 			INSERT INTO dividend (fund_code, date_iso, payment, type, value, yield)
 			VALUES ($1, $2, $3, $4, $5, $6)
@@ -191,22 +193,33 @@ func (p *Persister) PersistFundDetails(ctx context.Context, fundCode string, dat
 
 		priceByDate := make(map[string]float64, len(data.Dividends))
 		for _, div := range data.Dividends {
+			typeCode, convErr := strconv.Atoi(strings.TrimSpace(div.Type))
+			if convErr != nil || typeCode <= 0 {
+				continue
+			}
+			if div.DateISO != "" && div.DateISO < cutoffISO {
+				continue
+			}
+			if div.Payment != "" && div.Payment < cutoffISO {
+				continue
+			}
+
 			yield := 0.0
 
-			if !p.skipDividendYield {
+			if !p.skipDividendYield && typeCode == 1 {
 				price, ok := priceByDate[div.DateISO]
 				if !ok {
 					var p float64
 					var pInt int
-					err := tx.QueryRowContext(
+					rowErr := tx.QueryRowContext(
 						ctx,
 						`SELECT price_int FROM cotation WHERE fund_code = $1 AND date_iso = $2`,
 						div.FundCode,
 						div.DateISO,
 					).Scan(&pInt)
-					if err != nil {
-						if err != sql.ErrNoRows {
-							return fmt.Errorf("failed to fetch cotation price: %w", err)
+					if rowErr != nil {
+						if rowErr != sql.ErrNoRows {
+							return fmt.Errorf("failed to fetch cotation price: %w", rowErr)
 						}
 						pInt = 0
 					}
@@ -218,9 +231,9 @@ func (p *Persister) PersistFundDetails(ctx context.Context, fundCode string, dat
 				yield = calcYield(div.Value, price)
 			}
 
-			_, err := stmt.ExecContext(ctx, div.FundCode, div.DateISO, div.Payment, div.Type, div.Value, yield)
-			if err != nil {
-				return fmt.Errorf("failed to insert dividend: %w", err)
+			_, execErr := stmt.ExecContext(ctx, div.FundCode, div.DateISO, div.Payment, typeCode, div.Value, yield)
+			if execErr != nil {
+				return fmt.Errorf("failed to insert dividend: %w", execErr)
 			}
 		}
 	}
@@ -259,6 +272,8 @@ func (p *Persister) RecomputeDividendYields(ctx context.Context) (int64, error) 
 		)
 		) * 100
 		WHERE 
+		d.type = 1
+		AND
 		d.yield = 0
 		AND d.value > 0
 		AND EXISTS (
@@ -391,11 +406,15 @@ func (p *Persister) PersistIndicators(ctx context.Context, data collectors.Indic
 	defer stmt.Close()
 
 	for _, row := range byYear {
+		cutoffYear := int16(time.Now().In(time.Local).Year() - 5)
+		if row.Year < cutoffYear {
+			continue
+		}
+
 		_, err := stmt.ExecContext(
 			ctx,
 			data.FundCode,
 			row.Year,
-			toDBFloat(row.CotasEmitidas),
 			toDBFloat(row.NumeroDeCotistas),
 			toDBFloat(row.Vacancia),
 			toDBFloat(row.ValorPatrimonialCota),
@@ -533,6 +552,8 @@ func (p *Persister) PersistHistoricalCotations(ctx context.Context, fundCode str
 		return p.db.UpdateFundStateTimestamp(ctx, fundCode, "last_historical_cotations_at", time.Now())
 	}
 
+	cutoffISO := time.Now().UTC().AddDate(-5, 0, 0).Format("2006-01-02")
+
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -551,18 +572,23 @@ func (p *Persister) PersistHistoricalCotations(ctx context.Context, fundCode str
 	defer stmt.Close()
 
 	maxDateISO := ""
+	insertedAny := false
 	for _, item := range items {
-		if item.DateISO != "" && (maxDateISO == "" || item.DateISO > maxDateISO) {
-			maxDateISO = item.DateISO
+		if item.DateISO == "" || item.DateISO < cutoffISO {
+			continue
 		}
 		priceInt, ok := toPriceInt(item.Price)
 		if !ok {
 			continue
 		}
+		if maxDateISO == "" || item.DateISO > maxDateISO {
+			maxDateISO = item.DateISO
+		}
 		_, err := stmt.ExecContext(ctx, item.FundCode, item.DateISO, priceInt)
 		if err != nil {
 			return fmt.Errorf("failed to insert cotation: %w", err)
 		}
+		insertedAny = true
 	}
 
 	if maxDateISO != "" {
@@ -578,8 +604,10 @@ func (p *Persister) PersistHistoricalCotations(ctx context.Context, fundCode str
 		}
 	}
 
-	if err := p.markMetricsDirtyTx(ctx, tx, fundCode); err != nil {
-		return fmt.Errorf("failed to mark metrics dirty: %w", err)
+	if insertedAny {
+		if err := p.markMetricsDirtyTx(ctx, tx, fundCode); err != nil {
+			return fmt.Errorf("failed to mark metrics dirty: %w", err)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -597,6 +625,7 @@ func (p *Persister) PersistDocuments(ctx context.Context, fundCode string, items
 	}
 
 	now := time.Now()
+	cutoffAt := time.Now().UTC().AddDate(-5, 0, 0)
 	maxDocumentID := 0
 	hasMaxDocumentID := false
 	for _, doc := range items {
@@ -672,6 +701,10 @@ func (p *Persister) PersistDocuments(ctx context.Context, fundCode string, items
 		dateAt, ok := parseDateISOToUTC(dateISO)
 		if !ok {
 			dateAt = uploadAt
+		}
+
+		if uploadAt.Before(cutoffAt) && dateAt.Before(cutoffAt) {
+			continue
 		}
 
 		_, err := stmt.ExecContext(ctx,

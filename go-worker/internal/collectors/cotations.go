@@ -33,7 +33,7 @@ func (c *CotationsCollector) Name() string {
 // Collect fetches historical cotations
 func (c *CotationsCollector) Collect(ctx context.Context, req CollectRequest) (*CollectResult, error) {
 	code := parsers.NormalizeFundCode(req.FundCode)
-	days := 3650 // ~10 years
+	days := 1830 // 5 yeadrs, 3650 ~10 years
 
 	if last, ok, err := c.db.GetLastCotationDateISOByCode(ctx, code); err != nil {
 		return nil, fmt.Errorf("failed to get last cotation date: %w", err)
