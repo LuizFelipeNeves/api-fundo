@@ -108,3 +108,50 @@ func TestExtractFundDetails_FromDescBlocksAndIDPatterns(t *testing.T) {
 		t.Fatalf("expected UltimoRendimento=1.2, got %v", got.UltimoRendimento)
 	}
 }
+
+func TestExtractDividendsHistory_ParsesInvestidor10DividendsTable(t *testing.T) {
+	html := `
+		<html>
+			<body>
+				<table id="table-dividends-history" class="table table-balance">
+					<thead>
+						<tr>
+							<th class="text-center"><h3>tipo</h3></th>
+							<th class="text-center"><h3>data com</h3></th>
+							<th class="text-center"><h3>pagamento</h3></th>
+							<th class="text-center"><h3>valor</h3></th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td class="text-center">Dividendos</td>
+							<td class="text-center">17/02/2026</td>
+							<td class="text-center">25/02/2026</td>
+							<td class="text-center">R$ 0,85</td>
+						</tr>
+					</tbody>
+				</table>
+			</body>
+		</html>
+	`
+
+	got, err := ExtractDividendsHistory(html)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 dividend, got %d", len(got))
+	}
+	if got[0].Type != "Dividendos" {
+		t.Fatalf("expected Type=Dividendos, got %q", got[0].Type)
+	}
+	if got[0].Date != "17/02/2026" {
+		t.Fatalf("expected Date=17/02/2026, got %q", got[0].Date)
+	}
+	if got[0].Payment != "25/02/2026" {
+		t.Fatalf("expected Payment=25/02/2026, got %q", got[0].Payment)
+	}
+	if got[0].Value != 0.85 {
+		t.Fatalf("expected Value=0.85, got %v", got[0].Value)
+	}
+}

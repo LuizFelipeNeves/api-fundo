@@ -178,31 +178,89 @@ func ExtractDividendsHistory(html string) ([]DividendItem, error) {
 
 	var dividends []DividendItem
 
-	// Find the dividends table
-	doc.Find("table.table tbody tr").Each(func(i int, row *goquery.Selection) {
-		cols := row.Find("td")
-		if cols.Length() < 4 {
-			return
-		}
+	table := doc.Find("table#table-dividends-history").First()
+	if table.Length() > 0 {
+		typeIdx := -1
+		dateIdx := -1
+		paymentIdx := -1
+		valueIdx := -1
 
-		date := strings.TrimSpace(cols.Eq(0).Text())
-		payment := strings.TrimSpace(cols.Eq(1).Text())
-		typeStr := strings.TrimSpace(cols.Eq(2).Text())
-		valueStr := strings.TrimSpace(cols.Eq(3).Text())
-
-		if date == "" || payment == "" {
-			return
-		}
-
-		value := parseCurrencyFloat(valueStr)
-
-		dividends = append(dividends, DividendItem{
-			Date:    date,
-			Payment: payment,
-			Type:    typeStr,
-			Value:   value,
+		table.Find("thead tr").First().Find("th").Each(func(i int, th *goquery.Selection) {
+			h := normalizeLabel(strings.TrimSpace(th.Text()))
+			switch {
+			case strings.Contains(h, "tipo"):
+				typeIdx = i
+			case strings.Contains(h, "data") && strings.Contains(h, "com"):
+				dateIdx = i
+			case strings.Contains(h, "pagamento"):
+				paymentIdx = i
+			case strings.Contains(h, "valor"):
+				valueIdx = i
+			}
 		})
-	})
+
+		if typeIdx < 0 {
+			typeIdx = 0
+		}
+		if dateIdx < 0 {
+			dateIdx = 1
+		}
+		if paymentIdx < 0 {
+			paymentIdx = 2
+		}
+		if valueIdx < 0 {
+			valueIdx = 3
+		}
+
+		table.Find("tbody tr").Each(func(i int, row *goquery.Selection) {
+			cols := row.Find("td")
+			if cols.Length() < 4 {
+				return
+			}
+
+			typeStr := strings.TrimSpace(cols.Eq(typeIdx).Text())
+			date := strings.TrimSpace(cols.Eq(dateIdx).Text())
+			payment := strings.TrimSpace(cols.Eq(paymentIdx).Text())
+			valueStr := strings.TrimSpace(cols.Eq(valueIdx).Text())
+
+			if date == "" || payment == "" {
+				return
+			}
+
+			value := parseCurrencyFloat(valueStr)
+			dividends = append(dividends, DividendItem{
+				Date:    date,
+				Payment: payment,
+				Type:    typeStr,
+				Value:   value,
+			})
+		})
+	} else {
+		doc.Find("table.table tbody tr").Each(func(i int, row *goquery.Selection) {
+			cols := row.Find("td")
+			if cols.Length() < 4 {
+				return
+			}
+
+			date := strings.TrimSpace(cols.Eq(0).Text())
+			payment := strings.TrimSpace(cols.Eq(1).Text())
+			typeStr := strings.TrimSpace(cols.Eq(2).Text())
+			valueStr := strings.TrimSpace(cols.Eq(3).Text())
+
+			if date == "" || payment == "" {
+				return
+			}
+
+			value := parseCurrencyFloat(valueStr)
+
+			dividends = append(dividends, DividendItem{
+				Date:    date,
+				Payment: payment,
+				Type:    typeStr,
+				Value:   value,
+			})
+		})
+	}
 
 	return dividends, nil
 }
