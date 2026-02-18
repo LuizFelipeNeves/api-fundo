@@ -35,6 +35,24 @@ func (c *CotationsCollector) Collect(ctx context.Context, req CollectRequest) (*
 	code := parsers.NormalizeFundCode(req.FundCode)
 	days := 3650 // ~10 years
 
+	if last, ok, err := c.db.GetLastCotationDateISOByCode(ctx, code); err != nil {
+		return nil, fmt.Errorf("failed to get last cotation date: %w", err)
+	} else if ok {
+		now := time.Now().UTC()
+		deltaDays := int(now.Sub(last).Hours() / 24)
+		if deltaDays < 0 {
+			deltaDays = 0
+		}
+		deltaDays += 10
+		if deltaDays < 30 {
+			deltaDays = 30
+		}
+		if deltaDays > 3650 {
+			deltaDays = 3650
+		}
+		days = deltaDays
+	}
+
 	if verboseLogs() {
 		log.Printf("[cotations] collecting cotations for %s (days=%d)\n", code, days)
 	}

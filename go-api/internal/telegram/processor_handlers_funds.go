@@ -2,8 +2,8 @@ package telegram
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
-	"math"
 	"os"
 	"strings"
 	"time"
@@ -95,117 +95,106 @@ func (p *Processor) handleCotation(ctx context.Context, chatID string, code stri
 		return p.Client.SendText(ctx, chatID, "Fundo não encontrado: "+fundCode, nil)
 	}
 
-	cots, err := p.FII.GetCotations(ctx, fundCode, 1200)
-	if err != nil {
+	var (
+		asOf         sql.NullString
+		lastPrice    sql.NullFloat64
+		ret7         sql.NullFloat64
+		ret30        sql.NullFloat64
+		ret90        sql.NullFloat64
+		drawdownMax  sql.NullFloat64
+		volAnnual30d sql.NullFloat64
+		volAnnual90d sql.NullFloat64
+	)
+
+	if err := p.FII.DB.QueryRowContext(ctx, `
+		WITH
+		prices AS (
+			SELECT date_iso, price_int
+			FROM cotation
+			WHERE fund_code = $1
+			ORDER BY date_iso DESC
+			LIMIT 91
+		),
+		ordered AS (
+			SELECT date_iso, price_int, ROW_NUMBER() OVER (ORDER BY date_iso DESC) AS rn
+			FROM prices
+		),
+		vol30 AS (
+			SELECT sqrt(252) * stddev_samp(r) AS v
+			FROM (
+				SELECT (price_int::double precision / NULLIF(lag(price_int) OVER (ORDER BY date_iso), 0)::double precision) - 1 AS r
+				FROM (
+					SELECT date_iso, price_int
+					FROM prices
+					ORDER BY date_iso DESC
+					LIMIT 31
+				) p
+				ORDER BY date_iso
+			) x
+			WHERE r IS NOT NULL
+		),
+		vol90 AS (
+			SELECT sqrt(252) * stddev_samp(r) AS v
+			FROM (
+				SELECT (price_int::double precision / NULLIF(lag(price_int) OVER (ORDER BY date_iso), 0)::double precision) - 1 AS r
+				FROM (
+					SELECT date_iso, price_int
+					FROM prices
+					ORDER BY date_iso DESC
+					LIMIT 91
+				) p
+				ORDER BY date_iso
+			) x
+			WHERE r IS NOT NULL
+		)
+		SELECT
+			MAX(CASE WHEN rn = 1 THEN date_iso END)::text AS as_of,
+			MAX(CASE WHEN rn = 1 THEN price_int END)::double precision / 10000.0 AS last_price,
+			CASE
+				WHEN MAX(CASE WHEN rn = 8 THEN price_int END) IS NOT NULL AND MAX(CASE WHEN rn = 8 THEN price_int END) > 0
+					THEN (MAX(CASE WHEN rn = 1 THEN price_int END)::double precision / MAX(CASE WHEN rn = 8 THEN price_int END)::double precision) - 1
+				ELSE NULL
+			END AS ret_7,
+			CASE
+				WHEN MAX(CASE WHEN rn = 31 THEN price_int END) IS NOT NULL AND MAX(CASE WHEN rn = 31 THEN price_int END) > 0
+					THEN (MAX(CASE WHEN rn = 1 THEN price_int END)::double precision / MAX(CASE WHEN rn = 31 THEN price_int END)::double precision) - 1
+				ELSE NULL
+			END AS ret_30,
+			CASE
+				WHEN MAX(CASE WHEN rn = 91 THEN price_int END) IS NOT NULL AND MAX(CASE WHEN rn = 91 THEN price_int END) > 0
+					THEN (MAX(CASE WHEN rn = 1 THEN price_int END)::double precision / MAX(CASE WHEN rn = 91 THEN price_int END)::double precision) - 1
+				ELSE NULL
+			END AS ret_90,
+			(SELECT drawdown_max::double precision FROM fund_metrics_latest WHERE fund_code = $1) AS drawdown_max,
+			(SELECT v FROM vol30) AS vol_30,
+			(SELECT v FROM vol90) AS vol_90
+		FROM ordered
+	`, fundCode).Scan(&asOf, &lastPrice, &ret7, &ret30, &ret90, &drawdownMax, &volAnnual30d, &volAnnual90d); err != nil {
 		return err
 	}
-	if cots == nil || len(cots.Real) < 2 {
+
+	if !asOf.Valid || !lastPrice.Valid || lastPrice.Float64 <= 0 {
 		return p.Client.SendText(ctx, chatID, "Sem cotações históricas para "+fundCode+".", nil)
 	}
 
-	prices := make([]float64, 0, len(cots.Real))
-	for _, it := range cots.Real {
-		if it.Price > 0 && !math.IsNaN(it.Price) && !math.IsInf(it.Price, 0) {
-			prices = append(prices, it.Price)
-		}
-	}
-	if len(prices) < 2 {
-		return p.Client.SendText(ctx, chatID, "Sem cotações históricas para "+fundCode+".", nil)
-	}
-
-	last := prices[len(prices)-1]
-	asOf := cots.Real[len(cots.Real)-1].Date
-
-	retAt := func(days int) *float64 {
-		if days <= 0 {
+	toPtr := func(v sql.NullFloat64) *float64 {
+		if !v.Valid {
 			return nil
 		}
-		i := len(prices) - 1 - days
-		if i < 0 {
-			return nil
-		}
-		base := prices[i]
-		if base <= 0 {
-			return nil
-		}
-		v := last/base - 1
-		return &v
-	}
-
-	maxDrawdown := func() *float64 {
-		if len(prices) < 2 {
-			return nil
-		}
-		peak := prices[0]
-		ddMin := 0.0
-		for _, p := range prices {
-			if p <= 0 {
-				continue
-			}
-			if p > peak {
-				peak = p
-			}
-			if peak > 0 {
-				dd := p/peak - 1
-				if dd < ddMin {
-					ddMin = dd
-				}
-			}
-		}
-		return &ddMin
-	}()
-
-	volAnnualized := func(window int) *float64 {
-		if window < 2 {
-			return nil
-		}
-		if len(prices) < window+1 {
-			return nil
-		}
-		start := len(prices) - 1 - window
-		if start < 0 {
-			start = 0
-		}
-		rets := make([]float64, 0, window)
-		for i := start + 1; i < len(prices); i++ {
-			prev := prices[i-1]
-			cur := prices[i]
-			if prev > 0 {
-				rets = append(rets, cur/prev-1)
-			}
-		}
-		if len(rets) < 2 {
-			return nil
-		}
-		m := 0.0
-		for _, r := range rets {
-			m += r
-		}
-		m /= float64(len(rets))
-		var sum float64
-		for _, r := range rets {
-			d := r - m
-			sum += d * d
-		}
-		variance := sum / float64(len(rets)-1)
-		if variance < 0 {
-			return nil
-		}
-		dailyVol := math.Sqrt(variance)
-		v := dailyVol * math.Sqrt(252)
-		return &v
+		x := v.Float64
+		return &x
 	}
 
 	msg := FormatCotationMessage(
 		fundCode,
-		asOf,
-		last,
-		retAt(7),
-		retAt(30),
-		retAt(90),
-		maxDrawdown,
-		volAnnualized(30),
-		volAnnualized(90),
+		asOf.String,
+		lastPrice.Float64,
+		toPtr(ret7),
+		toPtr(ret30),
+		toPtr(ret90),
+		toPtr(drawdownMax),
+		toPtr(volAnnual30d),
+		toPtr(volAnnual90d),
 	)
 	return p.Client.SendText(ctx, chatID, msg, nil)
 }

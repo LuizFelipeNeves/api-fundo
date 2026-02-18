@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lib/pq"
 	"github.com/luizfelipeneves/api-fundo/go-api/internal/db"
 	"github.com/luizfelipeneves/api-fundo/go-api/internal/model"
 )
@@ -20,6 +21,300 @@ type Service struct {
 
 func New(db *db.DB) *Service {
 	return &Service{DB: db}
+}
+
+const cotationPriceScale = 10000
+
+func fromPriceInt(priceInt int) float64 {
+	if priceInt <= 0 {
+		return 0
+	}
+	return float64(priceInt) / float64(cotationPriceScale)
+}
+
+type FundMetricsLatest struct {
+	FundCode              string
+	ComputedAt            time.Time
+	AsOfDateISO           string
+	PVPCurrent            float64
+	PVPPercentile         float64
+	DYMonthlyMean         float64
+	DividendCV            float64
+	DividendTrendSlope    float64
+	DividendPaidMonths12m int
+	DividendRegularity12m float64
+	DividendMean12m       float64
+	DividendPrevMean11m   float64
+	DividendFirstHalfMean float64
+	DividendLastHalfMean  float64
+	DividendMax12m        float64
+	DividendMin12m        float64
+	DividendLastValue     float64
+	DrawdownMax           float64
+	RecoveryTimeDays      int
+	VolAnnual             float64
+	Sharpe                float64
+	LiqMean               float64
+	PctDaysTraded         float64
+	PriceLast3dReturn     float64
+	TodayReturn           float64
+}
+
+func (s *Service) GetFundMetricsLatest(ctx context.Context, code string) (*FundMetricsLatest, bool, error) {
+	var (
+		fundCode           string
+		computedAt         time.Time
+		asOfDate           time.Time
+		pvpCurrent         sql.NullFloat64
+		pvpPercentile      sql.NullFloat64
+		dyMonthlyMean      sql.NullFloat64
+		dividendCV         sql.NullFloat64
+		dividendTrendSlope sql.NullFloat64
+		paidMonths12m      sql.NullInt64
+		regularity12m      sql.NullFloat64
+		mean12m            sql.NullFloat64
+		prevMean11m        sql.NullFloat64
+		firstHalfMean12m   sql.NullFloat64
+		lastHalfMean12m    sql.NullFloat64
+		max12m             sql.NullFloat64
+		min12m             sql.NullFloat64
+		lastValue          sql.NullFloat64
+		drawdownMax        sql.NullFloat64
+		recoveryDays       sql.NullInt64
+		volAnnual          sql.NullFloat64
+		sharpe             sql.NullFloat64
+		liqMean            sql.NullFloat64
+		pctDaysTraded      sql.NullFloat64
+		last3dReturn       sql.NullFloat64
+		todayReturn        sql.NullFloat64
+	)
+
+	err := s.DB.QueryRowContext(ctx, `
+		SELECT
+			fund_code,
+			computed_at,
+			as_of_date,
+			pvp_current,
+			pvp_percentile,
+			dy_monthly_mean,
+			dividend_cv,
+			dividend_trend_slope,
+			dividend_paid_months_12m,
+			dividend_regularity_12m,
+			dividend_mean_12m,
+			dividend_prev_mean_11m,
+			dividend_first_half_mean_12m,
+			dividend_last_half_mean_12m,
+			dividend_max_12m,
+			dividend_min_12m,
+			dividend_last_value,
+			drawdown_max,
+			recovery_time_days,
+			vol_annual,
+			sharpe,
+			liq_mean,
+			pct_days_traded,
+			price_last3d_return,
+			today_return
+		FROM fund_metrics_latest
+		WHERE fund_code = $1
+		LIMIT 1
+	`, code).Scan(
+		&fundCode,
+		&computedAt,
+		&asOfDate,
+		&pvpCurrent,
+		&pvpPercentile,
+		&dyMonthlyMean,
+		&dividendCV,
+		&dividendTrendSlope,
+		&paidMonths12m,
+		&regularity12m,
+		&mean12m,
+		&prevMean11m,
+		&firstHalfMean12m,
+		&lastHalfMean12m,
+		&max12m,
+		&min12m,
+		&lastValue,
+		&drawdownMax,
+		&recoveryDays,
+		&volAnnual,
+		&sharpe,
+		&liqMean,
+		&pctDaysTraded,
+		&last3dReturn,
+		&todayReturn,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+
+	out := &FundMetricsLatest{
+		FundCode:              strings.ToUpper(strings.TrimSpace(fundCode)),
+		ComputedAt:            computedAt.UTC(),
+		AsOfDateISO:           asOfDate.UTC().Format("2006-01-02"),
+		PVPCurrent:            nullFloat(pvpCurrent),
+		PVPPercentile:         nullFloat(pvpPercentile),
+		DYMonthlyMean:         nullFloat(dyMonthlyMean),
+		DividendCV:            nullFloat(dividendCV),
+		DividendTrendSlope:    nullFloat(dividendTrendSlope),
+		DividendPaidMonths12m: int(paidMonths12m.Int64),
+		DividendRegularity12m: nullFloat(regularity12m),
+		DividendMean12m:       nullFloat(mean12m),
+		DividendPrevMean11m:   nullFloat(prevMean11m),
+		DividendFirstHalfMean: nullFloat(firstHalfMean12m),
+		DividendLastHalfMean:  nullFloat(lastHalfMean12m),
+		DividendMax12m:        nullFloat(max12m),
+		DividendMin12m:        nullFloat(min12m),
+		DividendLastValue:     nullFloat(lastValue),
+		DrawdownMax:           nullFloat(drawdownMax),
+		RecoveryTimeDays:      int(recoveryDays.Int64),
+		VolAnnual:             nullFloat(volAnnual),
+		Sharpe:                nullFloat(sharpe),
+		LiqMean:               nullFloat(liqMean),
+		PctDaysTraded:         nullFloat(pctDaysTraded),
+		PriceLast3dReturn:     nullFloat(last3dReturn),
+		TodayReturn:           nullFloat(todayReturn),
+	}
+	return out, true, nil
+}
+
+func (s *Service) ListFundMetricsLatest(ctx context.Context, codes []string) ([]FundMetricsLatest, error) {
+	if len(codes) == 0 {
+		return []FundMetricsLatest{}, nil
+	}
+
+	rows, err := s.DB.QueryContext(ctx, `
+		SELECT
+			fund_code,
+			computed_at,
+			as_of_date,
+			pvp_current,
+			pvp_percentile,
+			dy_monthly_mean,
+			dividend_cv,
+			dividend_trend_slope,
+			dividend_paid_months_12m,
+			dividend_regularity_12m,
+			dividend_mean_12m,
+			dividend_prev_mean_11m,
+			dividend_first_half_mean_12m,
+			dividend_last_half_mean_12m,
+			dividend_max_12m,
+			dividend_min_12m,
+			dividend_last_value,
+			drawdown_max,
+			recovery_time_days,
+			vol_annual,
+			sharpe,
+			liq_mean,
+			pct_days_traded,
+			price_last3d_return,
+			today_return
+		FROM fund_metrics_latest
+		WHERE fund_code = ANY($1)
+	`, pq.Array(codes))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]FundMetricsLatest, 0, len(codes))
+	for rows.Next() {
+		var (
+			fundCode           string
+			computedAt         time.Time
+			asOfDate           time.Time
+			pvpCurrent         sql.NullFloat64
+			pvpPercentile      sql.NullFloat64
+			dyMonthlyMean      sql.NullFloat64
+			dividendCV         sql.NullFloat64
+			dividendTrendSlope sql.NullFloat64
+			paidMonths12m      sql.NullInt64
+			regularity12m      sql.NullFloat64
+			mean12m            sql.NullFloat64
+			prevMean11m        sql.NullFloat64
+			firstHalfMean12m   sql.NullFloat64
+			lastHalfMean12m    sql.NullFloat64
+			max12m             sql.NullFloat64
+			min12m             sql.NullFloat64
+			lastValue          sql.NullFloat64
+			drawdownMax        sql.NullFloat64
+			recoveryDays       sql.NullInt64
+			volAnnual          sql.NullFloat64
+			sharpe             sql.NullFloat64
+			liqMean            sql.NullFloat64
+			pctDaysTraded      sql.NullFloat64
+			last3dReturn       sql.NullFloat64
+			todayReturn        sql.NullFloat64
+		)
+		if err := rows.Scan(
+			&fundCode,
+			&computedAt,
+			&asOfDate,
+			&pvpCurrent,
+			&pvpPercentile,
+			&dyMonthlyMean,
+			&dividendCV,
+			&dividendTrendSlope,
+			&paidMonths12m,
+			&regularity12m,
+			&mean12m,
+			&prevMean11m,
+			&firstHalfMean12m,
+			&lastHalfMean12m,
+			&max12m,
+			&min12m,
+			&lastValue,
+			&drawdownMax,
+			&recoveryDays,
+			&volAnnual,
+			&sharpe,
+			&liqMean,
+			&pctDaysTraded,
+			&last3dReturn,
+			&todayReturn,
+		); err != nil {
+			return nil, err
+		}
+
+		out = append(out, FundMetricsLatest{
+			FundCode:              strings.ToUpper(strings.TrimSpace(fundCode)),
+			ComputedAt:            computedAt.UTC(),
+			AsOfDateISO:           asOfDate.UTC().Format("2006-01-02"),
+			PVPCurrent:            nullFloat(pvpCurrent),
+			PVPPercentile:         nullFloat(pvpPercentile),
+			DYMonthlyMean:         nullFloat(dyMonthlyMean),
+			DividendCV:            nullFloat(dividendCV),
+			DividendTrendSlope:    nullFloat(dividendTrendSlope),
+			DividendPaidMonths12m: int(paidMonths12m.Int64),
+			DividendRegularity12m: nullFloat(regularity12m),
+			DividendMean12m:       nullFloat(mean12m),
+			DividendPrevMean11m:   nullFloat(prevMean11m),
+			DividendFirstHalfMean: nullFloat(firstHalfMean12m),
+			DividendLastHalfMean:  nullFloat(lastHalfMean12m),
+			DividendMax12m:        nullFloat(max12m),
+			DividendMin12m:        nullFloat(min12m),
+			DividendLastValue:     nullFloat(lastValue),
+			DrawdownMax:           nullFloat(drawdownMax),
+			RecoveryTimeDays:      int(recoveryDays.Int64),
+			VolAnnual:             nullFloat(volAnnual),
+			Sharpe:                nullFloat(sharpe),
+			LiqMean:               nullFloat(liqMean),
+			PctDaysTraded:         nullFloat(pctDaysTraded),
+			PriceLast3dReturn:     nullFloat(last3dReturn),
+			TodayReturn:           nullFloat(todayReturn),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return out, nil
 }
 
 var fiiCodeRe = regexp.MustCompile(`^[A-Za-z]{4}11$`)
@@ -258,7 +553,7 @@ func (s *Service) GetCotations(ctx context.Context, code string, days int) (*mod
 	}
 
 	rows, err := s.DB.QueryContext(ctx, `
-		SELECT date_iso, price
+		SELECT date_iso, price_int
 		FROM cotation
 		WHERE fund_code = $1
 		ORDER BY date_iso DESC
@@ -271,7 +566,7 @@ func (s *Service) GetCotations(ctx context.Context, code string, days int) (*mod
 
 	type row struct {
 		dateIso string
-		price   float64
+		price   int
 	}
 	var all []row
 	for rows.Next() {
@@ -292,7 +587,7 @@ func (s *Service) GetCotations(ctx context.Context, code string, days int) (*mod
 	for i := len(all) - 1; i >= 0; i-- {
 		real = append(real, model.CotationItem{
 			Date:  toDateBrFromIso(all[i].dateIso),
-			Price: all[i].price,
+			Price: fromPriceInt(all[i].price),
 		})
 	}
 
@@ -371,7 +666,7 @@ func (s *Service) GetLatestCotationsToday(ctx context.Context, code string) ([]m
 	}
 
 	rows, err := s.DB.QueryContext(ctx, `
-		SELECT to_char(hour, 'HH24:MI') as hour, price
+		SELECT to_char(hour, 'HH24:MI') as hour, price_int
 		FROM cotation_today
 		WHERE fund_code = $1 AND date_iso = $2
 		ORDER BY hour ASC
@@ -383,11 +678,14 @@ func (s *Service) GetLatestCotationsToday(ctx context.Context, code string) ([]m
 
 	out := []model.CotationTodayItem{}
 	for rows.Next() {
-		var it model.CotationTodayItem
-		if err := rows.Scan(&it.Hour, &it.Price); err != nil {
+		var (
+			hour     string
+			priceInt int
+		)
+		if err := rows.Scan(&hour, &priceInt); err != nil {
 			return nil, false, err
 		}
-		out = append(out, it)
+		out = append(out, model.CotationTodayItem{Hour: hour, Price: fromPriceInt(priceInt)})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, false, err

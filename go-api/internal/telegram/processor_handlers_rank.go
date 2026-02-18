@@ -2,11 +2,12 @@ package telegram
 
 import (
 	"context"
+	"database/sql"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/luizfelipeneves/api-fundo/go-api/internal/fii"
+	"github.com/lib/pq"
 	"github.com/luizfelipeneves/api-fundo/go-api/internal/model"
 )
 
@@ -34,39 +35,67 @@ func (p *Processor) handleRankHoje(ctx context.Context, chatID string, codes []s
 	missing := diffStrings(uppercaseAll(requested), existing)
 
 	ranked := make([]RankHojeItem, 0, len(existing))
-	for _, code := range existing {
-		exp, found, err := p.FII.ExportFund(ctx, code, fii.ExportFundOptions{})
-		if err != nil || !found || exp == nil || exp.Fund == nil {
-			continue
-		}
 
-		if exp.Fund.Vacancia == nil || !isFinite(*exp.Fund.Vacancia) {
-			continue
+	if len(existing) > 0 {
+		rows, err := p.FII.DB.QueryContext(ctx, `
+			SELECT
+				m.fund_code,
+				COALESCE(m.pvp_current, 0),
+				COALESCE(m.dy_monthly_mean, 0),
+				COALESCE(m.sharpe, 0),
+				COALESCE(m.today_return, 0),
+				COALESCE(m.price_last3d_return, 0),
+				fm.vacancia,
+				fm.daily_liquidity
+			FROM fund_metrics_latest m
+			JOIN fund_master fm ON fm.code = m.fund_code
+			WHERE m.fund_code = ANY($1)
+		`, pq.Array(existing))
+		if err != nil {
+			return err
 		}
-		vacancia := *exp.Fund.Vacancia
-		dailyLiquidity := 0.0
-		if exp.Fund.DailyLiquidity != nil && isFinite(*exp.Fund.DailyLiquidity) && *exp.Fund.DailyLiquidity > 0 {
-			dailyLiquidity = *exp.Fund.DailyLiquidity
-		}
+		defer rows.Close()
 
-		pvp := exp.Metrics.Valuation.PVPCurrent
-		if !isFinite(pvp) || pvp <= 0 {
-			continue
-		}
-		dyMonthly := exp.Metrics.DividendYield.MonthlyMean
-		sharpe := exp.Metrics.Risk.Sharpe
-		todayReturn := exp.Metrics.Today.Return
-		last3dReturn := exp.Metrics.Price.Last3dReturn
+		for rows.Next() {
+			var (
+				code         string
+				pvp          float64
+				dyMonthly    float64
+				sharpe       float64
+				todayReturn  float64
+				last3dReturn float64
+				vacancia     sql.NullFloat64
+				daily        sql.NullFloat64
+			)
+			if err := rows.Scan(&code, &pvp, &dyMonthly, &sharpe, &todayReturn, &last3dReturn, &vacancia, &daily); err != nil {
+				return err
+			}
 
-		notMelting := todayReturn > -0.02 && last3dReturn > -0.05
-		if pvp < 0.94 && dyMonthly > 0.011 && vacancia == 0 && dailyLiquidity > 300_000 && sharpe >= 1.7 && notMelting {
-			ranked = append(ranked, RankHojeItem{
-				Code:                 code,
-				PVP:                  pvp,
-				DividendYieldMonthly: dyMonthly,
-				Sharpe:               sharpe,
-				TodayReturn:          todayReturn,
-			})
+			if !vacancia.Valid || !isFinite(vacancia.Float64) {
+				continue
+			}
+			v := vacancia.Float64
+			dailyLiquidity := 0.0
+			if daily.Valid && isFinite(daily.Float64) && daily.Float64 > 0 {
+				dailyLiquidity = daily.Float64
+			}
+
+			if !isFinite(pvp) || pvp <= 0 {
+				continue
+			}
+			notMelting := todayReturn > -0.02 && last3dReturn > -0.05
+			if pvp < 0.94 && dyMonthly > 0.011 && v == 0 && dailyLiquidity > 300_000 && sharpe >= 1.7 && notMelting {
+				ranked = append(ranked, RankHojeItem{
+					Code:                 code,
+					PVP:                  pvp,
+					DividendYieldMonthly: dyMonthly,
+					Sharpe:               sharpe,
+					TodayReturn:          todayReturn,
+				})
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return err
 		}
 	}
 
@@ -100,99 +129,90 @@ func (p *Processor) handleRankV(ctx context.Context, chatID string) error {
 	}
 
 	ranked := make([]RankVItem, 0, len(allCodes))
-	for _, code := range allCodes {
-		exp, found, err := p.FII.ExportFund(ctx, code, fii.ExportFundOptions{})
-		if err != nil || !found || exp == nil {
-			continue
+	rows, err := p.FII.DB.QueryContext(ctx, `
+		SELECT
+			fund_code,
+			COALESCE(pvp_current, 0),
+			COALESCE(dy_monthly_mean, 0),
+			COALESCE(today_return, 0),
+			COALESCE(dividend_regularity_12m, 0),
+			COALESCE(dividend_mean_12m, 0),
+			COALESCE(dividend_prev_mean_11m, 0),
+			COALESCE(dividend_first_half_mean_12m, 0),
+			COALESCE(dividend_last_half_mean_12m, 0),
+			COALESCE(dividend_max_12m, 0),
+			COALESCE(dividend_min_12m, 0),
+			COALESCE(dividend_last_value, 0)
+		FROM fund_metrics_latest
+		WHERE fund_code = ANY($1)
+			AND COALESCE(pvp_current, 1e9) <= 0.7
+			AND COALESCE(dy_monthly_mean, 0) > 0.0116
+			AND COALESCE(dividend_cv, 1e9) <= 0.6
+			AND COALESCE(dividend_trend_slope, -1e9) > 0
+			AND COALESCE(drawdown_max, -1e9) > -0.25
+			AND COALESCE(recovery_time_days, 1e9) <= 120
+			AND COALESCE(vol_annual, 1e9) <= 0.3
+			AND COALESCE(pvp_percentile, 1e9) <= 0.25
+			AND COALESCE(liq_mean, 0) >= 400000
+			AND COALESCE(pct_days_traded, 0) >= 0.95
+			AND COALESCE(price_last3d_return, -1e9) >= 0
+			AND COALESCE(today_return, -1e9) > -0.01
+			AND COALESCE(dividend_paid_months_12m, 0) >= 12
+	`, pq.Array(allCodes))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			code                  string
+			pvp                   float64
+			dyMonthly             float64
+			todayReturn           float64
+			regularity12m         float64
+			dividendMean12m       float64
+			dividendPrevMean11m   float64
+			dividendFirstHalfMean float64
+			dividendLastHalfMean  float64
+			dividendMax12m        float64
+			dividendMin12m        float64
+			dividendLastValue     float64
+		)
+		if err := rows.Scan(
+			&code,
+			&pvp,
+			&dyMonthly,
+			&todayReturn,
+			&regularity12m,
+			&dividendMean12m,
+			&dividendPrevMean11m,
+			&dividendFirstHalfMean,
+			&dividendLastHalfMean,
+			&dividendMax12m,
+			&dividendMin12m,
+			&dividendLastValue,
+		); err != nil {
+			return err
 		}
 
-		pvp := exp.Metrics.Valuation.PVPCurrent
-		if !isFinite(pvp) || pvp <= 0 {
-			continue
-		}
-		dyMonthly := exp.Metrics.DividendYield.MonthlyMean
-		dividendCv := exp.Metrics.Dividends.CV
-		dividendTrend := exp.Metrics.Dividends.TrendSlope
-		drawdownMax := exp.Metrics.Risk.DrawdownMax
-		recoveryDays := exp.Metrics.Risk.RecoveryTimeDays
-		volAnnual := exp.Metrics.Risk.VolatilityAnnualized
-		pvpPercentile := exp.Metrics.Valuation.PVPPercentile
-		if !isFinite(pvpPercentile) || pvpPercentile <= 0 {
-			continue
-		}
-		liqMean := exp.Metrics.Liquidity.Mean
-		pctDaysTraded := exp.Metrics.Liquidity.PctDaysTraded
-		last3dReturn := exp.Metrics.Price.Last3dReturn
-		todayReturn := exp.Metrics.Today.Return
+		spikeOk := dividendMean12m > 0 && dividendMax12m <= dividendMean12m*2.5
+		lastSpikeOk := dividendPrevMean11m <= 0 || dividendLastValue <= dividendPrevMean11m*2.2
+		minOk := dividendMean12m > 0 && dividendMin12m >= dividendMean12m*0.4
+		regimeOk := dividendFirstHalfMean <= 0 || dividendLastHalfMean <= dividendFirstHalfMean*1.8
 
-		series, paidMonths, ok := last12MonthlyDividendSeries(exp.Data.Dividends, time.Now().UTC())
-		if !ok {
-			continue
-		}
-		if paidMonths < 12 {
-			continue
-		}
-		regularity := float64(paidMonths) / 12.0
-
-		dividendValues := make([]float64, 0, len(series))
-		for _, it := range series {
-			dividendValues = append(dividendValues, it.Value)
-		}
-		dividendMax := maxFloat(dividendValues)
-		dividendMin := minFloat(dividendValues)
-		dividendMean := meanFloat(dividendValues)
-		lastDividend := series[len(series)-1].Value
-
-		prevMean := 0.0
-		hasPrevMean := false
-		if len(series) >= 4 {
-			prevValues := dividendValues[:len(dividendValues)-1]
-			prevMean = meanFloat(prevValues)
-			hasPrevMean = prevMean > 0
-		}
-
-		split := 0
-		if len(series) >= 6 {
-			split = len(series) / 2
-		}
-		firstHalfMean := 0.0
-		lastHalfMean := 0.0
-		hasHalves := false
-		if split >= 3 && len(series)-split >= 3 {
-			firstHalfMean = meanFloat(dividendValues[:split])
-			lastHalfMean = meanFloat(dividendValues[split:])
-			hasHalves = firstHalfMean > 0 && lastHalfMean > 0
-		}
-
-		spikeOk := dividendMean > 0 && dividendMax <= dividendMean*2.5
-		lastSpikeOk := !hasPrevMean || lastDividend <= prevMean*2.2
-		minOk := dividendMean > 0 && dividendMin >= dividendMean*0.4
-		regimeOk := !hasHalves || lastHalfMean <= firstHalfMean*1.8
-		notMelting := todayReturn > -0.01 && last3dReturn >= 0
-
-		if pvp <= 0.7 &&
-			dyMonthly > 0.0116 &&
-			dividendCv <= 0.6 &&
-			dividendTrend > 0 &&
-			drawdownMax > -0.25 &&
-			recoveryDays <= 120 &&
-			volAnnual <= 0.3 &&
-			pvpPercentile <= 0.25 &&
-			liqMean >= 400000 &&
-			pctDaysTraded >= 0.95 &&
-			spikeOk &&
-			lastSpikeOk &&
-			minOk &&
-			regimeOk &&
-			notMelting {
+		if spikeOk && lastSpikeOk && minOk && regimeOk {
 			ranked = append(ranked, RankVItem{
 				Code:                 code,
 				PVP:                  pvp,
 				DividendYieldMonthly: dyMonthly,
-				Regularity:           regularity,
+				Regularity:           regularity12m,
 				TodayReturn:          todayReturn,
 			})
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
 	}
 
 	sort.Slice(ranked, func(i, j int) bool {

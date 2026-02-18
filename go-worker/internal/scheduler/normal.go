@@ -22,39 +22,38 @@ func (s *Scheduler) startNormal(ctx context.Context) error {
 			enabled:        s.shouldRunMarketSnapshot,
 		},
 		{
-			collector:      "fund_details",
+			collector:      "fund_pipeline",
 			refillInterval: s.cfg.SchedulerInterval,
-			enabled:        s.isBusinessHours,
 			refill: func(ctx context.Context) ([]db.FundCandidate, error) {
-				return s.db.SelectFundsForDetails(ctx, s.cfg.IntervalFundDetailsMin, s.cfg.BatchSize)
-			},
-		},
-		{
-			collector:      "documents",
-			refillInterval: s.cfg.SchedulerInterval,
-			enabled: func(now time.Time) bool {
-				return true
-			},
-			refill: func(ctx context.Context) ([]db.FundCandidate, error) {
-				return s.db.SelectFundsForDocuments(ctx, s.cfg.IntervalDocumentsMin, s.cfg.BatchSize)
-			},
-		},
-		{
-			collector:      "indicators",
-			refillInterval: s.cfg.SchedulerInterval,
-			enabled:        s.isIndicatorsWindow,
-			refill: func(ctx context.Context) ([]db.FundCandidate, error) {
+				detailsIntervalMin := s.cfg.IntervalFundDetailsMin
+				cotationsIntervalMin := s.cfg.IntervalCotationsMin
+				nowLocal := time.Now().In(s.location)
+				if os.Getenv("FORCE_RUN_JOBS") != "true" && !s.isBusinessHours(nowLocal) {
+					detailsIntervalMin = 1_000_000
+					cotationsIntervalMin = 1_000_000
+				}
+
+				var cutoff *time.Time
 				if os.Getenv("FORCE_RUN_JOBS") == "true" {
-					return s.db.SelectFundsForIndicators(ctx, s.cfg.IntervalIndicatorsMin, s.cfg.BatchSize)
+					t := time.Now().Add(-time.Minute * time.Duration(s.cfg.IntervalIndicatorsMin))
+					cutoff = &t
+				} else {
+					if s.isIndicatorsWindow(nowLocal) {
+						t, ok := s.indicatorWindowStart(nowLocal)
+						if ok {
+							cutoff = &t
+						}
+					}
 				}
 
-				now := time.Now().In(s.location)
-				cutoff, ok := s.indicatorWindowStart(now)
-				if !ok {
-					return nil, nil
-				}
-
-				return s.db.SelectFundsForIndicatorsWindow(ctx, cutoff, s.cfg.BatchSize)
+				return s.db.SelectFundsForPipeline(
+					ctx,
+					detailsIntervalMin,
+					s.cfg.IntervalDocumentsMin,
+					cotationsIntervalMin,
+					cutoff,
+					s.cfg.BatchSize,
+				)
 			},
 		},
 	}

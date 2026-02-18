@@ -8,14 +8,14 @@ import (
 
 func runEODCotation(ctx context.Context, tx *sql.Tx, dateISO string) (int, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT fund_code, price
+		SELECT fund_code, price_int
 		FROM (
 			SELECT DISTINCT ON (fund_code)
 				fund_code,
-				price
+				price_int
 			FROM cotation_today
 			WHERE date_iso = $1
-				AND price > 0
+				AND price_int > 0
 			ORDER BY fund_code, hour DESC, fetched_at DESC
 		) t
 	`, dateISO)
@@ -25,30 +25,44 @@ func runEODCotation(ctx context.Context, tx *sql.Tx, dateISO string) (int, error
 	defer rows.Close()
 
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO cotation (fund_code, date_iso, price)
+		INSERT INTO cotation (fund_code, date_iso, price_int)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (fund_code, date_iso) DO UPDATE SET
-			price = EXCLUDED.price
+			price_int = EXCLUDED.price_int
 	`)
 	if err != nil {
 		return 0, err
 	}
 	defer stmt.Close()
 
+	stmtDirty, err := tx.PrepareContext(ctx, `
+		INSERT INTO metrics_dirty (fund_code, updated_at)
+		VALUES ($1, NOW())
+		ON CONFLICT (fund_code) DO UPDATE SET
+			updated_at = NOW()
+	`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmtDirty.Close()
+
 	inserted := 0
 	for rows.Next() {
 		var fundCode string
-		var price float64
-		if err := rows.Scan(&fundCode, &price); err != nil {
+		var priceInt int
+		if err := rows.Scan(&fundCode, &priceInt); err != nil {
 			return inserted, err
 		}
 
-		if price <= 0 {
+		if priceInt <= 0 {
 			continue
 		}
 
-		if _, err := stmt.ExecContext(ctx, fundCode, dateISO, price); err != nil {
+		if _, err := stmt.ExecContext(ctx, fundCode, dateISO, priceInt); err != nil {
 			return inserted, fmt.Errorf("insert cotation fund=%s date=%s: %w", fundCode, dateISO, err)
+		}
+		if _, err := stmtDirty.ExecContext(ctx, fundCode); err != nil {
+			return inserted, fmt.Errorf("mark dirty fund=%s: %w", fundCode, err)
 		}
 		inserted++
 	}

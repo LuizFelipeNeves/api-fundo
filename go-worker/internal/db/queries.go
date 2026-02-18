@@ -10,9 +10,78 @@ import (
 
 // FundCandidate represents a fund selected for processing
 type FundCandidate struct {
-	Code string
-	CNPJ string
-	ID   string
+	Code     string
+	CNPJ     string
+	ID       string
+	TaskMask int
+}
+
+const (
+	TaskDetails   = 1
+	TaskDocuments = 2
+	TaskIndicators = 4
+	TaskCotations = 8
+)
+
+func (db *DB) SelectFundsForPipeline(ctx context.Context, detailsIntervalMin, documentsIntervalMin, cotationsIntervalMin int, indicatorsCutoff *time.Time, limit int) ([]FundCandidate, error) {
+	if limit <= 0 {
+		limit = 1
+	}
+
+	var cutoff any = nil
+	if indicatorsCutoff != nil && !indicatorsCutoff.IsZero() {
+		cutoff = *indicatorsCutoff
+	}
+
+	rows, err := db.QueryContext(ctx, `
+		WITH base AS (
+			SELECT
+				fm.code AS code,
+				COALESCE(fm.cnpj, '') AS cnpj,
+				COALESCE(fm.id, '') AS id,
+				COALESCE(fs.last_details_sync_at, fm.created_at, '1970-01-01'::timestamptz) AS last_details,
+				COALESCE(fs.last_documents_at, fm.created_at, '1970-01-01'::timestamptz) AS last_documents,
+				COALESCE(fs.last_historical_cotations_at, fm.created_at, '1970-01-01'::timestamptz) AS last_cotations,
+				COALESCE(fs.last_indicators_at, '1970-01-01'::timestamptz) AS last_indicators
+			FROM fund_master fm
+			LEFT JOIN fund_state fs ON fm.code = fs.fund_code
+		),
+		scored AS (
+			SELECT
+				code,
+				cnpj,
+				id,
+				(CASE WHEN last_details < NOW() - INTERVAL '1 minute' * $1 THEN $6 ELSE 0 END) +
+				(CASE WHEN cnpj != '' AND last_documents < NOW() - INTERVAL '1 minute' * $2 THEN $7 ELSE 0 END) +
+				(CASE WHEN id != '' AND last_cotations < NOW() - INTERVAL '1 minute' * $3 THEN $9 ELSE 0 END) +
+				(CASE WHEN $4::timestamptz IS NOT NULL AND id != '' AND last_indicators < $4 THEN $8 ELSE 0 END)
+				AS task_mask,
+				LEAST(last_details, last_documents, last_cotations, last_indicators) AS sort_key
+			FROM base
+		)
+		SELECT code, cnpj, id, task_mask
+		FROM scored
+		WHERE task_mask > 0
+		ORDER BY sort_key ASC, code ASC
+		LIMIT $5
+	`, detailsIntervalMin, documentsIntervalMin, cotationsIntervalMin, cutoff, limit, TaskDetails, TaskDocuments, TaskIndicators, TaskCotations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]FundCandidate, 0, limit)
+	for rows.Next() {
+		var c FundCandidate
+		if err := rows.Scan(&c.Code, &c.CNPJ, &c.ID, &c.TaskMask); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // SelectFundsForDetails selects funds that need details update based on last_details_sync_at

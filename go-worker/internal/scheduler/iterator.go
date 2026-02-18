@@ -13,6 +13,7 @@ type WorkItem struct {
 	FundCode      string
 	CNPJ          string
 	ID            string
+	TaskMask      int
 }
 
 type iteratorState struct {
@@ -91,6 +92,7 @@ func (it *iteratorState) peek(ctx context.Context, now time.Time) (WorkItem, boo
 			FundCode:      c.Code,
 			CNPJ:          c.CNPJ,
 			ID:            c.ID,
+			TaskMask:      c.TaskMask,
 		}, true
 	}
 
@@ -123,6 +125,7 @@ func (it *iteratorState) peek(ctx context.Context, now time.Time) (WorkItem, boo
 		FundCode:      c.Code,
 		CNPJ:          c.CNPJ,
 		ID:            c.ID,
+		TaskMask:      c.TaskMask,
 	}, true
 }
 

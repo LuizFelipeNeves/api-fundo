@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/collectors"
+	"github.com/luizfelipeneves/api-fundo/go-worker/internal/db"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/persistence"
 	"github.com/luizfelipeneves/api-fundo/go-worker/internal/scheduler"
 )
@@ -136,6 +137,15 @@ func (w *Worker) processWorkItem(ctx context.Context, item scheduler.WorkItem) e
 	bumpPeak(&inFlightPeak, curInFlight)
 	defer atomic.AddInt64(&inFlight, -1)
 
+	if item.CollectorName == "fund_pipeline" {
+		if err := w.processFundPipeline(ctx, item); err != nil {
+			return err
+		}
+
+		atomic.AddInt64(&processedTotal, 1)
+		return nil
+	}
+
 	// registry lookup (map lookup is cheap)
 	collector, err := w.registry.Get(item.CollectorName)
 	if err != nil {
@@ -157,6 +167,17 @@ func (w *Worker) processWorkItem(ctx context.Context, item scheduler.WorkItem) e
 		return fmt.Errorf("persistence failed: %w", err)
 	}
 
+	drainLimit := 2
+	if item.CollectorName == "market_snapshot" {
+		drainLimit = 25
+	}
+	if w.mode == "backfill" {
+		drainLimit = 50
+	}
+	if _, err := w.persister.DrainDirtyMetrics(ctx, drainLimit); err != nil {
+		return fmt.Errorf("drain metrics failed: %w", err)
+	}
+
 	atomic.AddInt64(&processedTotal, 1)
 
 	if verboseLogs() {
@@ -165,6 +186,64 @@ func (w *Worker) processWorkItem(ctx context.Context, item scheduler.WorkItem) e
 			"] completed ", item.CollectorName,
 			" for ", item.FundCode,
 		)
+	}
+
+	return nil
+}
+
+func (w *Worker) processFundPipeline(ctx context.Context, item scheduler.WorkItem) error {
+	code := strings.TrimSpace(item.FundCode)
+	if code == "" {
+		return nil
+	}
+
+	mask := item.TaskMask
+	if mask == 0 {
+		return nil
+	}
+
+	run := func(collectorName string) error {
+		collector, err := w.registry.Get(collectorName)
+		if err != nil {
+			return fmt.Errorf("collector not found: %w", err)
+		}
+
+		w.req.FundCode = code
+		w.req.CNPJ = item.CNPJ
+
+		result, err := collector.Collect(ctx, w.req)
+		if err != nil {
+			return fmt.Errorf("collection failed: %w", err)
+		}
+		if err := w.persistResult(ctx, collectorName, code, result); err != nil {
+			return fmt.Errorf("persistence failed: %w", err)
+		}
+		return nil
+	}
+
+	if mask&db.TaskDetails != 0 {
+		if err := run("fund_details"); err != nil {
+			return fmt.Errorf("pipeline fund_details failed: %w", err)
+		}
+	}
+	if mask&db.TaskDocuments != 0 {
+		if err := run("documents"); err != nil {
+			return fmt.Errorf("pipeline documents failed: %w", err)
+		}
+	}
+	if mask&db.TaskCotations != 0 {
+		if err := run("cotations"); err != nil {
+			return fmt.Errorf("pipeline cotations failed: %w", err)
+		}
+	}
+	if mask&db.TaskIndicators != 0 {
+		if err := run("indicators"); err != nil {
+			return fmt.Errorf("pipeline indicators failed: %w", err)
+		}
+	}
+
+	if err := w.persister.RecomputeMetricsForFund(ctx, code); err != nil {
+		return fmt.Errorf("pipeline recompute metrics failed: %w", err)
 	}
 
 	return nil

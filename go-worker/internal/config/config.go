@@ -60,7 +60,7 @@ func Load() (*Config, error) {
 
 		IntervalFundListMin:       getEnvInt("INTERVAL_FUND_LIST_MIN", 30),
 		IntervalFundDetailsMin:    getEnvInt("INTERVAL_FUND_DETAILS_MIN", 15),
-		IntervalCotationsMin:      getEnvInt("INTERVAL_COTATIONS_MIN", 5),
+		IntervalCotationsMin:      getEnvInt("INTERVAL_COTATIONS_MIN", 1440),
 		IntervalCotationsTodayMin: getEnvInt("INTERVAL_COTATIONS_TODAY_MIN", 5),
 		IntervalIndicatorsMin:     getEnvInt("INTERVAL_INDICATORS_MIN", 30),
 		IntervalDocumentsMin:      getEnvInt("INTERVAL_DOCUMENTS_MIN", 25),

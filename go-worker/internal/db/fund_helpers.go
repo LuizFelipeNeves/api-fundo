@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 // GetFundIDByCode retrieves fund ID from database by code
@@ -55,4 +56,21 @@ func (db *DB) GetLastDocumentsMaxIDByCode(ctx context.Context, code string) (int
 	}
 
 	return int(maxID.Int64), nil
+}
+
+func (db *DB) GetLastCotationDateISOByCode(ctx context.Context, code string) (time.Time, bool, error) {
+	query := `SELECT last_cotation_date_iso FROM fund_state WHERE fund_code = $1 LIMIT 1`
+
+	var d sql.NullTime
+	err := db.QueryRowContext(ctx, query, code).Scan(&d)
+	if err == sql.ErrNoRows {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("failed to get last cotation date: %w", err)
+	}
+	if !d.Valid || d.Time.IsZero() {
+		return time.Time{}, false, nil
+	}
+	return d.Time.UTC(), true, nil
 }

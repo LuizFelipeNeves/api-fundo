@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +20,55 @@ import (
 type Persister struct {
 	db                *db.DB
 	skipDividendYield bool
+}
+
+const cotationPriceScale = 10000
+
+func toPriceInt(price float64) (int, bool) {
+	if price <= 0 || !isFiniteFloat(price) {
+		return 0, false
+	}
+	v := int(math.Round(price * cotationPriceScale))
+	if v <= 0 {
+		return 0, false
+	}
+	return v, true
+}
+
+func fromPriceInt(priceInt int) float64 {
+	if priceInt <= 0 {
+		return 0
+	}
+	return float64(priceInt) / float64(cotationPriceScale)
+}
+
+func isFiniteFloat(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0)
+}
+
+func (p *Persister) markMetricsDirtyTx(ctx context.Context, tx *sql.Tx, fundCode string) error {
+	code := strings.TrimSpace(fundCode)
+	if code == "" {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO metrics_dirty (fund_code, updated_at)
+		VALUES ($1, NOW())
+		ON CONFLICT (fund_code) DO UPDATE SET
+			updated_at = NOW()
+	`, code)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO fund_state (fund_code, last_metrics_at, created_at, updated_at)
+		VALUES ($1, NULL, NOW(), NOW())
+		ON CONFLICT (fund_code) DO UPDATE SET
+			last_metrics_at = NULL,
+			updated_at = NOW()
+	`, code)
+	return err
 }
 
 // New creates a new persister
@@ -145,18 +196,20 @@ func (p *Persister) PersistFundDetails(ctx context.Context, fundCode string, dat
 				price, ok := priceByDate[div.DateISO]
 				if !ok {
 					var p float64
+					var pInt int
 					err := tx.QueryRowContext(
 						ctx,
-						`SELECT price FROM cotation WHERE fund_code = $1 AND date_iso = $2`,
+						`SELECT price_int FROM cotation WHERE fund_code = $1 AND date_iso = $2`,
 						div.FundCode,
 						div.DateISO,
-					).Scan(&p)
+					).Scan(&pInt)
 					if err != nil {
 						if err != sql.ErrNoRows {
 							return fmt.Errorf("failed to fetch cotation price: %w", err)
 						}
-						p = 0
+						pInt = 0
 					}
+					p = fromPriceInt(pInt)
 					priceByDate[div.DateISO] = p
 					price = p
 				}
@@ -169,6 +222,10 @@ func (p *Persister) PersistFundDetails(ctx context.Context, fundCode string, dat
 				return fmt.Errorf("failed to insert dividend: %w", err)
 			}
 		}
+	}
+
+	if err := p.markMetricsDirtyTx(ctx, tx, fundCode); err != nil {
+		return fmt.Errorf("failed to mark metrics dirty: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -191,11 +248,11 @@ func (p *Persister) RecomputeDividendYields(ctx context.Context) (int64, error) 
 	UPDATE dividend d
 		SET yield = (
 		d.value / (
-			SELECT c.price
+			SELECT (c.price_int::double precision / 10000.0)
 			FROM cotation c
 			WHERE c.fund_code = d.fund_code
 			AND c.date_iso <= d.date_iso
-			AND c.price > 0
+			AND c.price_int > 0
 			ORDER BY c.date_iso DESC
 			LIMIT 1
 		)
@@ -208,7 +265,7 @@ func (p *Persister) RecomputeDividendYields(ctx context.Context) (int64, error) 
 			FROM cotation c
 			WHERE c.fund_code = d.fund_code
 			AND c.date_iso <= d.date_iso
-			AND c.price > 0
+			AND c.price_int > 0
 		);
 	`)
 	if err != nil {
@@ -352,6 +409,10 @@ func (p *Persister) PersistIndicators(ctx context.Context, data collectors.Indic
 		}
 	}
 
+	if err := p.markMetricsDirtyTx(ctx, tx, data.FundCode); err != nil {
+		return fmt.Errorf("failed to mark metrics dirty: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit indicators_snapshot transaction: %w", err)
 	}
@@ -409,10 +470,10 @@ func (p *Persister) PersistMarketSnapshot(ctx context.Context, data collectors.M
 	}
 
 	stmtCotationToday, err := tx.PrepareContext(ctx, `
-		INSERT INTO cotation_today (fund_code, date_iso, hour, price, fetched_at)
+		INSERT INTO cotation_today (fund_code, date_iso, hour, price_int, fetched_at)
 		VALUES ($1, $2, $3::time, $4, NOW())
 		ON CONFLICT (fund_code, date_iso, hour) DO UPDATE SET
-			price = EXCLUDED.price,
+			price_int = EXCLUDED.price_int,
 			fetched_at = NOW()
 	`)
 	if err != nil {
@@ -441,12 +502,20 @@ func (p *Persister) PersistMarketSnapshot(ctx context.Context, data collectors.M
 			continue
 		}
 
-		if _, err := stmtCotationToday.ExecContext(ctx, it.FundCode, data.DateISO, data.Hour, it.Price); err != nil {
+		priceInt, ok := toPriceInt(it.Price)
+		if !ok {
+			continue
+		}
+		if _, err := stmtCotationToday.ExecContext(ctx, it.FundCode, data.DateISO, data.Hour, priceInt); err != nil {
 			return fmt.Errorf("failed to upsert cotation_today: %w", err)
 		}
 
 		if _, err := stmtFundState.ExecContext(ctx, it.FundCode); err != nil {
 			return fmt.Errorf("failed to upsert fund_state: %w", err)
+		}
+
+		if err := p.markMetricsDirtyTx(ctx, tx, it.FundCode); err != nil {
+			return fmt.Errorf("failed to mark metrics dirty: %w", err)
 		}
 	}
 
@@ -470,21 +539,46 @@ func (p *Persister) PersistHistoricalCotations(ctx context.Context, fundCode str
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO cotation (fund_code, date_iso, price)
+		INSERT INTO cotation (fund_code, date_iso, price_int)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (fund_code, date_iso) DO UPDATE SET
-			price = EXCLUDED.price
+			price_int = EXCLUDED.price_int
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
 	}
 	defer stmt.Close()
 
+	maxDateISO := ""
 	for _, item := range items {
-		_, err := stmt.ExecContext(ctx, item.FundCode, item.DateISO, item.Price)
+		if item.DateISO != "" && (maxDateISO == "" || item.DateISO > maxDateISO) {
+			maxDateISO = item.DateISO
+		}
+		priceInt, ok := toPriceInt(item.Price)
+		if !ok {
+			continue
+		}
+		_, err := stmt.ExecContext(ctx, item.FundCode, item.DateISO, priceInt)
 		if err != nil {
 			return fmt.Errorf("failed to insert cotation: %w", err)
 		}
+	}
+
+	if maxDateISO != "" {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO fund_state (fund_code, last_cotation_date_iso, created_at, updated_at)
+			VALUES ($1, $2, NOW(), NOW())
+			ON CONFLICT (fund_code) DO UPDATE SET
+				last_cotation_date_iso = GREATEST(COALESCE(fund_state.last_cotation_date_iso, '1970-01-01'::date), EXCLUDED.last_cotation_date_iso),
+				updated_at = NOW()
+		`, fundCode, maxDateISO)
+		if err != nil {
+			return fmt.Errorf("failed to update last cotation date: %w", err)
+		}
+	}
+
+	if err := p.markMetricsDirtyTx(ctx, tx, fundCode); err != nil {
+		return fmt.Errorf("failed to mark metrics dirty: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -626,4 +720,741 @@ func (p *Persister) PersistDocuments(ctx context.Context, fundCode string, items
 	}
 
 	return nil
+}
+
+type drawdownResult struct {
+	MaxDrawdown     float64
+	MaxRecoveryDays int
+}
+
+func computeDrawdown(prices []float64) drawdownResult {
+	peak := math.Inf(-1)
+	maxDrawdown := 0.0
+	maxRecovery := 0
+
+	currentPeakIndex := 0
+	currentPeak := 0.0
+	if len(prices) > 0 {
+		currentPeak = prices[0]
+	}
+	peak = currentPeak
+
+	inDrawdown := false
+	drawdownStartIndex := 0
+	drawdownPeakValue := currentPeak
+
+	for i := 0; i < len(prices); i++ {
+		price := prices[i]
+		if price <= 0 {
+			continue
+		}
+
+		if price > peak {
+			peak = price
+		}
+
+		dd := 0.0
+		if peak > 0 {
+			dd = price/peak - 1
+		}
+		if dd < maxDrawdown {
+			maxDrawdown = dd
+		}
+
+		if !inDrawdown {
+			if price < currentPeak && currentPeak > 0 {
+				inDrawdown = true
+				drawdownStartIndex = currentPeakIndex
+				drawdownPeakValue = currentPeak
+			} else if price >= currentPeak {
+				currentPeak = price
+				currentPeakIndex = i
+			}
+			continue
+		}
+
+		if price >= drawdownPeakValue {
+			recovery := i - drawdownStartIndex
+			if recovery > maxRecovery {
+				maxRecovery = recovery
+			}
+			inDrawdown = false
+			currentPeak = price
+			currentPeakIndex = i
+			continue
+		}
+	}
+
+	return drawdownResult{
+		MaxDrawdown:     maxDrawdown,
+		MaxRecoveryDays: maxRecovery,
+	}
+}
+
+func mean(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	acc := 0.0
+	for _, v := range values {
+		acc += v
+	}
+	return acc / float64(len(values))
+}
+
+func stdev(values []float64) float64 {
+	if len(values) < 2 {
+		return 0
+	}
+	m := mean(values)
+	acc := 0.0
+	for _, v := range values {
+		d := v - m
+		acc += d * d
+	}
+	return math.Sqrt(acc / float64(len(values)-1))
+}
+
+type xy struct {
+	X float64
+	Y float64
+}
+
+func linearSlope(values []xy) float64 {
+	n := len(values)
+	if n < 2 {
+		return 0
+	}
+	sumX := 0.0
+	sumY := 0.0
+	sumXY := 0.0
+	sumXX := 0.0
+	for _, p := range values {
+		sumX += p.X
+		sumY += p.Y
+		sumXY += p.X * p.Y
+		sumXX += p.X * p.X
+	}
+	denom := float64(n)*sumXX - sumX*sumX
+	if denom == 0 {
+		return 0
+	}
+	return (float64(n)*sumXY - sumX*sumY) / denom
+}
+
+func annualizeVolatility(dailyVolatility float64, tradingDays float64) float64 {
+	if !isFiniteFloat(dailyVolatility) || dailyVolatility <= 0 {
+		return 0
+	}
+	td := tradingDays
+	if !isFiniteFloat(td) || td <= 0 {
+		td = 252
+	}
+	return dailyVolatility * math.Sqrt(td)
+}
+
+func sharpeRatio(meanDailyReturn float64, dailyVolatility float64, tradingDays float64) float64 {
+	if !isFiniteFloat(meanDailyReturn) {
+		return 0
+	}
+	if !isFiniteFloat(dailyVolatility) || dailyVolatility <= 0 {
+		return 0
+	}
+	td := tradingDays
+	if !isFiniteFloat(td) || td <= 0 {
+		td = 252
+	}
+	return (meanDailyReturn / dailyVolatility) * math.Sqrt(td)
+}
+
+func percentileRank(values []float64, current float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	sorted := make([]float64, len(values))
+	copy(sorted, values)
+	sort.Float64s(sorted)
+	count := 0
+	for _, v := range sorted {
+		if v <= current {
+			count++
+		}
+	}
+	return float64(count) / float64(len(sorted))
+}
+
+func monthKeyToParts(monthKey string) (int, int, bool) {
+	parts := strings.Split(strings.TrimSpace(monthKey), "-")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	y, err1 := strconv.Atoi(parts[0])
+	m, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil || m < 1 || m > 12 {
+		return 0, 0, false
+	}
+	return y, m, true
+}
+
+func monthKeyDiff(a string, b string) int {
+	ay, am, okA := monthKeyToParts(a)
+	by, bm, okB := monthKeyToParts(b)
+	if !okA || !okB {
+		return 0
+	}
+	return (by-ay)*12 + (bm - am)
+}
+
+func leftPad2(n int) string {
+	if n < 10 && n >= 0 {
+		return "0" + strconv.Itoa(n)
+	}
+	return strconv.Itoa(n)
+}
+
+func leftPad4(n int) string {
+	if n >= 0 && n < 10 {
+		return "000" + strconv.Itoa(n)
+	}
+	if n >= 0 && n < 100 {
+		return "00" + strconv.Itoa(n)
+	}
+	if n >= 0 && n < 1000 {
+		return "0" + strconv.Itoa(n)
+	}
+	return strconv.Itoa(n)
+}
+
+func monthKeyAdd(monthKey string, deltaMonths int) string {
+	y, m, ok := monthKeyToParts(monthKey)
+	if !ok {
+		return ""
+	}
+	base := y*12 + (m - 1)
+	next := base + deltaMonths
+	yy := next / 12
+	mm := (next % 12) + 1
+	return leftPad4(yy) + "-" + leftPad2(mm)
+}
+
+func listMonthKeysBetweenInclusive(startKey string, endKey string) []string {
+	diff := monthKeyDiff(startKey, endKey)
+	if diff < 0 {
+		return []string{}
+	}
+	out := make([]string, 0, diff+1)
+	for i := 0; i <= diff; i++ {
+		k := monthKeyAdd(startKey, i)
+		if k != "" {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+func countWeekdaysBetweenInclusive(start time.Time, end time.Time) int {
+	a := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC)
+	b := time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, time.UTC)
+	if b.Before(a) {
+		return 0
+	}
+	count := 0
+	for d := a; !d.After(b); d = d.AddDate(0, 0, 1) {
+		wd := d.Weekday()
+		if wd >= time.Monday && wd <= time.Friday {
+			count++
+		}
+	}
+	return count
+}
+
+func (p *Persister) DrainDirtyMetrics(ctx context.Context, max int) (int, error) {
+	limit := max
+	if limit <= 0 {
+		limit = 1
+	}
+
+	done := 0
+	for done < limit {
+		var fundCode string
+		err := p.db.QueryRowContext(ctx, `
+			WITH picked AS (
+				SELECT fund_code
+				FROM metrics_dirty
+				ORDER BY updated_at ASC
+				LIMIT 1
+			)
+			DELETE FROM metrics_dirty d
+			USING picked p
+			WHERE d.fund_code = p.fund_code
+			RETURNING d.fund_code
+		`).Scan(&fundCode)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				return done, nil
+			}
+			return done, err
+		}
+
+		if err := p.computeAndUpsertMetrics(ctx, fundCode); err != nil {
+			_, _ = p.db.ExecContext(ctx, `
+				INSERT INTO metrics_dirty (fund_code, updated_at)
+				VALUES ($1, NOW())
+				ON CONFLICT (fund_code) DO UPDATE SET
+					updated_at = NOW()
+			`, fundCode)
+			return done, err
+		}
+
+		done++
+	}
+
+	return done, nil
+}
+
+func (p *Persister) RecomputeMetricsForFund(ctx context.Context, fundCode string) error {
+	code := strings.TrimSpace(fundCode)
+	if code == "" {
+		return nil
+	}
+
+	if err := p.computeAndUpsertMetrics(ctx, code); err != nil {
+		return err
+	}
+
+	_, _ = p.db.ExecContext(ctx, `DELETE FROM metrics_dirty WHERE fund_code = $1`, code)
+	return nil
+}
+
+func (p *Persister) computeAndUpsertMetrics(ctx context.Context, fundCode string) error {
+	code := strings.TrimSpace(fundCode)
+	if code == "" {
+		return nil
+	}
+
+	const cotationsLimit = 1825
+
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT date_iso, price_int
+		FROM cotation
+		WHERE fund_code = $1
+		ORDER BY date_iso DESC
+		LIMIT $2
+	`, code, cotationsLimit)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type cotRow struct {
+		date  time.Time
+		price int
+	}
+	all := make([]cotRow, 0, cotationsLimit)
+	for rows.Next() {
+		var r cotRow
+		if err := rows.Scan(&r.date, &r.price); err != nil {
+			return err
+		}
+		if r.price <= 0 {
+			continue
+		}
+		all = append(all, r)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(all) < 2 {
+		return nil
+	}
+
+	dates := make([]time.Time, 0, len(all))
+	prices := make([]float64, 0, len(all))
+	monthLastPrice := map[string]float64{}
+	for i := len(all) - 1; i >= 0; i-- {
+		d := all[i].date.UTC()
+		pf := fromPriceInt(all[i].price)
+		if pf <= 0 {
+			continue
+		}
+		dates = append(dates, d)
+		prices = append(prices, pf)
+		monthLastPrice[d.Format("2006-01")] = pf
+	}
+	if len(prices) < 2 {
+		return nil
+	}
+
+	startDate := dates[0]
+	endDate := dates[len(dates)-1]
+	asOfDateISO := endDate.Format("2006-01-02")
+
+	dailyReturns := make([]float64, 0, len(prices)-1)
+	for i := 1; i < len(prices); i++ {
+		prev := prices[i-1]
+		cur := prices[i]
+		if prev > 0 {
+			dailyReturns = append(dailyReturns, cur/prev-1)
+		}
+	}
+	meanDailyReturn := mean(dailyReturns)
+	volDaily := stdev(dailyReturns)
+	volAnnual := annualizeVolatility(volDaily, 252)
+	sharpe := sharpeRatio(meanDailyReturn, volDaily, 252)
+	dd := computeDrawdown(prices)
+
+	last3dReturn := 0.0
+	if len(prices) >= 3 && prices[len(prices)-3] > 0 {
+		last3dReturn = prices[len(prices)-1]/prices[len(prices)-3] - 1
+	}
+
+	expectedTradingDays := countWeekdaysBetweenInclusive(startDate, endDate)
+	if expectedTradingDays <= 0 {
+		expectedTradingDays = len(prices)
+	}
+	pctDaysTraded := 0.0
+	if expectedTradingDays > 0 {
+		pctDaysTraded = float64(len(prices)) / float64(expectedTradingDays)
+	}
+
+	monthKeys := make([]string, 0, len(monthLastPrice))
+	for k := range monthLastPrice {
+		monthKeys = append(monthKeys, k)
+	}
+	sort.Strings(monthKeys)
+
+	var (
+		dividendByMonth          = map[string]float64{}
+		dividendValues           = make([]float64, 0, 64)
+		dividendPaidMonths12m    = 0
+		dividendRegularity12m    = 0.0
+		dividendMean12m          = 0.0
+		dividendPrevMean11m      = 0.0
+		dividendFirstHalfMean12m = 0.0
+		dividendLastHalfMean12m  = 0.0
+		dividendMax12m           = 0.0
+		dividendMin12m           = 0.0
+		dividendLastValue        = 0.0
+		dividendCV               = 0.0
+		dividendTrendSlope       = 0.0
+		dyMonthlyMean            = 0.0
+	)
+
+	divRows, err := p.db.QueryContext(ctx, `
+		SELECT date_iso, payment, type, value
+		FROM dividend
+		WHERE fund_code = $1
+			AND date_iso >= $2
+			AND date_iso <= $3
+		ORDER BY date_iso ASC
+	`, code, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
+	if err != nil {
+		return err
+	}
+	defer divRows.Close()
+
+	for divRows.Next() {
+		var (
+			dateISO  time.Time
+			payment  time.Time
+			typeCode int
+			value    float64
+		)
+		if err := divRows.Scan(&dateISO, &payment, &typeCode, &value); err != nil {
+			return err
+		}
+		if typeCode != 1 || !isFiniteFloat(value) || value <= 0 {
+			continue
+		}
+		dividendValues = append(dividendValues, value)
+		mk := ""
+		if !dateISO.IsZero() {
+			mk = dateISO.UTC().Format("2006-01")
+		}
+		if mk == "" && !payment.IsZero() {
+			mk = payment.UTC().Format("2006-01")
+		}
+		if mk != "" {
+			dividendByMonth[mk] += value
+		}
+	}
+	if err := divRows.Err(); err != nil {
+		return err
+	}
+
+	divMean := mean(dividendValues)
+	divStd := stdev(dividendValues)
+	if divMean > 0 {
+		dividendCV = divStd / divMean
+	}
+
+	firstMonth := ""
+	lastMonth := ""
+	if len(monthKeys) > 0 {
+		firstMonth = monthKeys[0]
+		lastMonth = monthKeys[len(monthKeys)-1]
+	}
+	allMonths := monthKeys
+	if firstMonth != "" && lastMonth != "" {
+		allMonths = listMonthKeysBetweenInclusive(firstMonth, lastMonth)
+	}
+
+	if len(allMonths) > 1 {
+		points := make([]xy, 0, len(allMonths))
+		for idx, mk := range allMonths {
+			points = append(points, xy{X: float64(idx), Y: dividendByMonth[mk]})
+		}
+		dividendTrendSlope = linearSlope(points)
+	}
+
+	dyByMonth := make([]float64, 0, len(monthKeys))
+	for _, mk := range monthKeys {
+		div := dividendByMonth[mk]
+		price := monthLastPrice[mk]
+		if div > 0 && price > 0 {
+			dyByMonth = append(dyByMonth, div/price)
+		}
+	}
+	dyMonthlyMean = mean(dyByMonth)
+
+	now := time.Now().UTC()
+	lastDayPrevMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1)
+	endMonth := time.Date(lastDayPrevMonth.Year(), lastDayPrevMonth.Month(), 1, 0, 0, 0, 0, time.UTC)
+
+	months12 := make([]string, 0, 12)
+	for i := 11; i >= 0; i-- {
+		m := endMonth.AddDate(0, -i, 0)
+		months12 = append(months12, m.Format("2006-01"))
+	}
+
+	series12 := make([]float64, 0, 12)
+	for _, mk := range months12 {
+		v := dividendByMonth[mk]
+		if v > 0 {
+			dividendPaidMonths12m++
+		}
+		series12 = append(series12, v)
+	}
+
+	if dividendPaidMonths12m > 0 {
+		dividendRegularity12m = float64(dividendPaidMonths12m) / 12.0
+		dividendMean12m = mean(series12)
+		dividendMax12m = series12[0]
+		dividendMin12m = series12[0]
+		for _, v := range series12[1:] {
+			if v > dividendMax12m {
+				dividendMax12m = v
+			}
+			if v < dividendMin12m {
+				dividendMin12m = v
+			}
+		}
+		dividendLastValue = series12[len(series12)-1]
+
+		prev := series12[:len(series12)-1]
+		dividendPrevMean11m = mean(prev)
+
+		split := len(series12) / 2
+		dividendFirstHalfMean12m = mean(series12[:split])
+		dividendLastHalfMean12m = mean(series12[split:])
+	}
+
+	pvpCurrent := 0.0
+	pvpValues := make([]float64, 0, 8)
+	liqValues := make([]float64, 0, 8)
+	currentYear := int16(time.Now().In(time.Local).Year())
+
+	indRows, err := p.db.QueryContext(ctx, `
+		SELECT ano, pvp, liquidez_diaria
+		FROM indicators_snapshot
+		WHERE fund_code = $1
+		ORDER BY ano ASC
+	`, code)
+	if err != nil {
+		return err
+	}
+	defer indRows.Close()
+	for indRows.Next() {
+		var (
+			ano            int16
+			pvp            sql.NullFloat64
+			liquidezDiaria sql.NullFloat64
+		)
+		if err := indRows.Scan(&ano, &pvp, &liquidezDiaria); err != nil {
+			return err
+		}
+		if pvp.Valid && isFiniteFloat(pvp.Float64) && pvp.Float64 > 0 {
+			pvpValues = append(pvpValues, pvp.Float64)
+			if ano == currentYear {
+				pvpCurrent = pvp.Float64
+			}
+		}
+		if liquidezDiaria.Valid && isFiniteFloat(liquidezDiaria.Float64) && liquidezDiaria.Float64 > 0 {
+			liqValues = append(liqValues, liquidezDiaria.Float64)
+		}
+	}
+	if err := indRows.Err(); err != nil {
+		return err
+	}
+
+	if pvpCurrent <= 0 {
+		for i := len(pvpValues) - 1; i >= 0; i-- {
+			if pvpValues[i] > 0 {
+				pvpCurrent = pvpValues[i]
+				break
+			}
+		}
+	}
+
+	var vpc sql.NullFloat64
+	if err := p.db.QueryRowContext(ctx, `
+		SELECT valor_patrimonial_cota
+		FROM fund_master
+		WHERE code = $1
+		LIMIT 1
+	`, code).Scan(&vpc); err != nil {
+		if err != sql.ErrNoRows {
+			return err
+		}
+	}
+	if pvpCurrent <= 0 && vpc.Valid && vpc.Float64 > 0 && prices[len(prices)-1] > 0 {
+		pvpCurrent = prices[len(prices)-1] / vpc.Float64
+		pvpValues = append(pvpValues, pvpCurrent)
+	}
+
+	pvpPercentile := 0.0
+	if len(pvpValues) > 0 && pvpCurrent > 0 {
+		pvpPercentile = percentileRank(pvpValues, pvpCurrent)
+	}
+
+	liqMean := mean(liqValues)
+
+	todayReturn := 0.0
+	var latestTodayDate time.Time
+	err = p.db.QueryRowContext(ctx, `
+		SELECT date_iso
+		FROM cotation_today
+		WHERE fund_code = $1
+		ORDER BY date_iso DESC
+		LIMIT 1
+	`, code).Scan(&latestTodayDate)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if err == nil {
+		var firstInt int
+		if err := p.db.QueryRowContext(ctx, `
+			SELECT price_int
+			FROM cotation_today
+			WHERE fund_code = $1 AND date_iso = $2
+			ORDER BY hour ASC
+			LIMIT 1
+		`, code, latestTodayDate.Format("2006-01-02")).Scan(&firstInt); err != nil && err != sql.ErrNoRows {
+			return err
+		}
+		var lastInt int
+		if err := p.db.QueryRowContext(ctx, `
+			SELECT price_int
+			FROM cotation_today
+			WHERE fund_code = $1 AND date_iso = $2
+			ORDER BY hour DESC
+			LIMIT 1
+		`, code, latestTodayDate.Format("2006-01-02")).Scan(&lastInt); err != nil && err != sql.ErrNoRows {
+			return err
+		}
+		first := fromPriceInt(firstInt)
+		last := fromPriceInt(lastInt)
+		if first > 0 && last > 0 {
+			todayReturn = last/first - 1
+		}
+	}
+
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO fund_metrics_latest (
+			fund_code, as_of_date, computed_at,
+			pvp_current, pvp_percentile, dy_monthly_mean,
+			dividend_cv, dividend_trend_slope,
+			liq_mean, pct_days_traded,
+			vol_annual, sharpe,
+			drawdown_max, recovery_time_days,
+			today_return, price_last3d_return,
+			dividend_paid_months_12m, dividend_regularity_12m,
+			dividend_mean_12m, dividend_prev_mean_11m,
+			dividend_first_half_mean_12m, dividend_last_half_mean_12m,
+			dividend_max_12m, dividend_min_12m, dividend_last_value
+		) VALUES (
+			$1, $2, NOW(),
+			$3, $4, $5,
+			$6, $7,
+			$8, $9,
+			$10, $11,
+			$12, $13,
+			$14, $15,
+			$16, $17,
+			$18, $19,
+			$20, $21,
+			$22, $23,
+			$24, $25, $26
+		)
+		ON CONFLICT (fund_code) DO UPDATE SET
+			as_of_date = EXCLUDED.as_of_date,
+			computed_at = NOW(),
+			pvp_current = EXCLUDED.pvp_current,
+			pvp_percentile = EXCLUDED.pvp_percentile,
+			dy_monthly_mean = EXCLUDED.dy_monthly_mean,
+			dividend_cv = EXCLUDED.dividend_cv,
+			dividend_trend_slope = EXCLUDED.dividend_trend_slope,
+			liq_mean = EXCLUDED.liq_mean,
+			pct_days_traded = EXCLUDED.pct_days_traded,
+			vol_annual = EXCLUDED.vol_annual,
+			sharpe = EXCLUDED.sharpe,
+			drawdown_max = EXCLUDED.drawdown_max,
+			recovery_time_days = EXCLUDED.recovery_time_days,
+			today_return = EXCLUDED.today_return,
+			price_last3d_return = EXCLUDED.price_last3d_return,
+			dividend_paid_months_12m = EXCLUDED.dividend_paid_months_12m,
+			dividend_regularity_12m = EXCLUDED.dividend_regularity_12m,
+			dividend_mean_12m = EXCLUDED.dividend_mean_12m,
+			dividend_prev_mean_11m = EXCLUDED.dividend_prev_mean_11m,
+			dividend_first_half_mean_12m = EXCLUDED.dividend_first_half_mean_12m,
+			dividend_last_half_mean_12m = EXCLUDED.dividend_last_half_mean_12m,
+			dividend_max_12m = EXCLUDED.dividend_max_12m,
+			dividend_min_12m = EXCLUDED.dividend_min_12m,
+			dividend_last_value = EXCLUDED.dividend_last_value
+	`,
+		code, asOfDateISO,
+		pvpCurrent, pvpPercentile, dyMonthlyMean,
+		dividendCV, dividendTrendSlope,
+		liqMean, pctDaysTraded,
+		volAnnual, sharpe,
+		dd.MaxDrawdown, dd.MaxRecoveryDays,
+		todayReturn, last3dReturn,
+		dividendPaidMonths12m, dividendRegularity12m,
+		dividendMean12m, dividendPrevMean11m,
+		dividendFirstHalfMean12m, dividendLastHalfMean12m,
+		dividendMax12m, dividendMin12m, dividendLastValue,
+	)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO fund_state (fund_code, last_cotation_date_iso, last_metrics_at, created_at, updated_at)
+		VALUES ($1, $2, NOW(), NOW(), NOW())
+		ON CONFLICT (fund_code) DO UPDATE SET
+			last_cotation_date_iso = GREATEST(COALESCE(fund_state.last_cotation_date_iso, '1970-01-01'::date), EXCLUDED.last_cotation_date_iso),
+			last_metrics_at = NOW(),
+			updated_at = NOW()
+	`, code, asOfDateISO)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
