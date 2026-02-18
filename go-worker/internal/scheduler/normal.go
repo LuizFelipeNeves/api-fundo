@@ -22,6 +22,13 @@ func (s *Scheduler) startNormal(ctx context.Context) error {
 			enabled:        s.shouldRunMarketSnapshot,
 		},
 		{
+			collector:      "dividend_yield_chart",
+			refillInterval: s.cfg.SchedulerInterval,
+			refill: func(ctx context.Context) ([]db.FundCandidate, error) {
+				return s.db.SelectFundsWithZeroYield(ctx, s.cfg.BatchSize)
+			},
+		},
+		{
 			collector:      "fund_pipeline",
 			refillInterval: s.cfg.SchedulerInterval,
 			refill: func(ctx context.Context) ([]db.FundCandidate, error) {

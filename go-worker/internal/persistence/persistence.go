@@ -184,7 +184,7 @@ func (p *Persister) PersistFundDetails(ctx context.Context, fundCode string, dat
 			ON CONFLICT (fund_code, date_iso, type) DO UPDATE SET
 				payment = EXCLUDED.payment,
 				value = EXCLUDED.value,
-				yield = EXCLUDED.yield
+				yield = COALESCE(NULLIF(EXCLUDED.yield, 0), dividend.yield)
 		`)
 		if err != nil {
 			return fmt.Errorf("failed to prepare dividend statement: %w", err)
@@ -257,37 +257,50 @@ func calcYield(value, price float64) float64 {
 	return (value / price) * 100
 }
 
-func (p *Persister) RecomputeDividendYields(ctx context.Context) (int64, error) {
-	res, err := p.db.ExecContext(ctx, `
-	UPDATE dividend d
-		SET yield = (
-		d.value / (
-			SELECT (c.price_int::double precision / 10000.0)
-			FROM cotation c
-			WHERE c.fund_code = d.fund_code
-			AND c.date_iso <= d.date_iso
-			AND c.price_int > 0
-			ORDER BY c.date_iso DESC
-			LIMIT 1
-		)
-		) * 100
-		WHERE 
-		d.type = 1
-		AND
-		d.yield = 0
-		AND d.value > 0
-		AND EXISTS (
-			SELECT 1
-			FROM cotation c
-			WHERE c.fund_code = d.fund_code
-			AND c.date_iso <= d.date_iso
-			AND c.price_int > 0
-		);
+// PersistDividendYields updates dividend yields from chart data
+func (p *Persister) PersistDividendYields(ctx context.Context, fundCode string, yields []collectors.DividendYieldItem) error {
+	if len(yields) == 0 {
+		return nil
+	}
+
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		UPDATE dividend
+		SET yield = $1
+		WHERE fund_code = $2
+			AND type = 1
+			AND yield = 0
+			AND to_char(date_iso, 'YYYY-MM') = $3
 	`)
 	if err != nil {
-		return 0, err
+		return fmt.Errorf("failed to prepare statement: %w", err)
 	}
-	return res.RowsAffected()
+	defer stmt.Close()
+
+	updated := 0
+	for _, y := range yields {
+		result, err := stmt.ExecContext(ctx, y.YieldValue, fundCode, y.Month)
+		if err != nil {
+			return fmt.Errorf("failed to update yield for %s %s: %w", fundCode, y.Month, err)
+		}
+		rows, _ := result.RowsAffected()
+		if rows > 0 {
+			updated++
+		}
+	}
+
+	if updated > 0 {
+		if err := p.markMetricsDirtyTx(ctx, tx, fundCode); err != nil {
+			return fmt.Errorf("failed to mark metrics dirty: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // PersistIndicators persists fund indicators

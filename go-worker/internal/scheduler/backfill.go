@@ -67,23 +67,6 @@ func (s *Scheduler) startBackfill(ctx context.Context) error {
 		return err
 	}
 
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		updated, err := s.persister.RecomputeDividendYields(ctx)
-		if err == nil {
-			log.Printf("[backfill] dividend yields updated=%d\n", updated)
-			break
-		}
-
-		log.Println("[backfill] dividend yield recompute error:", err)
-		if err := sleepCtx(ctx, 5*time.Second); err != nil {
-			return err
-		}
-	}
-
 	if err := s.runBackfillStage(
 		ctx,
 		[]iteratorState{
@@ -97,6 +80,24 @@ func (s *Scheduler) startBackfill(ctx context.Context) error {
 		},
 		func(ctx context.Context) (int, error) {
 			return s.db.CountFundsMissingIndicators(ctx)
+		},
+	); err != nil {
+		return err
+	}
+
+	if err := s.runBackfillStage(
+		ctx,
+		[]iteratorState{
+			{
+				collector:      "dividend_yield_chart",
+				refillInterval: s.cfg.SchedulerInterval,
+				refill: func(ctx context.Context) ([]db.FundCandidate, error) {
+					return s.db.SelectFundsForYieldBackfill(ctx, s.cfg.BatchSize)
+				},
+			},
+		},
+		func(ctx context.Context) (int, error) {
+			return s.db.CountFundsWithZeroYield(ctx)
 		},
 	); err != nil {
 		return err

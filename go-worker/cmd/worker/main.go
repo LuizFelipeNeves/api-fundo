@@ -129,6 +129,7 @@ func main() {
 	registry.Register(collectors.NewMarketSnapshotCollector(statusInvestSvc))
 	registry.Register(collectors.NewCotationsCollector(httpClient, database))
 	registry.Register(collectors.NewDocumentsCollector(fnetClient, database))
+	registry.Register(collectors.NewDividendYieldChartCollector(httpClient))
 
 	log.Printf("registered %d collectors\n", len(registry.List()))
 
@@ -144,12 +145,6 @@ func main() {
 	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	if updated, err := persister.RecomputeDividendYields(ctx); err != nil {
-		log.Printf("[startup] dividend yield recompute error: %v\n", err)
-	} else {
-		log.Printf("[startup] dividend yields updated=%d\n", updated)
-	}
 
 	// Handle shutdown signals
 	sigChan := make(chan os.Signal, 1)

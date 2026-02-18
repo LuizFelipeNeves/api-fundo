@@ -21,6 +21,7 @@ const (
 	TaskDocuments  = 2
 	TaskIndicators = 4
 	TaskCotations  = 8
+	TaskYield      = 16
 )
 
 func (db *DB) SelectFundsForPipeline(ctx context.Context, detailsIntervalMin, documentsIntervalMin, cotationsIntervalMin int, indicatorsCutoff *time.Time, limit int) ([]FundCandidate, error) {
@@ -231,6 +232,38 @@ func (db *DB) SelectFundsMissingIndicators(ctx context.Context, limit int) ([]Fu
 		LIMIT $1
 	`
 	return db.queryFundCandidates(ctx, query, limit)
+}
+
+// SelectFundsWithZeroYield selects funds that have dividends with yield = 0 and type = 1
+func (db *DB) SelectFundsWithZeroYield(ctx context.Context, limit int) ([]FundCandidate, error) {
+	query := `
+		SELECT DISTINCT fm.code, COALESCE(fm.cnpj, '') as cnpj, COALESCE(fm.id, '') as id
+		FROM fund_master fm
+		INNER JOIN dividend d ON fm.code = d.fund_code
+		WHERE d.type = 1
+			AND d.yield = 0
+			AND d.value > 0
+		ORDER BY fm.code ASC
+		LIMIT $1
+	`
+	return db.queryFundCandidates(ctx, query, limit)
+}
+
+// SelectFundsForYieldBackfill selects funds that need yield backfill
+func (db *DB) SelectFundsForYieldBackfill(ctx context.Context, limit int) ([]FundCandidate, error) {
+	return db.SelectFundsWithZeroYield(ctx, limit)
+}
+
+// CountFundsWithZeroYield counts funds that have dividends with yield = 0 and type = 1
+func (db *DB) CountFundsWithZeroYield(ctx context.Context) (int, error) {
+	query := `
+		SELECT COUNT(DISTINCT fund_code)
+		FROM dividend
+		WHERE type = 1
+			AND yield = 0
+			AND value > 0
+	`
+	return db.queryCount(ctx, query)
 }
 
 func (db *DB) CountFundsMissingDetails(ctx context.Context) (int, error) {

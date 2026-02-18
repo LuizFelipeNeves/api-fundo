@@ -25,6 +25,7 @@ type Collector interface {
 type CollectRequest struct {
 	FundCode string
 	CNPJ     string
+	ID       string
 }
 
 // CollectResult represents a collection result

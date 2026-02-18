@@ -155,6 +155,7 @@ func (w *Worker) processWorkItem(ctx context.Context, item scheduler.WorkItem) e
 	// reuse request struct (avoid allocation)
 	w.req.FundCode = item.FundCode
 	w.req.CNPJ = item.CNPJ
+	w.req.ID = item.ID
 
 	// Collect data
 	result, err := collector.Collect(ctx, w.req)
@@ -210,6 +211,7 @@ func (w *Worker) processFundPipeline(ctx context.Context, item scheduler.WorkIte
 
 		w.req.FundCode = code
 		w.req.CNPJ = item.CNPJ
+		w.req.ID = item.ID
 
 		result, err := collector.Collect(ctx, w.req)
 		if err != nil {
@@ -336,6 +338,14 @@ func (w *Worker) persistResult(
 			return fmt.Errorf("invalid data type for documents")
 		}
 		return w.persister.PersistDocuments(ctx, fundCode, items)
+
+	case "dividend_yield_chart":
+		data, ok := result.Data.(collectors.DividendYieldChartData)
+		if !ok {
+			return fmt.Errorf("invalid data type for dividend_yield_chart")
+		}
+		yields := collectors.ParseDividendYields(data.Items)
+		return w.persister.PersistDividendYields(ctx, fundCode, yields)
 
 	default:
 		return fmt.Errorf("unknown collector: %s", collectorName)
