@@ -36,9 +36,10 @@ func runEODCotation(ctx context.Context, tx *sql.Tx, dateISO string) (int, error
 	defer stmt.Close()
 
 	stmtDirty, err := tx.PrepareContext(ctx, `
-		INSERT INTO metrics_dirty (fund_code, updated_at)
-		VALUES ($1, NOW())
+		INSERT INTO fund_state (fund_code, last_metrics_at, created_at, updated_at)
+		VALUES ($1, NULL, NOW(), NOW())
 		ON CONFLICT (fund_code) DO UPDATE SET
+			last_metrics_at = NULL,
 			updated_at = NOW()
 	`)
 	if err != nil {

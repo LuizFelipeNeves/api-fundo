@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strconv"
@@ -53,16 +54,6 @@ func (p *Persister) markMetricsDirtyTx(ctx context.Context, tx *sql.Tx, fundCode
 		return nil
 	}
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO metrics_dirty (fund_code, updated_at)
-		VALUES ($1, NOW())
-		ON CONFLICT (fund_code) DO UPDATE SET
-			updated_at = NOW()
-	`, code)
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.ExecContext(ctx, `
 		INSERT INTO fund_state (fund_code, last_metrics_at, created_at, updated_at)
 		VALUES ($1, NULL, NOW(), NOW())
 		ON CONFLICT (fund_code) DO UPDATE SET
@@ -300,7 +291,18 @@ func (p *Persister) PersistDividendYields(ctx context.Context, fundCode string, 
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit: %w", err)
+	}
+
+	// Flush metrics immediately after yield update
+	if updated > 0 {
+		if _, err := p.DrainDirtyMetrics(ctx, 5); err != nil {
+			log.Printf("[persist] drain dirty metrics error for %s: %v\n", fundCode, err)
+		}
+	}
+
+	return nil
 }
 
 // PersistIndicators persists fund indicators
@@ -797,14 +799,17 @@ func (p *Persister) DrainDirtyMetrics(ctx context.Context, max int) (int, error)
 		err := p.db.QueryRowContext(ctx, `
 			WITH picked AS (
 				SELECT fund_code
-				FROM metrics_dirty
-				ORDER BY updated_at ASC
+				FROM fund_state
+				WHERE last_metrics_at IS NULL
+					AND fund_code IS NOT NULL
+					AND fund_code != ''
 				LIMIT 1
 			)
-			DELETE FROM metrics_dirty d
-			USING picked p
-			WHERE d.fund_code = p.fund_code
-			RETURNING d.fund_code
+			UPDATE fund_state
+			SET last_metrics_at = NOW()
+			FROM picked
+			WHERE fund_state.fund_code = picked.fund_code
+			RETURNING fund_state.fund_code
 		`).Scan(&fundCode)
 		if err != nil {
 			if err == sql.ErrNoRows {
@@ -814,11 +819,11 @@ func (p *Persister) DrainDirtyMetrics(ctx context.Context, max int) (int, error)
 		}
 
 		if err := p.computeAndUpsertMetrics(ctx, fundCode); err != nil {
+			// Mark as dirty again if compute fails
 			_, _ = p.db.ExecContext(ctx, `
-				INSERT INTO metrics_dirty (fund_code, updated_at)
-				VALUES ($1, NOW())
-				ON CONFLICT (fund_code) DO UPDATE SET
-					updated_at = NOW()
+				UPDATE fund_state
+				SET last_metrics_at = NULL, updated_at = NOW()
+				WHERE fund_code = $1
 			`, fundCode)
 			return done, err
 		}
@@ -839,7 +844,6 @@ func (p *Persister) RecomputeMetricsForFund(ctx context.Context, fundCode string
 		return err
 	}
 
-	_, _ = p.db.ExecContext(ctx, `DELETE FROM metrics_dirty WHERE fund_code = $1`, code)
 	return nil
 }
 
