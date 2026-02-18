@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS dividend (
   payment DATE NOT NULL,
   type INTEGER NOT NULL,
   value REAL NOT NULL,
-  yield REAL NOT NULL,
+  yield REAL,
   PRIMARY KEY (fund_code, date_iso, type)
 );
 
@@ -136,11 +136,6 @@ CREATE TABLE IF NOT EXISTS fund_cotation_stats (
   source_last_date_iso DATE NOT NULL,
   computed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   data_json JSONB NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS metrics_dirty (
-  fund_code TEXT PRIMARY KEY REFERENCES fund_master(code) ON DELETE CASCADE,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS fund_metrics_latest (

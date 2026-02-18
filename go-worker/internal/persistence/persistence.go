@@ -171,18 +171,17 @@ func (p *Persister) PersistFundDetails(ctx context.Context, fundCode string, dat
 
 		stmt, err := tx.PrepareContext(ctx, `
 			INSERT INTO dividend (fund_code, date_iso, payment, type, value, yield)
-			VALUES ($1, $2, $3, $4, $5, $6)
+			VALUES ($1, $2, $3, $4, $5, NULL)
 			ON CONFLICT (fund_code, date_iso, type) DO UPDATE SET
 				payment = EXCLUDED.payment,
 				value = EXCLUDED.value,
-				yield = COALESCE(NULLIF(EXCLUDED.yield, 0), dividend.yield)
+				yield = NULL
 		`)
 		if err != nil {
 			return fmt.Errorf("failed to prepare dividend statement: %w", err)
 		}
 		defer stmt.Close()
 
-		priceByDate := make(map[string]float64, len(data.Dividends))
 		for _, div := range data.Dividends {
 			typeCode, convErr := strconv.Atoi(strings.TrimSpace(div.Type))
 			if convErr != nil || typeCode <= 0 {
@@ -195,34 +194,7 @@ func (p *Persister) PersistFundDetails(ctx context.Context, fundCode string, dat
 				continue
 			}
 
-			yield := 0.0
-
-			if !p.skipDividendYield && typeCode == 1 {
-				price, ok := priceByDate[div.DateISO]
-				if !ok {
-					var p float64
-					var pInt int
-					rowErr := tx.QueryRowContext(
-						ctx,
-						`SELECT price_int FROM cotation WHERE fund_code = $1 AND date_iso = $2`,
-						div.FundCode,
-						div.DateISO,
-					).Scan(&pInt)
-					if rowErr != nil {
-						if rowErr != sql.ErrNoRows {
-							return fmt.Errorf("failed to fetch cotation price: %w", rowErr)
-						}
-						pInt = 0
-					}
-					p = fromPriceInt(pInt)
-					priceByDate[div.DateISO] = p
-					price = p
-				}
-
-				yield = calcYield(div.Value, price)
-			}
-
-			_, execErr := stmt.ExecContext(ctx, div.FundCode, div.DateISO, div.Payment, typeCode, div.Value, yield)
+			_, execErr := stmt.ExecContext(ctx, div.FundCode, div.DateISO, div.Payment, typeCode, div.Value)
 			if execErr != nil {
 				return fmt.Errorf("failed to insert dividend: %w", execErr)
 			}
@@ -239,13 +211,6 @@ func (p *Persister) PersistFundDetails(ctx context.Context, fundCode string, dat
 
 	// Update fund_state timestamp
 	return p.db.UpdateFundStateTimestamp(ctx, fundCode, "last_details_sync_at", time.Now())
-}
-
-func calcYield(value, price float64) float64 {
-	if value <= 0 || price <= 0 {
-		return 0
-	}
-	return (value / price) * 100
 }
 
 // PersistDividendYields updates dividend yields from chart data
@@ -265,7 +230,7 @@ func (p *Persister) PersistDividendYields(ctx context.Context, fundCode string, 
 		SET yield = $1
 		WHERE fund_code = $2
 			AND type = 1
-			AND yield = 0
+			AND yield IS NULL
 			AND to_char(date_iso, 'YYYY-MM') = $3
 	`)
 	if err != nil {
@@ -282,10 +247,12 @@ func (p *Persister) PersistDividendYields(ctx context.Context, fundCode string, 
 		rows, _ := result.RowsAffected()
 		if rows > 0 {
 			updated++
+			log.Printf("[persist] %s %s yield updated to %.4f", fundCode, y.Month, y.YieldValue)
 		}
 	}
 
 	if updated > 0 {
+		log.Printf("[persist] %s total yields updated: %d", fundCode, updated)
 		if err := p.markMetricsDirtyTx(ctx, tx, fundCode); err != nil {
 			return fmt.Errorf("failed to mark metrics dirty: %w", err)
 		}
@@ -947,6 +914,7 @@ func (p *Persister) computeAndUpsertMetrics(ctx context.Context, fundCode string
 	var (
 		dividendByMonth          = map[string]float64{}
 		dividendValues           = make([]float64, 0, 64)
+		dyByMonth                = make([]float64, 0, 64)
 		dividendPaidMonths12m    = 0
 		dividendRegularity12m    = 0.0
 		dividendMean12m          = 0.0
@@ -962,7 +930,7 @@ func (p *Persister) computeAndUpsertMetrics(ctx context.Context, fundCode string
 	)
 
 	divRows, err := p.db.QueryContext(ctx, `
-		SELECT date_iso, payment, type, value
+		SELECT date_iso, payment, type, value, yield
 		FROM dividend
 		WHERE fund_code = $1
 			AND date_iso >= $2
@@ -980,8 +948,9 @@ func (p *Persister) computeAndUpsertMetrics(ctx context.Context, fundCode string
 			payment  time.Time
 			typeCode int
 			value    float64
+			yield    float64
 		)
-		if err := divRows.Scan(&dateISO, &payment, &typeCode, &value); err != nil {
+		if err := divRows.Scan(&dateISO, &payment, &typeCode, &value, &yield); err != nil {
 			return err
 		}
 		if typeCode != 1 || !isFiniteFloat(value) || value <= 0 {
@@ -997,6 +966,10 @@ func (p *Persister) computeAndUpsertMetrics(ctx context.Context, fundCode string
 		}
 		if mk != "" {
 			dividendByMonth[mk] += value
+			// Usar o yield que está no banco, não recalcular
+			if yield > 0 {
+				dyByMonth = append(dyByMonth, yield)
+			}
 		}
 	}
 	if err := divRows.Err(); err != nil {
@@ -1028,15 +1001,10 @@ func (p *Persister) computeAndUpsertMetrics(ctx context.Context, fundCode string
 		dividendTrendSlope = analytics.LinearSlope(points)
 	}
 
-	dyByMonth := make([]float64, 0, len(monthKeys))
-	for _, mk := range monthKeys {
-		div := dividendByMonth[mk]
-		price := monthLastPrice[mk]
-		if div > 0 && price > 0 {
-			dyByMonth = append(dyByMonth, div/price)
-		}
+	// dyMonthlyMean já populado no loop acima usando o yield do banco
+	if len(dyByMonth) > 0 {
+		dyMonthlyMean = analytics.Mean(dyByMonth)
 	}
-	dyMonthlyMean = analytics.Mean(dyByMonth)
 
 	now := time.Now().UTC()
 	lastDayPrevMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1)
@@ -1085,6 +1053,7 @@ func (p *Persister) computeAndUpsertMetrics(ctx context.Context, fundCode string
 	liqValues := make([]float64, 0, 8)
 	currentYear := int16(time.Now().In(time.Local).Year())
 
+	// Buscar PVP do fundo atual
 	indRows, err := p.db.QueryContext(ctx, `
 		SELECT ano, pvp, liquidez_diaria
 		FROM indicators_snapshot
@@ -1094,7 +1063,6 @@ func (p *Persister) computeAndUpsertMetrics(ctx context.Context, fundCode string
 	if err != nil {
 		return err
 	}
-	defer indRows.Close()
 	for indRows.Next() {
 		var (
 			ano            int16
@@ -1102,10 +1070,10 @@ func (p *Persister) computeAndUpsertMetrics(ctx context.Context, fundCode string
 			liquidezDiaria sql.NullFloat64
 		)
 		if err := indRows.Scan(&ano, &pvp, &liquidezDiaria); err != nil {
+			indRows.Close()
 			return err
 		}
 		if pvp.Valid && isFiniteFloat(pvp.Float64) && pvp.Float64 > 0 {
-			pvpValues = append(pvpValues, pvp.Float64)
 			if ano == currentYear {
 				pvpCurrent = pvp.Float64
 			}
@@ -1114,33 +1082,46 @@ func (p *Persister) computeAndUpsertMetrics(ctx context.Context, fundCode string
 			liqValues = append(liqValues, liquidezDiaria.Float64)
 		}
 	}
+	indRows.Close()
 	if err := indRows.Err(); err != nil {
 		return err
 	}
 
+	// Se não tem PVP do ano atual, calcular de price/vpc
 	if pvpCurrent <= 0 {
-		for i := len(pvpValues) - 1; i >= 0; i-- {
-			if pvpValues[i] > 0 {
-				pvpCurrent = pvpValues[i]
-				break
-			}
+		var vpc sql.NullFloat64
+		if err := p.db.QueryRowContext(ctx, `
+			SELECT valor_patrimonial_cota
+			FROM fund_master
+			WHERE code = $1
+			LIMIT 1
+		`, code).Scan(&vpc); err == nil && vpc.Valid && vpc.Float64 > 0 && prices[len(prices)-1] > 0 {
+			pvpCurrent = prices[len(prices)-1] / vpc.Float64
 		}
 	}
 
-	var vpc sql.NullFloat64
-	if err := p.db.QueryRowContext(ctx, `
-		SELECT valor_patrimonial_cota
-		FROM fund_master
-		WHERE code = $1
-		LIMIT 1
-	`, code).Scan(&vpc); err != nil {
-		if err != sql.ErrNoRows {
+	// Buscar PVP de TODOS os fundos para calcular percentil
+	pvpAllRows, err := p.db.QueryContext(ctx, `
+		SELECT pvp
+		FROM indicators_snapshot
+		WHERE pvp IS NOT NULL AND pvp > 0
+	`)
+	if err != nil {
+		return err
+	}
+	for pvpAllRows.Next() {
+		var pvp sql.NullFloat64
+		if err := pvpAllRows.Scan(&pvp); err != nil {
+			pvpAllRows.Close()
 			return err
 		}
+		if pvp.Valid && isFiniteFloat(pvp.Float64) && pvp.Float64 > 0 {
+			pvpValues = append(pvpValues, pvp.Float64)
+		}
 	}
-	if pvpCurrent <= 0 && vpc.Valid && vpc.Float64 > 0 && prices[len(prices)-1] > 0 {
-		pvpCurrent = prices[len(prices)-1] / vpc.Float64
-		pvpValues = append(pvpValues, pvpCurrent)
+	pvpAllRows.Close()
+	if err := pvpAllRows.Err(); err != nil {
+		return err
 	}
 
 	pvpPercentile := 0.0
